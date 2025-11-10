@@ -1,18 +1,20 @@
 # RShell
 
-RShell provides an Elixir library for parsing Bash scripts into Abstract Syntax Trees (AST) using the tree-sitter parsing framework.
+RShell provides an Elixir library for parsing Bash scripts into **strongly-typed Abstract Syntax Trees (AST)** using the tree-sitter parsing framework.
 
 ## Overview
 
-This project integrates the `tree-sitter-bash` Rust library with Elixir through Rustler, providing native performance parsing capabilities for Bash script analysis.
+This project integrates the `tree-sitter-bash` Rust library with Elixir through Rustler, providing native performance parsing capabilities with compile-time type safety for Bash script analysis.
 
 ## Features
 
+- **Strongly-Typed AST**: 59 typed Elixir structs auto-generated from tree-sitter grammar
 - **Native Performance**: Uses Rust's tree-sitter for fast, incremental parsing
-- **Rich AST Output**: Complete syntax tree with node types and positions
+- **Grammar-Driven**: Types are generated directly from `node-types.json` schema
+- **Rich AST Output**: Complete syntax tree with named fields and nested structures
 - **CLI Interface**: `mix parse_bash` command for command-line usage
 - **Programmatic API**: Full Elixir API for script analysis and manipulation
-- **Cross-platform**: Works on Linux, macOS, and Windows (with separate NIF compilation)
+- **Cross-platform**: Works on Linux, macOS, and Windows
 
 ## Project Structure
 
@@ -32,29 +34,25 @@ rshell/
 └── test_script.sh              # Example script for testing
 ```
 
-## Installation
+## Quick Start
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/sirmick/rshell.git
-   cd rshell
-   ```
+The easiest way to build RShell is using the provided build script:
 
-2. Install Rust dependencies:
-   ```elixir
-   mix deps.get
-   ```
+```bash
+git clone https://github.com/sirmick/rshell.git
+cd rshell
+chmod +x build.sh
+./build.sh
+```
 
-3. Build the Rust NIF:
-   ```bash
-   cargo build --manifest-path native/RShell.BashParser/Cargo.toml
-   cp native/RShell.BashParser/target/debug/librshell_bash_parser.* priv/native/
-   ```
+This automatically:
+- Sets up tree-sitter-bash grammar
+- Installs Elixir dependencies
+- Builds the Rust NIF
+- Generates 59 typed AST structs from the grammar
+- Compiles the Elixir project
 
-4. Compile the Elixir project:
-   ```elixir
-   mix compile
-   ```
+For manual build instructions, see [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md).
 
 ## Usage
 
@@ -89,12 +87,43 @@ AST Summary:
 
 #### Basic Parsing
 ```elixir
-# Parse a script string
+# Parse a script string - returns strongly-typed AST
 {:ok, ast} = RShell.parse("echo 'Hello World'")
-IO.puts(ast.kind)  # "program"
+
+# AST is a typed Program struct
+ast.__struct__  # => BashParser.AST.Types.Program
+
+# Access typed fields
+[command] = ast.children
+command.__struct__  # => BashParser.AST.Types.Command
 
 # Parse from file
 {:ok, ast} = RShell.parse_file("my_script.sh")
+```
+
+#### Working with Typed AST
+```elixir
+# All fields are properly typed
+script = """
+if [ "$USER" = "admin" ]; then
+  echo "Admin access"
+fi
+"""
+
+{:ok, ast} = RShell.parse(script)
+
+# Navigate the typed structure
+[if_stmt] = ast.children
+if_stmt.__struct__  # => BashParser.AST.Types.IfStatement
+
+# Access named fields
+[test_cmd] = if_stmt.condition
+test_cmd.__struct__  # => BashParser.AST.Types.TestCommand
+
+# All nested structures are typed
+[binary_expr] = test_cmd.children
+binary_expr.left  # => %BashParser.AST.Types.String{...}
+binary_expr.right  # => [%BashParser.AST.Types.String{...}]
 ```
 
 #### AST Analysis
@@ -105,10 +134,14 @@ IO.puts("Found #{length(commands)} commands")
 
 # Get all function definitions
 functions = RShell.function_definitions(ast)
-IO.puts("Found #{length(functions)} functions")
 
 # Find specific node types
 if_statements = RShell.find_nodes(ast, "if_statement")
+
+# Each returned node is a typed struct
+for if_stmt <- if_statements do
+  IO.inspect(if_stmt.__struct__)  # => BashParser.AST.Types.IfStatement
+end
 ```
 
 #### Error Handling
@@ -117,6 +150,12 @@ if_statements = RShell.find_nodes(ast, "if_statement")
 if RShell.has_errors?("invalid @#$% syntax") do
   IO.puts("Invalid syntax detected")
 end
+```
+
+#### Type Generation
+```elixir
+# Regenerate types from grammar (after updating tree-sitter)
+mix gen.ast_types
 ```
 
 ## Architecture
@@ -135,10 +174,18 @@ The Elixir layer provides:
 - **CLI Interface**: `mix parse_bash` task for command-line usage
 
 ### Build Process
-1. Tree-sitter grammar is compiled from `vendor/tree-sitter-bash`
-2. Rust NIF is built with cargo
-3. Compiled NIF is copied to `priv/native/`
-4. Elixir code is compiled and can use the NIF
+1. Tree-sitter-bash is cloned to `vendor/tree-sitter-bash`
+2. `mix gen.ast_types` reads `node-types.json` and generates 59 typed structs
+3. Rust NIF is built with cargo (integrates tree-sitter parser)
+4. Compiled NIF is copied to `priv/native/`
+5. Elixir code is compiled with full type information
+
+### Type System
+- **59 Auto-generated Modules**: One for each tree-sitter node type
+- **Strongly Typed**: Each struct has proper `@type` specs
+- **Recursive Conversion**: Maps from NIF are recursively converted to typed structs
+- **Named Fields**: All tree-sitter fields are properly extracted (e.g., `condition`, `body`, `left`, `right`)
+- **Unnamed Children**: Handled via `children` field for generic child nodes
 
 ## Testing
 
@@ -162,16 +209,29 @@ iex -S mix
 
 ## Building from Source
 
+### Automated Build (Recommended)
 ```bash
-# Get Rustler dependencies
+chmod +x build.sh
+./build.sh
+```
+
+### Manual Build
+```bash
+# Setup tree-sitter-bash
+git clone https://github.com/tree-sitter/tree-sitter-bash.git vendor/tree-sitter-bash
+
+# Get dependencies
 mix deps.get
 
 # Build Rust NIF
 cargo build --manifest-path native/RShell.BashParser/Cargo.toml
 
-# Copy NIF library
+# Copy NIF library (platform-specific)
 mkdir -p priv/native
-cp native/RShell.BashParser/target/debug/librshell_bash_parser.so priv/native/
+cp native/RShell.BashParser/target/debug/librshell_bash_parser.* priv/native/
+
+# Generate typed AST structures
+mix gen.ast_types
 
 # Compile Elixir
 mix compile
@@ -179,14 +239,17 @@ mix compile
 
 ## Node Types
 
-The parser recognizes these Bash syntax elements:
+The parser provides 59 strongly-typed AST node types, including:
 
-- **Commands**: `command`, `command_name`, `word`, `string`
-- **Control Flow**: `if_statement`, `for_statement`, `while_statement`
-- **Functions**: `function_definition`  
-- **Variables**: `variable_assignment`, `simple_expansion`
-- **Operators**: `binary_expression`, logical operators
-- **Literals**: `string_content`, `comment`
+- **Statements**: `IfStatement`, `ForStatement`, `WhileStatement`, `CaseStatement`, `FunctionDefinition`
+- **Commands**: `Command`, `CommandName`, `DeclarationCommand`, `TestCommand`
+- **Expressions**: `BinaryExpression`, `UnaryExpression`, `TernaryExpression`, `ParenthesizedExpression`
+- **Variables**: `VariableAssignment`, `SimpleExpansion`, `VariableName`
+- **Literals**: `String`, `StringContent`, `Word`, `Number`, `Comment`
+- **Redirects**: `FileRedirect`, `HeredocRedirect`, `HerestringRedirect`
+- **And more**: See [`lib/bash_parser/ast/types.ex`](lib/bash_parser/ast/types.ex) for all 59 types
+
+All types are auto-generated from the tree-sitter grammar using `mix gen.ast_types`.
 
 ## Tree-sitter Integration
 

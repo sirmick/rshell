@@ -80,16 +80,58 @@ defmodule Mix.Tasks.ParseBash do
     end
   end
 
-  defp display_ast(%{kind: kind, text: text, start_row: start_row, start_col: start_col, end_row: end_row, end_col: end_col, children: children} = ast_node, indent) do
+  defp display_ast(ast_node, indent) do
     indent_str = String.duplicate("  ", indent)
 
-    node_info = """
-    #{indent_str}#{kind} [#{start_row + 1}:#{start_col + 1} - #{end_row + 1}:#{end_col + 1}] '#{String.replace(text, "\n", "\\n")}'
-    """
-    Mix.shell().info(node_info)
+    case ast_node do
+      %{type: type} = node when is_map(node) ->
+        source_info = Map.get(node, :source_info, %{start_row: 0, start_col: 0, end_row: 0, end_col: 0})
+        %{
+          start_row: start_row,
+          start_col: start_col,
+          end_row: end_row,
+          end_col: end_col,
+          text: text
+        } = source_info
 
-    Enum.each(children, &display_ast(&1, indent + 1))
+        node_info = """
+        #{indent_str}#{type} [#{start_row + 1}:#{start_col + 1} - #{end_row + 1}:#{end_col + 1}] '#{String.replace(text || "", "\n", "\\n")}'
+        """
+
+        Mix.shell().info(node_info)
+
+        # Extract child nodes from various field types
+        field_names = [:left, :right, :operand, :body, :condition, :values, :name, :arguments, :value, :variable, :content, :variable_name]
+
+        Enum.each(field_names, fn field ->
+          if Map.has_key?(node, field) do
+            value = Map.get(node, field)
+            display_field_value(value, indent)
+          end
+        end)
+
+      %{kind: kind, text: text, start_row: start_row, start_col: start_col, end_row: end_row, end_col: end_col, children: children} ->
+        # Backwards compatibility for legacy format
+        node_info = """
+        #{indent_str}#{kind} [#{start_row + 1}:#{start_col + 1} - #{end_row + 1}:#{end_col + 1}] '#{String.replace(text || "", "\n", "\\n")}'
+        """
+        Mix.shell().info(node_info)
+        Enum.each(children, &display_ast(&1, indent + 1))
+
+      other ->
+        Mix.shell().info("#{indent_str}Unknown format: #{inspect(other)}")
+    end
   end
+
+  defp display_field_value(value, indent) when is_map(value) do
+    display_ast(value, indent + 1)
+  end
+
+  defp display_field_value(values, indent) when is_list(values) do
+    Enum.each(values, fn value -> display_field_value(value, indent) end)
+  end
+
+  defp display_field_value(_value, _indent), do: :ok
 
   defp display_summary(ast) do
     commands = RShell.commands(ast)

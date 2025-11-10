@@ -1,4 +1,4 @@
-defmodule RShell.MixProject do
+ defmodule RShell.MixProject do
   use Mix.Project
 
   def project do
@@ -22,7 +22,8 @@ defmodule RShell.MixProject do
   defp deps do
     [
       {:rustler, "~> 0.30.0"},
-      {:rustler_precompiled, "~> 0.7.0"}
+      {:rustler_precompiled, "~> 0.7.0"},
+      {:jason, "~> 1.4"}
     ]
   end
 end
