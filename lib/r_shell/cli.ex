@@ -29,7 +29,7 @@ defmodule RShell.CLI do
     ".reset" => "Clear parser state and start fresh",
     ".status" => "Show current parser status (buffer size, errors)",
     ".ast" => "Show current AST without adding new input",
-    ".help" => "Show this help message",
+    ".help" => "Show this help message or help for a builtin command",
     ".quit" => "Exit the CLI"
   }
 
@@ -95,7 +95,23 @@ defmodule RShell.CLI do
       IO.puts("  #{String.pad_trailing(cmd, 12)} - #{desc}")
     end)
 
-    IO.puts("")
+    IO.puts("\n💡 For help on builtins, use: .help <builtin>")
+    IO.puts("   Example: .help echo\n")
+
+    loop(parser_pid, runtime_pid, session_id, prev_children)
+  end
+
+  defp handle_input(parser_pid, runtime_pid, session_id, ".help " <> builtin_name, prev_children) do
+    builtin = String.trim(builtin_name)
+
+    if RShell.Builtins.is_builtin?(builtin) do
+      help_text = RShell.Builtins.get_builtin_help(builtin)
+      IO.puts("\n" <> help_text <> "\n")
+    else
+      IO.puts("\n❌ Unknown builtin: #{builtin}")
+      IO.puts("💡 Use '.help' to see available commands\n")
+    end
+
     loop(parser_pid, runtime_pid, session_id, prev_children)
   end
 
@@ -206,7 +222,7 @@ defmodule RShell.CLI do
         if exit_code != 0 do
           IO.puts("⚠️  Exit code: #{exit_code}")
         end
-        
+
         # Execution is done - return immediately instead of waiting
         previous_children
 
