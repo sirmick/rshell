@@ -1727,6 +1727,16 @@ defmodule BashParser.AST.Types do
       "variable_name" -> VariableName.from_map(data)
       "while_statement" -> WhileStatement.from_map(data)
       "word" -> Word.from_map(data)
+      "ERROR" ->
+        # Handle ERROR nodes - they have minimal structure
+        # We'll represent them as a generic map with source_info
+        %{
+          __struct__: :error_node,
+          type: "ERROR",
+          source_info: SourceInfo.from_map(data),
+          text: Map.get(data, "text", ""),
+          children: extract_children(data, "children")
+        }
       _ -> raise "Unknown node type: #{type}"
     end
   end

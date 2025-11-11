@@ -2,6 +2,7 @@ defmodule StreamParserTest do
   use ExUnit.Case
 
   alias RShell.StreamParser
+  import TestHelperTypedAST
 
   @moduledoc """
   Tests for the StreamParser synchronous wrapper.
@@ -15,8 +16,8 @@ defmodule StreamParserTest do
   describe "parse/1" do
     test "parses a simple command" do
       assert {:ok, ast} = StreamParser.parse("echo 'hello'\n")
-      assert ast["type"] == "program"
-      assert is_list(ast["children"])
+      assert get_type(ast) == "program"
+      assert is_list(get_children(ast))
     end
 
     test "auto-resets between calls" do
@@ -38,7 +39,7 @@ defmodule StreamParserTest do
       {:ok, ast} = StreamParser.parse("if then fi\n")
 
       # Should parse but have errors
-      assert ast["type"] == "program"
+      assert get_type(ast) == "program"
       pid = StreamParser.parser_pid()
       assert RShell.IncrementalParser.has_errors?(pid) == true
     end
@@ -65,7 +66,7 @@ defmodule StreamParserTest do
 
       {:ok, ast} = StreamParser.parse_fragments(fragments)
 
-      assert ast["type"] == "program"
+      assert get_type(ast) == "program"
       pid = StreamParser.parser_pid()
       input = RShell.IncrementalParser.get_accumulated_input(pid)
       assert String.contains?(input, "hello")
@@ -81,8 +82,8 @@ defmodule StreamParserTest do
 
       {:ok, ast} = StreamParser.parse_fragments(fragments)
 
-      assert ast["type"] == "program"
-      assert length(ast["children"]) >= 1
+      assert get_type(ast) == "program"
+      assert length(get_children(ast)) >= 1
     end
 
     test "returns error for empty list" do

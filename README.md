@@ -1,20 +1,30 @@
 # RShell
 
-RShell provides an Elixir library for parsing Bash scripts into **strongly-typed Abstract Syntax Trees (AST)** using the tree-sitter parsing framework.
+RShell is an interactive Bash shell implementation in Elixir, providing incremental parsing, execution, and a functional CLI using strongly-typed AST structures.
 
 ## Overview
 
-This project integrates the `tree-sitter-bash` Rust library with Elixir through Rustler, providing native performance parsing capabilities with compile-time type safety for Bash script analysis.
+This project combines tree-sitter-bash parsing with an execution runtime to create a functional shell. It demonstrates real-time incremental parsing with automatic execution of complete commands, builtin command support, and observable execution through PubSub events.
 
 ## Features
 
+### Parser
 - **Strongly-Typed AST**: 59 typed Elixir structs auto-generated from tree-sitter grammar
-- **Native Performance**: Uses Rust's tree-sitter for fast, incremental parsing
-- **Grammar-Driven**: Types are generated directly from `node-types.json` schema
-- **Rich AST Output**: Complete syntax tree with named fields and nested structures
-- **CLI Interface**: `mix parse_bash` command for command-line usage
-- **Programmatic API**: Full Elixir API for script analysis and manipulation
-- **Cross-platform**: Works on Linux, macOS, and Windows
+- **Incremental Parsing**: Line-by-line parsing with incomplete structure detection
+- **Native Performance**: Rust-based tree-sitter for fast parsing
+- **Event-Driven**: PubSub broadcasts for AST updates and executable nodes
+
+### Runtime & Execution
+- **Builtin Commands**: Native Elixir implementations (echo, and more to come)
+- **Execution Modes**: Simulate, capture, and real (stub) modes
+- **Context Management**: Environment variables, working directory, exit codes
+- **Observable Execution**: PubSub events for execution lifecycle and output
+
+### CLI
+- **Interactive Shell**: REPL with real-time parsing and execution
+- **Command History**: Multi-line input with incremental feedback
+- **Debug Commands**: `.ast`, `.status`, `.reset` for inspection
+- **Fast Response**: Immediate command execution with builtin support
 
 ## Project Structure
 
@@ -56,31 +66,63 @@ For manual build instructions, see [BUILD.md](BUILD.md).
 
 ## Usage
 
-### CLI Usage
+### Interactive Shell (CLI)
 
-Parse a Bash script from the command line:
+Start the interactive shell:
+```bash
+# Via mix
+mix run -e "RShell.CLI.main([])"
+
+# Or build and run escript
+mix escript.build
+./rshell
+```
+
+Example session:
+```
+🐚 RShell - Interactive Bash Shell
+==================================================
+Type bash commands. Built-in commands start with '.'
+Type .help for available commands
+
+✅ Parser started (PID: #PID<0.123.0>)
+✅ Runtime started (PID: #PID<0.124.0>)
+📡 Session ID: cli_123456
+🎬 Mode: simulate
+
+rshell> echo hello world
+hello world
+rshell> echo -n test
+testrshell> export FOO=bar
+✓ FOO=bar
+rshell> .status
+
+📊 Status:
+  Session ID: cli_123456
+  Buffer size: 0 bytes
+  Has errors: false
+  Lines accumulated: 0
+  Commands executed: 3
+  Exit code: 0
+  Mode: simulate
+
+rshell> .quit
+👋 Goodbye!
+```
+
+### CLI Commands
+
+- `.help` - Show available commands
+- `.status` - Show parser and runtime status
+- `.ast` - Display current AST structure
+- `.reset` - Clear parser state
+- `.quit` - Exit the shell
+
+### Parse a Script File
+
+Parse bash scripts from the command line:
 ```bash
 mix parse_bash script.sh
-```
-
-Example output:
-```
-✅ Parse successful!
-=
-program [1:1 - 24:18] '#!/bin/bash\n\n...'
-
-  - comment [1:1 - 1:12] '#!/bin/bash'
-  - command [4:1 - 4:20] 'echo "Hello World!"'
-    - command_name [4:1 - 4:5] 'echo'
-      - word [4:1 - 4:5] 'echo'
-    - string [4:6 - 4:20] '"Hello World!"'
-      - " [4:6 - 4:7] '"'
-      - string_content [4:7 - 4:19] 'Hello World!'
-      - " [4:19 - 4:20] '"'
-
-AST Summary:
-  Commands: 5
-  Functions: 1
 ```
 
 ### Programmatic Usage
@@ -144,12 +186,60 @@ for if_stmt <- if_statements do
 end
 ```
 
+#### Builtin Execution
+```elixir
+# Builtins are automatically invoked by the runtime
+alias RShell.Builtins
+
+# Execute echo directly
+{new_context, stdout, stderr, exit_code} =
+  Builtins.shell_echo(["hello", "world"], "", %{})
+
+# stdout => "hello world\n"
+# exit_code => 0
+
+# Check if command is a builtin
+Builtins.is_builtin?("echo")  # => true
+Builtins.is_builtin?("ls")    # => false
+```
+
+#### Execution Modes
+
+**`:simulate` mode (default)** - Safe execution for testing
+```elixir
+{:ok, runtime} = Runtime.start_link(
+  session_id: "test",
+  mode: :simulate,  # Builtins execute, external commands are logged
+  auto_execute: true
+)
+
+# Builtin commands execute normally
+# External commands show: [SIMULATED] ls -la
+```
+
+**`:capture` mode** - Alternative simulation format
+```elixir
+Runtime.set_mode(runtime, :capture)
+# External commands show: [CAPTURED] ls -la
+```
+
+**`:real` mode** - Real execution (stub, not implemented)
+```elixir
+Runtime.set_mode(runtime, :real)
+# Would execute external commands via ports
+# Currently shows: [WOULD EXECUTE] ls -la
+```
+
 #### Error Handling
 ```elixir
 # Check for parse errors
 if RShell.has_errors?("invalid @#$% syntax") do
   IO.puts("Invalid syntax detected")
 end
+
+# Runtime errors set exit code
+context = Runtime.get_context(runtime)
+context.exit_code  # => 0 for success, non-zero for errors
 ```
 
 #### Type Generation
@@ -187,18 +277,98 @@ The Elixir layer provides:
 - **Named Fields**: All tree-sitter fields are properly extracted (e.g., `condition`, `body`, `left`, `right`)
 - **Unnamed Children**: Handled via `children` field for generic child nodes
 
-## Testing
+## How To
 
-Test the implementation:
+### Running Tests
+
+Run the complete test suite:
 ```bash
-# Run tests
+# All tests
 mix test
 
-# Test CLI
-mix parse_bash test_script.sh
+# Specific test file
+mix test test/incremental_parser_nif_test.exs
 
-# Test programmatic usage (start IEx shell)
+# With verbose output
+mix test --trace
+
+# Run only tests matching a pattern
+mix test --only tag_name
+```
+
+### Using the CLI
+
+Parse bash scripts from the command line:
+```bash
+# Parse a file
+mix parse_bash script.sh
+
+# Parse with verbose output
+mix parse_bash script.sh --verbose
+
+# Example output shows typed AST structure
+mix parse_bash test_script.sh
+```
+
+### Regenerating AST Types
+
+After updating tree-sitter-bash grammar:
+```bash
+# 1. Update tree-sitter-bash
+cd vendor/tree-sitter-bash
+git pull origin master
+cd ../..
+
+# 2. Regenerate 59 typed structs from node-types.json
+mix gen.ast_types
+
+# 3. Recompile and test
+mix clean
+mix compile
+mix test
+```
+
+This reads `vendor/tree-sitter-bash/src/node-types.json` and generates:
+- 59 typed modules in `lib/bash_parser/ast/types.ex`
+- Each with `@type` specs, `from_map/1` conversion, and `node_type/0` identifier
+
+### Building the NIF
+
+Compile the Rust NIF bridge:
+```bash
+# Build in debug mode
+cargo build --manifest-path native/RShell.BashParser/Cargo.toml
+
+# Build in release mode (faster, larger binary)
+cargo build --release --manifest-path native/RShell.BashParser/Cargo.toml
+
+# Copy to priv/native/ (required for Elixir to load it)
+mkdir -p priv/native
+cp native/RShell.BashParser/target/debug/librshell_bash_parser.* priv/native/
+
+# Or use the automated build script
+./build.sh
+```
+
+Platform-specific library extensions:
+- Linux: `.so` (shared object)
+- macOS: `.dylib` (dynamic library)
+- Windows: `.dll` (dynamic link library)
+
+### Interactive Testing
+
+Test the implementation in IEx (Interactive Elixir):
+```bash
+# Start IEx with the project loaded
 iex -S mix
+
+# Parse and inspect
+{:ok, ast} = RShell.parse("echo 'Hello'")
+ast.__struct__  # => BashParser.AST.Types.Program
+
+# Explore typed fields
+[command] = ast.children
+command.__struct__  # => BashParser.AST.Types.Command
 ```
 
 ## Dependencies
@@ -206,36 +376,6 @@ iex -S mix
 - **Elixir**: 1.14+ with Mix build tool
 - **Rust**: Latest stable Rust with cargo
 - **tree-sitter-bash**: Embedded via git subtree in `vendor/tree-sitter-bash`
-
-## Building from Source
-
-### Automated Build (Recommended)
-```bash
-chmod +x build.sh
-./build.sh
-```
-
-### Manual Build
-```bash
-# Setup tree-sitter-bash
-git clone https://github.com/tree-sitter/tree-sitter-bash.git vendor/tree-sitter-bash
-
-# Get dependencies
-mix deps.get
-
-# Build Rust NIF
-cargo build --manifest-path native/RShell.BashParser/Cargo.toml
-
-# Copy NIF library (platform-specific)
-mkdir -p priv/native
-cp native/RShell.BashParser/target/debug/librshell_bash_parser.* priv/native/
-
-# Generate typed AST structures
-mix gen.ast_types
-
-# Compile Elixir
-mix compile
-```
 
 ## Node Types
 

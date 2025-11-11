@@ -1,0 +1,592 @@
+# RShell Builtin Commands Design
+
+**Last Updated**: 2025-11-11
+
+---
+
+## Overview
+
+Builtin commands are functions implemented in Elixir that execute within the runtime process, rather than spawning external processes. They have access to runtime context and can modify shell state (environment variables, working directory, etc.).
+
+**Implementation Status**:
+- ✅ Builtin system with reflection-based discovery
+- ✅ Echo builtin with full flag support (-n, -e, -E)
+- ✅ AST traversal for command extraction
+- ✅ Unified signature for all builtins
+- ✅ 40 unit tests covering all echo functionality
+- ✅ Integration with Runtime execution flow
+
+---
+
+## Architecture
+
+### Module Structure
+
+**`RShell.Builtins`** - All builtin implementations
+
+- Functions named with `shell_` prefix: `shell_echo`, `shell_cd`, `shell_pwd`
+- Reflection-based discovery: `function_exported?(__MODULE__, :shell_#{name}, 3)`
+- Automatic invocation: `apply(__MODULE__, :shell_#{name}, [args, stdin, context])`
+
+### Unified Signature
+
+**All builtins use the same signature:**
+
+```elixir
+@spec shell_*(args, stdin, context) :: {new_context, stdout, stderr, exit_code}
+
+@type args :: [String.t()]
+@type stdin :: String.t() | Stream.t() | Enumerable.t() | IO.device()
+@type context :: Runtime.context()
+@type stdout :: String.t() | Stream.t() | Enumerable.t()
+@type stderr :: String.t() | Stream.t() | Enumerable.t()
+@type exit_code :: integer()
+```
+
+**Parameters:**
+- `args` - Command arguments (already parsed from AST)
+- `stdin` - Input stream/string (from previous command in pipeline or empty)
+- `context` - Full runtime context (env, cwd, mode, etc.)
+
+**Returns:**
+- `new_context` - Updated context (unchanged if builtin is pure)
+- `stdout` - Output stream or string
+- `stderr` - Error stream or string
+- `exit_code` - 0 for success, non-zero for failure
+
+---
+
+## I/O Flexibility
+
+### stdin Handling with Pattern Matching
+
+Builtins can elegantly handle multiple input types:
+
+```elixir
+# String stdin
+def shell_grep([pattern], stdin, context) when is_binary(stdin) do
+  lines = stdin |> String.split("\n") |> Enum.filter(&String.contains?(&1, pattern))
+  {context, Enum.join(lines, "\n"), "", 0}
+end
+
+# Stream stdin (lazy evaluation)
+def shell_grep([pattern], stdin, context) when is_struct(stdin, Stream) do
+  filtered = Stream.filter(stdin, &String.contains?(&1, pattern))
+  {context, filtered, "", 0}
+end
+
+# Generic enumerable
+def shell_grep([pattern], stdin, context) do
+  filtered = Stream.filter(stdin, &matches?(&1, pattern))
+  {context, filtered, "", 0}
+end
+```
+
+### stdout/stderr Types
+
+Builtins can return different output types:
+
+**String (immediate output)**
+```elixir
+def shell_echo(args, _stdin, context) do
+  output = Enum.join(args, " ") <> "\n"
+  {context, output, "", 0}
+end
+```
+
+**Stream (lazy, for large data)**
+```elixir
+def shell_cat(args, _stdin, context) when length(args) > 0 do
+  stream = args
+    |> Enum.map(&File.stream!/1)
+    |> Stream.concat()
+  {context, stream, "", 0}
+end
+```
+
+**Enumerable (flexible)**
+```elixir
+def shell_find([dir], _stdin, context) do
+  files = Path.wildcard(dir <> "/**")
+  {context, files, "", 0}  # List is enumerable
+end
+```
+
+### Stream Materialization
+
+**Between builtins**: Streams stay lazy (efficient pipelines)
+
+```elixir
+# cat large.txt | grep foo | wc -l
+# All lazy until final wc forces evaluation
+```
+
+**At terminal output**: Runtime materializes streams to strings
+
+```elixir
+defp materialize_output(output) when is_binary(output), do: output
+defp materialize_output(output) when is_struct(output, Stream) do
+  output |> Enum.to_list() |> Enum.join("")
+end
+defp materialize_output(output) when is_list(output) do
+  Enum.join(output, "")
+end
+```
+
+---
+
+## Context Management
+
+### Context Structure
+
+```elixir
+%{
+  mode: :simulate | :capture | :real,
+  env: %{String.t() => String.t()},    # Environment variables
+  cwd: String.t(),                      # Current working directory
+  exit_code: integer(),                 # Last command exit code
+  command_count: integer(),             # Number of commands executed
+  output: [String.t()],                 # Accumulated output
+  errors: [String.t()]                  # Accumulated errors
+}
+```
+
+### Immutable Updates
+
+All context modifications create new maps:
+
+```elixir
+# Pure builtin - returns context unchanged
+def shell_echo(args, _stdin, context) do
+  output = Enum.join(args, " ") <> "\n"
+  {context, output, "", 0}  # context unchanged
+end
+
+# Context-modifying builtin - returns new context
+def shell_cd([path], _stdin, context) do
+  new_cwd = resolve_path(path, context.cwd)
+  new_context = %{context | cwd: new_cwd}
+  {new_context, "", "", 0}
+end
+
+# Env-modifying builtin
+def shell_export([assignment], _stdin, context) do
+  [name, value] = String.split(assignment, "=", parts: 2)
+  new_env = Map.put(context.env, name, value)
+  new_context = %{context | env: new_env}
+  {new_context, "", "", 0}
+end
+```
+
+### Runtime Integration
+
+Runtime always replaces old context with returned context:
+
+```elixir
+def handle_call({:execute_node, node}, _from, state) do
+  {new_context, stdout, stderr, exit_code} = execute_builtin(...)
+  
+  # Materialize streams for broadcasting
+  stdout_str = materialize_output(stdout)
+  stderr_str = materialize_output(stderr)
+  
+  # Broadcast output
+  PubSub.broadcast(session_id, :output, {:stdout, stdout_str})
+  PubSub.broadcast(session_id, :output, {:stderr, stderr_str})
+  
+  # Replace context with new context
+  {:reply, {:ok, stdout_str, stderr_str, exit_code}, 
+   %{state | context: new_context}}
+end
+```
+
+---
+
+## Error Handling
+
+Builtins support flexible error reporting:
+
+### Exit Code Style (POSIX)
+
+```elixir
+def shell_cd([path], _stdin, context) do
+  if File.dir?(path) do
+    new_context = %{context | cwd: path}
+    {new_context, "", "", 0}
+  else
+    {context, "", "cd: #{path}: No such file or directory\n", 1}
+  end
+end
+```
+
+### Tagged Tuple Style (Elixir)
+
+```elixir
+def shell_cd([path], _stdin, context) do
+  case resolve_path(path, context.cwd) do
+    {:ok, new_cwd} ->
+      new_context = %{context | cwd: new_cwd}
+      {new_context, "", "", 0}
+    
+    {:error, :enoent} ->
+      {context, "", "cd: #{path}: No such file or directory\n", 1}
+  end
+end
+```
+
+Runtime handles both styles consistently.
+
+---
+
+## Implemented Builtins
+
+### Echo (`shell_echo`)
+
+**Status**: ✅ Fully implemented and tested
+
+**Purpose**: Display arguments to stdout with optional formatting
+
+**Signature**:
+```elixir
+@spec shell_echo(args, stdin, context) :: {new_context, stdout, stderr, exit_code}
+```
+
+**Flags**:
+- `-n` - Suppress trailing newline
+- `-e` - Enable interpretation of backslash escapes
+- `-E` - Disable interpretation of backslash escapes (default)
+
+**Escape Sequences** (with `-e`):
+- `\n` - Newline
+- `\t` - Horizontal tab
+- `\r` - Carriage return
+- `\\` - Backslash
+- `\a` - Alert (bell)
+- `\b` - Backspace
+- `\e` - Escape character
+- `\f` - Form feed
+- `\v` - Vertical tab
+
+**Examples**:
+```elixir
+# Basic usage
+shell_echo(["hello", "world"], "", %{})
+# => {%{}, "hello world\n", "", 0}
+
+# No newline
+shell_echo(["-n", "test"], "", %{})
+# => {%{}, "test", "", 0}
+
+# Escape sequences
+shell_echo(["-e", "line1\\nline2"], "", %{})
+# => {%{}, "line1\nline2\n", "", 0}
+
+# Combined flags
+shell_echo(["-n", "-e", "test\\n"], "", %{})
+# => {%{}, "test\n", "", 0}
+```
+
+**Testing**: 40 unit tests in `test/builtins_test.exs`
+- Basic functionality (no args, single arg, multiple args)
+- Flag behavior (-n, -e, -E)
+- All escape sequences
+- Flag combinations
+- Edge cases (empty strings, spaces, special characters)
+- Context preservation
+
+---
+
+## Example: How Echo Was Implemented
+
+### Step 1: Basic Implementation
+
+```elixir
+defmodule RShell.Builtins do
+  @moduledoc """
+  Shell builtin commands with flexible I/O and context management.
+  """
+
+  @type args :: [String.t()]
+  @type stdin :: String.t() | Stream.t() | Enumerable.t()
+  @type context :: map()
+  @type result :: {context, String.t(), String.t(), integer()}
+
+  @doc """
+  Execute a builtin by name using reflection.
+  """
+  def execute(name, args, stdin, context) do
+    function_name = String.to_atom("shell_#{name}")
+    
+    if function_exported?(__MODULE__, function_name, 3) do
+      apply(__MODULE__, function_name, [args, stdin, context])
+    else
+      {context, "", "#{name}: command not found\n", 127}
+    end
+  end
+
+  @doc """
+  Check if a command is a builtin.
+  """
+  def is_builtin?(name) do
+    function_exported?(__MODULE__, String.to_atom("shell_#{name}"), 3)
+  end
+
+  @doc """
+  Echo arguments to stdout.
+  
+  ## Flags
+  - `-n` - Do not output trailing newline
+  - `-e` - Enable interpretation of backslash escapes
+  - `-E` - Disable interpretation of backslash escapes (default)
+  
+  ## Examples
+      iex> shell_echo(["hello"], "", %{})
+      {%{}, "hello\\n", "", 0}
+      
+      iex> shell_echo(["-n", "hello"], "", %{})
+      {%{}, "hello", "", 0}
+  """
+  def shell_echo(args, _stdin, context) do
+    {flags, words} = parse_echo_flags(args)
+    
+    output = Enum.join(words, " ")
+    output = if flags.enable_escapes, do: process_escapes(output), else: output
+    output = if flags.no_newline, do: output, else: output <> "\n"
+    
+    {context, output, "", 0}
+  end
+
+  # Parse echo flags
+  defp parse_echo_flags(args) do
+    Enum.reduce(args, {%{no_newline: false, enable_escapes: false}, []}, fn
+      "-n", {flags, words} -> 
+        {Map.put(flags, :no_newline, true), words}
+      "-e", {flags, words} -> 
+        {Map.put(flags, :enable_escapes, true), words}
+      "-E", {flags, words} -> 
+        {Map.put(flags, :enable_escapes, false), words}
+      word, {flags, words} -> 
+        {flags, words ++ [word]}
+    end)
+  end
+
+  # Process backslash escape sequences
+  defp process_escapes(text) do
+    text
+    |> String.replace("\\n", "\n")
+    |> String.replace("\\t", "\t")
+    |> String.replace("\\\\", "\\")
+  end
+end
+```
+
+**Actual Implementation**: See [`lib/r_shell/builtins.ex`](lib/r_shell/builtins.ex)
+
+### Step 2: Runtime Integration
+
+```elixir
+# In lib/r_shell/runtime.ex
+
+defp execute_command(%Types.Command{} = cmd, context, session_id) do
+  # Extract command name and arguments from AST
+  {command_name, args} = extract_command_parts(cmd)
+  
+  # Check if it's a builtin
+  if RShell.Builtins.is_builtin?(command_name) do
+    execute_builtin(command_name, args, "", context, session_id)
+  else
+    # Future: lookup in PATH and execute external command
+    execute_external_command_stub(cmd, context, session_id)
+  end
+end
+
+defp execute_builtin(name, args, stdin, context, session_id) do
+  # Execute builtin
+  {new_context, stdout, stderr, exit_code} = 
+    RShell.Builtins.execute(name, args, stdin, context)
+  
+  # Materialize streams if needed
+  stdout_str = materialize_output(stdout)
+  stderr_str = materialize_output(stderr)
+  
+  # Broadcast output
+  unless stdout_str == "" do
+    PubSub.broadcast(session_id, :output, {:stdout, stdout_str})
+  end
+  
+  unless stderr_str == "" do
+    PubSub.broadcast(session_id, :output, {:stderr, stderr_str})
+  end
+  
+  # Update context with output and exit code
+  %{new_context | 
+    output: [stdout_str | new_context.output],
+    exit_code: exit_code
+  }
+end
+
+# Helper: Extract command name and args from AST
+defp extract_command_parts(%Types.Command{} = cmd) do
+  command_name = extract_text_from_node(cmd.name)
+  args = Enum.map(cmd.argument || [], &extract_text_from_node/1)
+  {command_name, args}
+end
+
+defp extract_text_from_node(nil), do: ""
+defp extract_text_from_node(node) when is_struct(node) do
+  node.source_info.text || ""
+end
+
+# Helper: Materialize streams to strings
+defp materialize_output(output) when is_binary(output), do: output
+defp materialize_output(output) when is_struct(output, Stream) do
+  output |> Enum.to_list() |> Enum.join("")
+end
+defp materialize_output(output) when is_list(output) do
+  Enum.join(output, "")
+end
+```
+
+**Actual Implementation**: See [`lib/r_shell/runtime.ex`](lib/r_shell/runtime.ex:244-420)
+
+Key features of the actual implementation:
+- Proper AST traversal to extract command name and arguments
+- Pattern matching on typed AST nodes (CommandName, Word, String, StringContent)
+- Handles nested structures and concatenations
+- Supports variable expansions (recognizes `$VAR` syntax)
+
+### Step 3: Testing
+
+```elixir
+# test/builtins_test.exs
+
+defmodule RShell.BuiltinsTest do
+  use ExUnit.Case
+  alias RShell.Builtins
+
+  @empty_context %{
+    mode: :simulate,
+    env: %{},
+    cwd: "/tmp",
+    exit_code: 0,
+    command_count: 0,
+    output: [],
+    errors: []
+  }
+
+  describe "shell_echo/3" do
+    test "outputs single argument" do
+      {_ctx, stdout, stderr, exit_code} = 
+        Builtins.shell_echo(["hello"], "", @empty_context)
+      
+      assert stdout == "hello\n"
+      assert stderr == ""
+      assert exit_code == 0
+    end
+
+    test "outputs multiple arguments with spaces" do
+      {_ctx, stdout, _stderr, _} = 
+        Builtins.shell_echo(["hello", "world"], "", @empty_context)
+      
+      assert stdout == "hello world\n"
+    end
+
+    test "outputs empty line with no arguments" do
+      {_ctx, stdout, _stderr, _} = 
+        Builtins.shell_echo([], "", @empty_context)
+      
+      assert stdout == "\n"
+    end
+
+    test "handles -n flag (no newline)" do
+      {_ctx, stdout, _stderr, _} = 
+        Builtins.shell_echo(["-n", "hello"], "", @empty_context)
+      
+      assert stdout == "hello"
+    end
+
+    test "handles -e flag with escape sequences" do
+      {_ctx, stdout, _stderr, _} = 
+        Builtins.shell_echo(["-e", "hello\\nworld"], "", @empty_context)
+      
+      assert stdout == "hello\nworld\n"
+    end
+
+    test "returns context unchanged" do
+      {new_ctx, _stdout, _stderr, _} = 
+        Builtins.shell_echo(["test"], "", @empty_context)
+      
+      assert new_ctx == @empty_context
+    end
+  end
+
+  describe "is_builtin?/1" do
+    test "returns true for echo" do
+      assert Builtins.is_builtin?("echo") == true
+    end
+
+    test "returns false for unknown command" do
+      assert Builtins.is_builtin?("nonexistent") == false
+    end
+  end
+end
+```
+
+### Step 4: Integration Test
+
+```elixir
+# test/runtime_test.exs
+
+test "executes echo builtin", %{runtime: runtime, session_id: _session_id} do
+  # Create command node
+  node = %Types.Command{
+    source_info: %Types.SourceInfo{
+      start_line: 0, start_column: 0, end_line: 0, end_column: 10,
+      text: "echo hello"
+    },
+    name: %Types.CommandName{
+      source_info: %Types.SourceInfo{text: "echo"},
+      children: []
+    },
+    argument: [
+      %Types.Word{
+        source_info: %Types.SourceInfo{text: "hello"},
+        children: []
+      }
+    ],
+    redirect: [],
+    children: []
+  }
+
+  # Execute
+  {:ok, _result} = Runtime.execute_node(runtime, node)
+
+  # Check events
+  assert_receive {:execution_started, _}, 1000
+  assert_receive {:execution_completed, %{exit_code: 0}}, 1000
+  assert_receive {:stdout, "hello\n"}, 1000
+end
+```
+
+---
+
+## Summary
+
+### Builtin System Features
+
+✅ **Reflection-based discovery** - Add functions, they're automatically available
+✅ **Unified signature** - `shell_*(args, stdin, context) → {new_context, stdout, stderr, exit_code}`
+✅ **Flexible I/O** - String, Stream, Enumerable, IO.device support
+✅ **Pattern matching** - Elegant handling of different input types
+✅ **Lazy evaluation** - Streams stay lazy between builtins
+✅ **Immutable context** - Functional updates, no mutation
+✅ **Pure and stateful** - Same signature for both categories
+
+### Adding New Builtins
+
+1. Define `shell_<name>/3` function in `RShell.Builtins`
+2. Handle different stdin types with pattern matching
+3. Return `{new_context, stdout, stderr, exit_code}`
+4. Write tests
+
+No registration needed - reflection handles discovery automatically!

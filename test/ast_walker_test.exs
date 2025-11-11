@@ -8,7 +8,7 @@ defmodule ASTWalkerTest do
       script = "NAME='value'; echo $NAME"
       {:ok, ast} = RShell.parse(script)
 
-      visited = []
+      _visited = []
 
       Walker.walk(ast, fn node ->
         send(self(), {:visited, node.__struct__})
@@ -193,7 +193,7 @@ defmodule ASTWalkerTest do
       script = "if true; then echo hello; fi"
       {:ok, ast} = RShell.parse(script)
 
-      visited = []
+      _visited = []
 
       Walker.walk(ast, fn node ->
         send(self(), {:visited, node.__struct__})
