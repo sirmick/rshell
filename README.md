@@ -52,7 +52,7 @@ This automatically:
 - Generates 59 typed AST structs from the grammar
 - Compiles the Elixir project
 
-For manual build instructions, see [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md).
+For manual build instructions, see [BUILD.md](BUILD.md).
 
 ## Usage
 

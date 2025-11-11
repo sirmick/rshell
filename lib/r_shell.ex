@@ -9,6 +9,27 @@ defmodule RShell do
   alias BashParser.AST.Types
   alias BashParser.AST
 
+  @doc """
+  Parses a Bash script string and returns a strongly-typed AST.
+
+  ## Parameters
+    - `script` - The Bash script content as a string
+    - `opts` - Options (currently unused, reserved for future enhancements)
+
+  ## Returns
+    - `{:ok, ast}` - Successfully parsed AST with typed structs
+    - `{:error, reason}` - Parse error with descriptive message
+
+  ## Examples
+
+      iex> {:ok, ast} = RShell.parse("echo 'Hello World'")
+      iex> ast.__struct__
+      BashParser.AST.Types.Program
+
+      iex> RShell.parse(123)
+      {:error, "Script must be a string, got: 123"}
+  """
+  @spec parse(String.t(), keyword()) :: {:ok, Types.Program.t()} | {:error, String.t()}
   def parse(script, opts \\ []) do
     if not is_binary(script) do
       {:error, "Script must be a string, got: #{inspect(script)}"}
@@ -18,10 +39,12 @@ defmodule RShell do
           # Convert the generic map AST to strongly-typed structs
           typed_ast = convert_to_typed(ast_data)
           {:ok, typed_ast}
+        {:error, reason} when is_binary(reason) ->
+          {:error, "Parse failed: #{reason}"}
         {:error, reason} ->
-          {:error, "#{reason} (parsing failed)"}
+          {:error, "Parse failed: #{inspect(reason)}"}
         other ->
-          {:error, "Unknown parsing error: #{inspect(other, limit: :infinity)}"}
+          {:error, "Unexpected parser response: #{inspect(other, limit: :infinity)}"}
       end
     end
   end
