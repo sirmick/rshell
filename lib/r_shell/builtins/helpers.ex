@@ -21,8 +21,8 @@ defmodule RShell.Builtins.Helpers do
     # We need to use Module.definitions_in/2 to get defined functions
     definitions = Module.definitions_in(env.module, :def)
 
-    # Build list of {name, docstring} for shell_* functions
-    builtin_docs =
+    # Build list of {name, mode} for shell_* functions by reading module attributes
+    builtin_modes =
       definitions
       |> Enum.filter(fn {name, _arity} ->
         String.starts_with?(Atom.to_string(name), "shell_")
@@ -34,15 +34,19 @@ defmodule RShell.Builtins.Helpers do
             |> String.trim_leading("shell_")
             |> String.to_atom()
 
-          # Get docstring from accumulated attributes
-          # This is a limitation - we need to manually associate docs
-          # For now, we'll use a simpler runtime approach
-          {builtin_name, nil}
+          # Read the @shell_*_opts attribute
+          mode_attr = String.to_atom("shell_#{builtin_name}_opts")
+          mode = Module.get_attribute(env.module, mode_attr)
+
+          {builtin_name, mode}
         else
           nil
         end
       end)
       |> Enum.reject(&is_nil/1)
+
+    # Separate into just names for doc generation
+    builtin_docs = Enum.map(builtin_modes, fn {name, _mode} -> {name, nil} end)
 
     # Generate stub functions that will be populated at runtime
     option_clauses = Enum.map(builtin_docs, fn {name, _doc} ->
@@ -80,10 +84,18 @@ defmodule RShell.Builtins.Helpers do
       end
     end)
 
+    # Generate mode lookup function
+    mode_clauses = Enum.map(builtin_modes, fn {name, mode} ->
+      quote do
+        defp __builtin_mode__(unquote(name)), do: unquote(mode)
+      end
+    end)
+
     # Generate fallback and helper functions
     helper_functions = quote do
       defp __builtin_options__(_unknown), do: []
       defp __builtin_help__(_unknown), do: "No help available"
+      defp __builtin_mode__(_unknown), do: nil
 
       @doc """
       Parse builtin options using the generated option specs.
@@ -106,6 +118,6 @@ defmodule RShell.Builtins.Helpers do
       end
     end
 
-    [option_clauses, helper_functions]
+    [option_clauses, mode_clauses, helper_functions]
   end
 end

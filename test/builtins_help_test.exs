@@ -3,6 +3,11 @@ defmodule RShell.BuiltinsHelpTest do
 
   alias RShell.Builtins
 
+  # Helper to materialize streams to strings for assertions
+  defp materialize(stream) when is_function(stream) do
+    stream |> Enum.map(&to_string/1) |> Enum.join("")
+  end
+
   describe "get_builtin_help/1 integration" do
     test "returns help for echo builtin" do
       help = Builtins.get_builtin_help("echo")
@@ -45,43 +50,43 @@ defmodule RShell.BuiltinsHelpTest do
 
   describe "man builtin integration" do
     test "displays help for specified builtin" do
-      context = %{env: %{}, cwd: "/", mode: :simulate}
+      context = %{env: %{}, cwd: "/"}
 
-      {_ctx, stdout, stderr, exit_code} = Builtins.shell_man(["echo"], "", context)
+      {_ctx, stdout, stderr, exit_code} = Builtins.execute("man", ["echo"], "", context)
 
-      assert stdout =~ "echo"
-      assert stdout =~ "write arguments"
-      assert stderr == ""
+      assert materialize(stdout) =~ "echo"
+      assert materialize(stdout) =~ "write arguments"
+      assert materialize(stderr) == ""
       assert exit_code == 0
     end
 
     test "lists all builtins with -a flag" do
-      context = %{env: %{}, cwd: "/", mode: :simulate}
+      context = %{env: %{}, cwd: "/"}
 
-      {_ctx, stdout, _stderr, exit_code} = Builtins.shell_man(["-a"], "", context)
+      {_ctx, stdout, _stderr, exit_code} = Builtins.execute("man", ["-a"], "", context)
 
-      assert stdout =~ "Available builtins:"
-      assert stdout =~ "echo"
-      assert stdout =~ "pwd"
-      assert stdout =~ "cd"
+      assert materialize(stdout) =~ "Available builtins:"
+      assert materialize(stdout) =~ "echo"
+      assert materialize(stdout) =~ "pwd"
+      assert materialize(stdout) =~ "cd"
       assert exit_code == 0
     end
 
     test "returns error for unknown builtin" do
-      context = %{env: %{}, cwd: "/", mode: :simulate}
+      context = %{env: %{}, cwd: "/"}
 
-      {_ctx, _stdout, stderr, exit_code} = Builtins.shell_man(["nonexistent"], "", context)
+      {_ctx, _stdout, stderr, exit_code} = Builtins.execute("man", ["nonexistent"], "", context)
 
-      assert stderr =~ "no manual entry"
+      assert materialize(stderr) =~ "no manual entry"
       assert exit_code == 1
     end
 
     test "returns error when no command specified" do
-      context = %{env: %{}, cwd: "/", mode: :simulate}
+      context = %{env: %{}, cwd: "/"}
 
-      {_ctx, _stdout, stderr, exit_code} = Builtins.shell_man([], "", context)
+      {_ctx, _stdout, stderr, exit_code} = Builtins.execute("man", [], "", context)
 
-      assert stderr =~ "missing command name"
+      assert materialize(stderr) =~ "missing command name"
       assert exit_code == 1
     end
   end

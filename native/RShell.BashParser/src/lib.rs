@@ -287,6 +287,12 @@ fn convert_node_to_map<'env>(
     result.insert("end_col".to_string(), end.column.encode(env));
     result.insert("text".to_string(), text.encode(env));
     
+    // Add tree-sitter node metadata flags for error recovery
+    result.insert("is_missing".to_string(), node.is_missing().encode(env));
+    result.insert("is_extra".to_string(), node.is_extra().encode(env));
+    result.insert("is_error".to_string(), node.is_error().encode(env));
+    result.insert("has_error".to_string(), node.has_error().encode(env));
+    
     // Extract ALL named fields automatically using tree-sitter's field metadata
     extract_all_node_fields(node, source, &mut result, env);
     

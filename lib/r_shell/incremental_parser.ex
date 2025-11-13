@@ -149,9 +149,7 @@ defmodule RShell.IncrementalParser do
           resource: resource,
           buffer_size: buffer_size,
           session_id: session_id,
-          broadcast: broadcast,
-          command_count: 0,
-          last_executable_row: -1
+          broadcast: broadcast
         }}
 
       error ->
@@ -162,27 +160,55 @@ defmodule RShell.IncrementalParser do
 
   @impl true
   def handle_call({:append_fragment, fragment}, _from, state) do
-    case BashParser.parse_incremental(state.resource, fragment) do
-      {:ok, ast_map} ->
-        # Convert to typed struct
-        typed_ast = Types.from_map(ast_map)
+    # Wrap entire parsing in try/catch to ensure we ALWAYS send a response
+    try do
+      case BashParser.parse_incremental(state.resource, fragment) do
+        {:ok, ast_map} ->
+          # Convert to typed struct
+          typed_ast = Types.from_map(ast_map)
 
-        # Broadcast typed AST update
+          # Broadcast typed AST update
+          if state.broadcast && state.session_id do
+            broadcast_ast_update(state.session_id, typed_ast)
+          end
+
+          # Check for executable nodes and broadcast
+          new_state = if state.broadcast && state.session_id do
+            check_and_broadcast_executable_nodes(typed_ast, ast_map, state)
+          else
+            state
+          end
+
+          # Broadcast parsing complete event
+          if state.broadcast && state.session_id do
+            PubSub.broadcast(state.session_id, :ast, {:parsing_complete})
+          end
+
+          {:reply, {:ok, typed_ast}, new_state}
+
+        {:error, _reason} = error ->
+          # Parser returned error - broadcast failure
+          if state.broadcast && state.session_id do
+            PubSub.broadcast(state.session_id, :ast, {:parsing_failed, error})
+          end
+          {:reply, error, state}
+      end
+    rescue
+      exception ->
+        # Parser crashed - ALWAYS broadcast the error so clients don't timeout
+        error_msg = %{
+          reason: "parser_crash",
+          exception: Exception.format(:error, exception, __STACKTRACE__),
+          fragment_preview: String.slice(fragment, 0, 100)
+        }
+
+        Logger.error("Parser crashed: #{inspect(exception)}")
+
         if state.broadcast && state.session_id do
-          broadcast_ast_update(state.session_id, typed_ast)
+          PubSub.broadcast(state.session_id, :ast, {:parsing_crashed, error_msg})
         end
 
-        # Check for executable nodes and broadcast
-        new_state = if state.broadcast && state.session_id do
-          check_and_broadcast_executable_nodes(typed_ast, ast_map, state)
-        else
-          state
-        end
-
-        {:reply, {:ok, typed_ast}, new_state}
-
-      {:error, _reason} = error ->
-        {:reply, error, state}
+        {:reply, {:error, error_msg}, state}
     end
   end
 
@@ -190,9 +216,7 @@ defmodule RShell.IncrementalParser do
   def handle_call(:reset, _from, state) do
     :ok = BashParser.reset_parser(state.resource)
     Logger.debug("Parser state reset for session=#{inspect(state.session_id)}")
-    # Reset command tracking
-    new_state = %{state | command_count: 0, last_executable_row: -1}
-    {:reply, :ok, new_state}
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -266,36 +290,23 @@ defmodule RShell.IncrementalParser do
 
       # Find executable nodes that are:
       # 1. Valid node type
-      # 2. After the last executable row we've seen
-      # 3. Ends with newline (complete line)
-      # 4. No ERROR nodes in subtree
+      # 2. Ends with newline (complete line)
+      # 3. No ERROR nodes in subtree
       executable_pairs =
         children_pairs
         |> Enum.filter(fn {_map, typed} -> is_executable_node?(typed) end)
-        |> Enum.filter(fn {map, _typed} ->
-          end_row = Map.get(map, "end_row", -1)
-          end_row > state.last_executable_row
-        end)
         |> Enum.filter(fn {map, _typed} ->
           is_node_complete?(map, accumulated_input)
         end)
         |> Enum.sort_by(fn {map, _typed} -> Map.get(map, "end_row", 0) end)
 
       # Broadcast each new executable node (typed struct)
-      new_state = Enum.reduce(executable_pairs, state, fn {map, typed}, acc_state ->
-        command_count = acc_state.command_count + 1
-        end_row = Map.get(map, "end_row", -1)
-
-        Logger.debug("Broadcasting executable node #{command_count} at row #{end_row}")
-        PubSub.broadcast(acc_state.session_id, :executable, {:executable_node, typed, command_count})
-
-        %{acc_state |
-          command_count: command_count,
-          last_executable_row: end_row
-        }
+      Enum.each(executable_pairs, fn {_map, typed} ->
+        Logger.debug("Broadcasting executable node")
+        PubSub.broadcast(state.session_id, :executable, {:executable_node, typed})
       end)
 
-      new_state
+      state
     end
   end
 

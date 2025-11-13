@@ -6,7 +6,6 @@ defmodule TestHelperTypedAST do
   and new typed struct AST with a consistent interface.
   """
 
-
   @doc """
   Get the type string from a typed AST node.
   """
@@ -47,12 +46,85 @@ defmodule TestHelperTypedAST do
   @doc """
   Check if node or its children contain ERROR nodes.
   """
-  def has_error_in_children?(%{__struct__: :error_node}), do: true
+  def has_error_in_children?(%BashParser.AST.Types.ErrorNode{}), do: true
   def has_error_in_children?(%{"type" => "ERROR"}), do: true
   def has_error_in_children?(node) do
     children = get_children(node)
     Enum.any?(children, &has_error_in_children?/1)
   end
+
+  @doc """
+  Parse input and assert type, with helpful error output on failure.
+
+  Returns the parsed AST on success.
+  Outputs input + full AST structure on failure.
+  """
+  def assert_parse(input, expected_type) do
+    case RShell.parse(input) do
+      {:ok, ast} ->
+        actual_type = get_type(ast)
+
+        if actual_type != expected_type do
+          ExUnit.Assertions.flunk("""
+          Parse type mismatch
+
+          Input:
+          #{input}
+
+          Expected type: #{inspect(expected_type)}
+          Actual type: #{inspect(actual_type)}
+
+          Full AST:
+          #{inspect(ast, limit: :infinity, pretty: true)}
+          """)
+        end
+
+        ast
+
+      {:error, reason} ->
+        ExUnit.Assertions.flunk("""
+        Parse failed
+
+        Input:
+        #{input}
+
+        Error: #{inspect(reason)}
+        """)
+    end
+  end
+
+  @doc """
+  Assert exact AST structure match for better error messages.
+  """
+  def assert_ast_structure(ast, expected_structure) do
+    actual = simplify_ast(ast)
+
+    unless actual == expected_structure do
+      ExUnit.Assertions.flunk("""
+      AST structure mismatch
+
+      Expected:
+      #{inspect(expected_structure, pretty: true)}
+
+      Actual:
+      #{inspect(actual, pretty: true)}
+
+      Full AST:
+      #{inspect(ast, limit: :infinity, pretty: true)}
+      """)
+    end
+  end
+
+  # Simplify AST to comparable structure (type + children types)
+  defp simplify_ast(node) when is_struct(node) do
+    type = get_type(node)
+    children = get_children(node) |> Enum.map(&simplify_ast/1)
+    if children == [], do: type, else: {type, children}
+  end
+  defp simplify_ast(_), do: nil
 end
+
+# Suppress debug logs during tests
+Logger.configure(level: :warning)
 
 ExUnit.start()

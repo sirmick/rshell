@@ -35,7 +35,6 @@ defmodule RShell.Runtime do
 
   Options:
     - `:session_id` - Session identifier (required)
-    - `:mode` - Execution mode (:simulate | :capture | :real)
     - `:auto_execute` - Execute nodes as they arrive (default: true)
     - `:env` - Initial environment variables
     - `:cwd` - Initial working directory
@@ -82,18 +81,12 @@ defmodule RShell.Runtime do
     GenServer.call(server, {:set_cwd, path})
   end
 
-  @doc "Set execution mode"
-  @spec set_mode(GenServer.server(), :simulate | :capture | :real) :: :ok
-  def set_mode(server, mode) when mode in [:simulate, :capture, :real] do
-    GenServer.call(server, {:set_mode, mode})
-  end
 
   # Server Callbacks
 
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    mode = Keyword.get(opts, :mode, :simulate)
     auto_execute = Keyword.get(opts, :auto_execute, true)
     env = Keyword.get(opts, :env, System.get_env())
     cwd = Keyword.get(opts, :cwd, System.get_env("PWD") || "/")
@@ -102,7 +95,6 @@ defmodule RShell.Runtime do
     PubSub.subscribe(session_id, [:executable])
 
     context = %{
-      mode: mode,
       env: env,
       cwd: cwd,
       exit_code: 0,
@@ -111,7 +103,7 @@ defmodule RShell.Runtime do
       errors: []
     }
 
-    Logger.debug("Runtime started: session_id=#{session_id}, mode=#{mode}")
+    Logger.debug("Runtime started: session_id=#{session_id}")
 
     {:ok, %{
       session_id: session_id,
@@ -156,18 +148,32 @@ defmodule RShell.Runtime do
     {:reply, :ok, %{state | context: new_context}}
   end
 
-  @impl true
-  def handle_call({:set_mode, mode}, _from, state) do
-    new_context = %{state.context | mode: mode}
-    {:reply, :ok, %{state | context: new_context}}
-  end
 
   # Handle executable nodes from parser
   @impl true
-  def handle_info({:executable_node, node, _command_count}, state) do
+  def handle_info({:executable_node, node}, state) do
     if state.auto_execute do
-      {_result, new_context} = execute_node_internal(node, state.context, state.session_id)
-      {:noreply, %{state | context: new_context}}
+      try do
+        {_result, new_context} = execute_node_internal(node, state.context, state.session_id)
+        {:noreply, %{state | context: new_context}}
+      rescue
+        e in RuntimeError ->
+          # Broadcast execution failure
+          PubSub.broadcast(state.session_id, :runtime, {:execution_failed, %{
+            reason: "NotImplementedError",
+            message: Exception.message(e),
+            node_type: node.__struct__ |> Module.split() |> List.last()
+          }})
+          {:noreply, state}
+
+        e ->
+          # Other errors
+          PubSub.broadcast(state.session_id, :runtime, {:execution_failed, %{
+            reason: e.__struct__ |> Module.split() |> List.last(),
+            message: Exception.message(e)
+          }})
+          {:noreply, state}
+      end
     else
       {:noreply, state}
     end
@@ -200,8 +206,7 @@ defmodule RShell.Runtime do
     {{:ok, new_context}, new_context}
   end
 
-  # Simple execution logic (can be enhanced later)
-  # Pattern match on typed structs instead of string types
+  # Execute AST nodes
   defp simple_execute(node, context, session_id) do
     new_context = %{context | command_count: context.command_count + 1}
 
@@ -209,49 +214,51 @@ defmodule RShell.Runtime do
       %Types.Command{} = cmd ->
         execute_command(cmd, new_context, session_id)
 
-      %Types.DeclarationCommand{} = decl ->
-        execute_declaration(decl, new_context, session_id)
+      # Unimplemented node types
+      %Types.DeclarationCommand{} ->
+        raise "DeclarationCommand execution not yet implemented"
 
-      %Types.Pipeline{} = pipe ->
-        execute_pipeline(pipe, new_context, session_id)
+      %Types.Pipeline{} ->
+        raise "Pipeline execution not yet implemented"
 
-      %Types.List{} = list ->
-        execute_list(list, new_context, session_id)
+      %Types.List{} ->
+        raise "List execution not yet implemented"
 
-      %Types.IfStatement{} = if_stmt ->
-        execute_if_statement(if_stmt, new_context, session_id)
+      %Types.IfStatement{} ->
+        raise "IfStatement execution not yet implemented"
 
-      %Types.ForStatement{} = for_stmt ->
-        execute_for_statement(for_stmt, new_context, session_id)
+      %Types.ForStatement{} ->
+        raise "ForStatement execution not yet implemented"
 
-      %Types.WhileStatement{} = while_stmt ->
-        execute_while_statement(while_stmt, new_context, session_id)
+      %Types.WhileStatement{} ->
+        raise "WhileStatement execution not yet implemented"
 
-      %Types.CaseStatement{} = case_stmt ->
-        execute_case_statement(case_stmt, new_context, session_id)
+      %Types.CaseStatement{} ->
+        raise "CaseStatement execution not yet implemented"
 
-      %Types.FunctionDefinition{} = func_def ->
-        execute_function_definition(func_def, new_context, session_id)
+      %Types.FunctionDefinition{} ->
+        raise "FunctionDefinition execution not yet implemented"
 
       other ->
-        # For other node types, just log and return
         node_type = other.__struct__ |> Module.split() |> List.last()
-        text = Map.get(other.source_info, :text, "")
-        Logger.debug("Executing #{node_type}: #{inspect(text)}")
-        new_context
+        raise "Execution not implemented for #{node_type}"
     end
   end
 
   defp execute_command(%Types.Command{source_info: source_info} = cmd, context, session_id) do
     text = source_info.text || ""
 
-    # Extract command name and arguments
-    case extract_command_parts(cmd) do
+    # Extract command name and arguments with context for variable expansion
+    case extract_command_parts(cmd, context) do
       {:ok, command_name, args} ->
         # Check if it's a builtin command
         if Builtins.is_builtin?(command_name) do
+          # Pass native args directly to builtins
           execute_builtin(command_name, args, "", context, session_id)
         else
+          # For external commands, convert native values to JSON
+          _json_args = Enum.map(args, &convert_to_string/1)
+          # TODO: Use json_args when implementing external command execution
           # Execute as external command
           execute_external_command(text, context, session_id)
         end
@@ -261,6 +268,24 @@ defmodule RShell.Runtime do
         execute_external_command(text, context, session_id)
     end
   end
+
+  # Convert native values to strings for external commands
+  defp convert_to_string(value) when is_binary(value), do: value
+  defp convert_to_string(value) when is_map(value), do: Jason.encode!(value)
+  defp convert_to_string(value) when is_list(value) do
+    # Check if charlist
+    if Enum.all?(value, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
+      List.to_string(value)
+    else
+      Jason.encode!(value)
+    end
+  end
+  defp convert_to_string(value) when is_integer(value), do: Integer.to_string(value)
+  defp convert_to_string(value) when is_float(value), do: Float.to_string(value)
+  defp convert_to_string(true), do: "true"
+  defp convert_to_string(false), do: "false"
+  defp convert_to_string(nil), do: ""
+  defp convert_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
 
   # Execute a builtin command
   defp execute_builtin(name, args, stdin, context, session_id) do
@@ -294,33 +319,14 @@ defmodule RShell.Runtime do
   end
 
   # Execute an external command (non-builtin)
-  defp execute_external_command(text, context, session_id) do
-    # Simple command execution
-    case context.mode do
-      :simulate ->
-        # Just simulate - broadcast what would happen
-        output = "[SIMULATED] #{text}"
-        PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-        %{context | output: [output | context.output], exit_code: 0}
-
-      :capture ->
-        # Capture output without actually running
-        output = "[CAPTURED] #{text}"
-        PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-        %{context | output: [output | context.output], exit_code: 0}
-
-      :real ->
-        # Actually execute (TODO: implement real execution)
-        output = "[WOULD EXECUTE] #{text}"
-        PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-        %{context | output: [output | context.output], exit_code: 0}
-    end
+  defp execute_external_command(_text, _context, _session_id) do
+    raise "External command execution not yet implemented"
   end
 
-  # Extract command name and arguments from Command AST node
-  defp extract_command_parts(%Types.Command{name: name_node, argument: args_nodes}) do
+  # Extract command name and arguments from Command AST node with context
+  defp extract_command_parts(%Types.Command{name: name_node, argument: args_nodes}, context) do
     with {:ok, command_name} <- extract_command_name(name_node),
-         {:ok, args} <- extract_arguments(args_nodes) do
+         {:ok, args} <- extract_arguments(args_nodes, context) do
       {:ok, command_name, args}
     else
       error -> error
@@ -334,7 +340,7 @@ defmodule RShell.Runtime do
       children
       |> Enum.map(&extract_text_from_node/1)
       |> Enum.join("")
-    
+
     {:ok, name}
   end
 
@@ -348,32 +354,96 @@ defmodule RShell.Runtime do
 
   defp extract_command_name(_), do: {:error, :unknown_name_type}
 
-  # Extract arguments from argument nodes
-  defp extract_arguments(nil), do: {:ok, []}
-  defp extract_arguments([]), do: {:ok, []}
-  
-  defp extract_arguments(args_nodes) when is_list(args_nodes) do
+  # Extract arguments from argument nodes with context for variable expansion
+  defp extract_arguments(nil, _context), do: {:ok, []}
+  defp extract_arguments([], _context), do: {:ok, []}
+
+  defp extract_arguments(args_nodes, context) when is_list(args_nodes) do
     args =
       args_nodes
-      |> Enum.map(&extract_text_from_node/1)
+      |> Enum.map(&extract_text_from_node(&1, context))
       |> Enum.reject(&(&1 == ""))
-    
+
     {:ok, args}
   end
 
   # Extract text from any node by traversing the typed structure
+  # All 2-arity versions (with context) grouped together
+  defp extract_text_from_node(%Types.String{children: children}, context) when is_list(children) do
+    # For String nodes, extract the content inside the quotes
+    # This allows JSON values like '{"x":1}' to be parsed correctly
+    children
+    |> Enum.map(&extract_text_from_node(&1, context))
+    |> Enum.map(&convert_to_string/1)
+    |> Enum.join("")
+  end
+
+  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}, _context) when is_binary(text) do
+    # RawString nodes (single quotes in bash) preserve everything literally
+    # Strip the outer single quotes for JSON parsing: 'value' -> value
+    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and String.length(text) >= 2 do
+      String.slice(text, 1..-2)
+    else
+      text
+    end
+  end
+
+  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}, _context), do: text
+
+  defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context) when is_list(children) do
+    # Extract variable name
+    var_name = children
+      |> Enum.map(&extract_variable_name/1)
+      |> Enum.join("")
+
+    # Look up in context.env
+    case Map.get(context.env || %{}, var_name) do
+      nil ->
+        # Undefined variable - return empty string (bash behavior)
+        ""
+
+      value ->
+        # Return the native value (for builtins) or will be converted to JSON (for external)
+        value
+    end
+  end
+
+  defp extract_text_from_node(%Types.VariableName{source_info: %{text: text}}, _context), do: text
+
+  defp extract_text_from_node(%Types.Word{source_info: %{text: text}}, _context), do: text
+
+  defp extract_text_from_node(%Types.Concatenation{children: children}, context) when is_list(children) do
+    children
+    |> Enum.map(&extract_text_from_node(&1, context))
+    |> Enum.map(&convert_to_string/1)  # Convert native values to strings for concatenation
+    |> Enum.join("")
+  end
+
+  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
+
+  defp extract_text_from_node(_, _context), do: ""
+
+  # All 1-arity versions (without context) grouped together - fallbacks
   defp extract_text_from_node(%Types.String{children: children}) when is_list(children) do
-    # String nodes contain StringContent or expansions
+    # For String nodes, extract the content inside the quotes
     children
     |> Enum.map(&extract_text_from_node/1)
     |> Enum.join("")
   end
 
+  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}) when is_binary(text) do
+    # RawString nodes (single quotes in bash) - strip outer quotes
+    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and String.length(text) >= 2 do
+      String.slice(text, 1..-2)
+    else
+      text
+    end
+  end
+
   defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}), do: text
 
   defp extract_text_from_node(%Types.SimpleExpansion{children: children}) when is_list(children) do
-    # For now, return the expansion text as-is (e.g., "$VAR")
-    # Later we can expand variables from context
+    # Return the expansion text as-is (e.g., "$VAR")
     children
     |> Enum.map(&extract_text_from_node/1)
     |> Enum.join("")
@@ -394,107 +464,14 @@ defmodule RShell.Runtime do
 
   defp extract_text_from_node(_), do: ""
 
-  # Materialize output - convert streams/enumerables to strings
-  defp materialize_output(output) when is_binary(output), do: output
-  
-  defp materialize_output(output) when is_list(output) do
-    output
-    |> Enum.map(&to_string/1)
-    |> Enum.join("")
-  end
+  # Extract variable name from VariableName node (helper for variable expansion)
+  defp extract_variable_name(%Types.VariableName{source_info: %{text: text}}), do: text
+  defp extract_variable_name(_), do: ""
 
-  defp materialize_output(%Stream{} = stream) do
+  # Materialize output - convert Stream to string
+  defp materialize_output(stream) when is_function(stream) do
     stream
     |> Enum.map(&to_string/1)
     |> Enum.join("")
-  end
-
-  defp materialize_output(output) do
-    # Try to enumerate it
-    try do
-      output
-      |> Enum.map(&to_string/1)
-      |> Enum.join("")
-    rescue
-      Protocol.UndefinedError ->
-        # Not enumerable, convert to string
-        to_string(output)
-    end
-  end
-
-  defp execute_declaration(%Types.DeclarationCommand{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-
-    # Try to parse variable assignment (export FOO=bar)
-    case Regex.run(~r/export\s+([A-Za-z_][A-Za-z0-9_]*)=(.+)/, text) do
-      [_, name, value] ->
-        # Remove quotes if present
-        clean_value = String.trim(value, "\"'")
-
-        new_env = Map.put(context.env, name, clean_value)
-
-        # Broadcast variable set
-        PubSub.broadcast(session_id, :context, {:variable_set, %{
-          name: name,
-          value: clean_value
-        }})
-
-        %{context | env: new_env, exit_code: 0}
-
-      nil ->
-        Logger.debug("Could not parse declaration: #{text}")
-        context
-    end
-  end
-
-  defp execute_pipeline(%Types.Pipeline{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-
-    output = "[PIPELINE] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-
-    %{context | output: [output | context.output], exit_code: 0}
-  end
-
-  defp execute_list(%Types.List{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-    output = "[LIST] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-    %{context | output: [output | context.output], exit_code: 0}
-  end
-
-  defp execute_if_statement(%Types.IfStatement{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-    output = "[IF_STATEMENT] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-    %{context | output: [output | context.output], exit_code: 0}
-  end
-
-  defp execute_for_statement(%Types.ForStatement{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-    output = "[FOR_STATEMENT] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-    %{context | output: [output | context.output], exit_code: 0}
-  end
-
-  defp execute_while_statement(%Types.WhileStatement{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-    output = "[WHILE_STATEMENT] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-    %{context | output: [output | context.output], exit_code: 0}
-  end
-
-  defp execute_case_statement(%Types.CaseStatement{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-    output = "[CASE_STATEMENT] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-    %{context | output: [output | context.output], exit_code: 0}
-  end
-
-  defp execute_function_definition(%Types.FunctionDefinition{source_info: source_info}, context, session_id) do
-    text = source_info.text || ""
-    output = "[FUNCTION_DEFINITION] #{text}"
-    PubSub.broadcast(session_id, :output, {:stdout, output <> "\n"})
-    %{context | output: [output | context.output], exit_code: 0}
   end
 end

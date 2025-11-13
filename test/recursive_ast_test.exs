@@ -100,7 +100,8 @@ defmodule RecursiveASTTest do
 
       # Test binary expression extraction
       binary_exprs = RShell.find_nodes(ast, "binary_expression")
-      assert length(binary_exprs) >= 1
+      assert length(binary_exprs) == 1,
+        "Expected exactly 1 binary_expression, got #{length(binary_exprs)}"
 
       # Test field extraction
       binary_expr = List.first(binary_exprs)
@@ -145,7 +146,7 @@ defmodule RecursiveASTTest do
         {:ok, ast} = RShell.parse(script)
         nodes = RShell.find_nodes(ast, node_type)
 
-        assert length(nodes) >= 1, "Expected at least one #{node_type} in: #{script}"
+        assert length(nodes) == 1, "Expected exactly 1 #{node_type} in: #{script}"
 
         node = List.first(nodes)
         for field <- expected_fields do
@@ -172,7 +173,11 @@ defmodule RecursiveASTTest do
 
       for node_type <- node_types do
         nodes = RShell.find_nodes(ast, node_type)
-        assert length(nodes) >= 1, "Expected at least one #{node_type}"
+        case node_type do
+          "command" -> assert length(nodes) == 2, "Expected 2 commands, got #{length(nodes)}"
+          "variable_assignment" -> assert length(nodes) == 1, "Expected 1 variable_assignment, got #{length(nodes)}"
+          "if_statement" -> assert length(nodes) == 1, "Expected 1 if_statement, got #{length(nodes)}"
+        end
 
         # Verify each node has the expected structure
         for node <- nodes do

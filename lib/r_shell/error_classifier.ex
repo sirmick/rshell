@@ -1,143 +1,249 @@
 defmodule RShell.ErrorClassifier do
   @moduledoc """
-  Classifies parse states to distinguish between:
+  Classifies parse states for typed AST structs to distinguish between:
   1. Complete & valid AST (ready to execute)
-  2. Incomplete structures (waiting for closing keywords)
+  2. Incomplete structures (waiting for closing keywords like fi, done, esac)
   3. Syntax errors (invalid bash syntax)
 
   Uses tree-sitter's ERROR nodes as the authoritative signal for syntax errors.
 
   ## Classification Logic
 
-  - `has_errors=false` → Complete and valid
-  - `has_errors=true` AND has ERROR nodes → Syntax error
-  - `has_errors=true` AND no ERROR nodes → Incomplete structure
+  - No ERROR nodes, no incomplete structures → `:complete`
+  - Has ERROR nodes → `:syntax_error`
+  - Has structure nodes (IfStatement, ForStatement) but no ERROR nodes → `:incomplete`
 
   ## Examples
 
-      # Complete
-      {:complete, %{has_errors: false}}
+      # Using typed AST (from IncrementalParser.get_current_ast)
+      {:ok, typed_ast} = IncrementalParser.get_current_ast(parser_pid)
 
-      # Incomplete
-      {:incomplete, %{
-        has_error_nodes: false,
-        incomplete_info: %{type: "if_statement", expecting: "fi"}
-      }}
+      case ErrorClassifier.classify(typed_ast) do
+        :complete -> "rshell> "
+        :incomplete -> "     > "  # Awaiting closing keyword
+        :syntax_error -> "  err> "
+      end
 
-      # Syntax error
-      {:syntax_error, %{
-        has_error_nodes: true,
-        error_info: %{start_row: 0, text: "..."}
-      }}
+  ## Usage in CLI
+
+      prompt = case ErrorClassifier.classify(typed_ast) do
+        :complete -> "rshell> "
+        :incomplete -> "     > "
+        :syntax_error -> "  err> "
+      end
   """
 
   @doc """
-  Classify the parse state based on AST and parser resource.
+  Classify a typed AST struct.
 
-  Returns `{state, info}` tuple where state is:
-  - `:complete` - Ready to execute
-  - `:incomplete` - Waiting for more input
-  - `:syntax_error` - Invalid syntax
+  Returns one of:
+  - `:complete` - Ready to execute, no errors
+  - `:incomplete` - Awaiting closing keyword (fi, done, esac, etc.)
+  - `:syntax_error` - Invalid syntax detected
+
+  ## Examples
+
+      iex> ErrorClassifier.classify(complete_ast)
+      :complete
+
+      iex> ErrorClassifier.classify(if_without_fi_ast)
+      :incomplete
+
+      iex> ErrorClassifier.classify(invalid_syntax_ast)
+      :syntax_error
   """
-  @spec classify_parse_state(map(), reference()) ::
-    {:complete, map()} | {:incomplete, map()} | {:syntax_error, map()}
-  def classify_parse_state(ast, resource) do
-    has_errors = BashParser.has_errors(resource)
-
+  @spec classify(term()) :: :complete | :incomplete | :syntax_error
+  def classify(ast) do
     cond do
-      # No errors - tree is complete and valid
-      not has_errors ->
-        {:complete, %{has_errors: false}}
+      # Check incomplete structures FIRST (softer error state)
+      # This catches cases like "for i in 1 2 3\ndo" which have ForStatement + tree errors
+      has_incomplete_structure?(ast) ->
+        :incomplete
 
-      # Has ERROR nodes - syntax error (tree-sitter couldn't parse it)
+      # THEN check for ERROR nodes (true syntax errors)
+      # This catches cases like "for i in 1 2 3" (no ForStatement, only ERROR)
       has_error_nodes?(ast) ->
-        {:syntax_error, %{
-          has_error_nodes: true,
-          error_info: extract_error_info(ast)
-        }}
+        :syntax_error
 
-      # No ERROR nodes but has_errors - incomplete structure
+      # No errors, no incomplete structures - complete
       true ->
-        {:incomplete, %{
-          has_error_nodes: false,
-          incomplete_info: identify_incomplete_structure(ast)
-        }}
+        :complete
     end
   end
 
   @doc """
-  Recursively check if AST contains ERROR nodes.
+  Check if typed AST has incomplete structures.
 
-  ERROR nodes are tree-sitter's way of marking syntax it couldn't parse.
+  An AST is incomplete if it has control flow structure nodes
+  (IfStatement, ForStatement, WhileStatement, etc.) that are
+  awaiting closing keywords.
+
+  ## Examples
+
+      # if true; then (no fi) - incomplete
+      iex> ErrorClassifier.has_incomplete_structure?(if_stmt_ast)
+      true
+
+      # if true; then echo hi; fi - complete
+      iex> ErrorClassifier.has_incomplete_structure?(complete_if_ast)
+      false
+  """
+  @spec has_incomplete_structure?(term()) :: boolean()
+  def has_incomplete_structure?(ast) do
+    # Check if we have an incomplete structure by looking for structure nodes
+    # that don't have their expected closing
+    identify_incomplete_structure(ast) != nil
+  end
+
+  @doc """
+  Check if typed AST struct contains ERROR nodes.
+
+  ERROR nodes indicate tree-sitter couldn't parse the syntax.
+
+  ## Examples
+
+      # if then fi (invalid) - has ERROR nodes
+      iex> ErrorClassifier.has_error_nodes?(syntax_error_ast)
+      true
+
+      # if true; then (incomplete but valid) - no ERROR nodes
+      iex> ErrorClassifier.has_error_nodes?(incomplete_ast)
+      false
   """
   @spec has_error_nodes?(term()) :: boolean()
-  def has_error_nodes?(node) when is_map(node) do
-    if node["type"] == "ERROR" do
-      true
-    else
-      children = node["children"] || []
-      Enum.any?(children, &has_error_nodes?/1)
-    end
+  def has_error_nodes?(%BashParser.AST.Types.ErrorNode{}), do: true
+
+  def has_error_nodes?(node) when is_struct(node) do
+    # Check all fields recursively (includes :children and other fields)
+    node
+    |> Map.from_struct()
+    |> Map.values()
+    |> Enum.any?(&has_error_nodes?/1)
   end
+
+  def has_error_nodes?(list) when is_list(list) do
+    Enum.any?(list, &has_error_nodes?/1)
+  end
+
   def has_error_nodes?(_), do: false
 
   @doc """
-  Extract error information from AST for user feedback.
+  Count structure nodes in typed AST (control flow that needs closing).
 
-  Finds the first ERROR node and returns its location and text.
+  Structure nodes are control flow constructs that require closing keywords:
+  - IfStatement (needs fi)
+  - ForStatement (needs done)
+  - WhileStatement (needs done)
+  - UntilStatement (needs done)
+  - CaseStatement (needs esac)
+  - FunctionDefinition (needs closing brace)
   """
-  @spec extract_error_info(map()) :: map()
-  def extract_error_info(ast) do
-    case find_error_node(ast) do
-      nil ->
-        %{start_row: 0, end_row: 0, text: "unknown"}
+  @spec count_structure_nodes(term()) :: non_neg_integer()
+  def count_structure_nodes(%BashParser.AST.Types.IfStatement{} = node), do: 1 + count_children_structures(node)
+  def count_structure_nodes(%BashParser.AST.Types.ForStatement{} = node), do: 1 + count_children_structures(node)
+  def count_structure_nodes(%BashParser.AST.Types.WhileStatement{} = node), do: 1 + count_children_structures(node)
+  def count_structure_nodes(%BashParser.AST.Types.CaseStatement{} = node), do: 1 + count_children_structures(node)
+  def count_structure_nodes(%BashParser.AST.Types.FunctionDefinition{} = node), do: 1 + count_children_structures(node)
 
-      error_node ->
-        %{
-          start_row: error_node["start_row"] || 0,
-          end_row: error_node["end_row"] || 0,
-          start_col: error_node["start_col"] || 0,
-          end_col: error_node["end_col"] || 0,
-          text: error_node["text"] || "unknown"
-        }
+  def count_structure_nodes(node) when is_struct(node), do: count_children_structures(node)
+  def count_structure_nodes(_), do: 0
+
+  defp count_children_structures(node) do
+    if Map.has_key?(node, :children) && is_list(node.children) do
+      Enum.reduce(node.children, 0, fn child, acc ->
+        acc + count_structure_nodes(child)
+      end)
+    else
+      0
     end
   end
+
+  @doc """
+  Count ERROR nodes in typed AST.
+
+  Returns the total number of ERROR nodes found in the AST tree.
+  """
+  @spec count_error_nodes(term()) :: non_neg_integer()
+  def count_error_nodes(%BashParser.AST.Types.ErrorNode{}), do: 1
+
+  def count_error_nodes(node) when is_struct(node) do
+    node
+    |> Map.from_struct()
+    |> Map.values()
+    |> Enum.map(&count_error_nodes/1)
+    |> Enum.sum()
+  end
+
+  def count_error_nodes(list) when is_list(list) do
+    list
+    |> Enum.map(&count_error_nodes/1)
+    |> Enum.sum()
+  end
+
+  def count_error_nodes(_), do: 0
 
   @doc """
   Identify which structure is incomplete and what keyword is expected.
 
-  Analyzes typed nodes (if_statement, for_statement, etc.) to determine
-  what closing keyword is needed.
+  Analyzes the AST to determine what closing keyword is needed.
+  A structure is incomplete if it's missing its closing keyword.
+
+  Returns a map with `:type` and `:expecting` keys, or `nil` if
+  no incomplete structure is found.
+
+  ## Examples
+
+      iex> ErrorClassifier.identify_incomplete_structure(if_ast_without_fi)
+      %{type: :if_statement, expecting: "fi"}
+
+      iex> ErrorClassifier.identify_incomplete_structure(complete_if_ast)
+      nil
   """
-  @spec identify_incomplete_structure(map()) :: map()
-  def identify_incomplete_structure(ast) do
-    children = ast["children"] || []
-
-    # Find the first incomplete structure
-    incomplete = Enum.find_value(children, fn child ->
-      case child["type"] do
-        "if_statement" -> %{type: "if", expecting: "fi"}
-        "for_statement" -> %{type: "for", expecting: "done"}
-        "while_statement" -> %{type: "while", expecting: "done"}
-        "until_statement" -> %{type: "until", expecting: "done"}
-        "case_statement" -> %{type: "case", expecting: "esac"}
-        _ -> nil
-      end
-    end)
-
-    incomplete || %{type: "unknown", expecting: "unknown"}
-  end
-
-  # Private helpers
-
-  # Find the first ERROR node in the tree
-  defp find_error_node(node) when is_map(node) do
-    if node["type"] == "ERROR" do
-      node
+  @spec identify_incomplete_structure(term()) :: map() | nil
+  def identify_incomplete_structure(%BashParser.AST.Types.IfStatement{} = node) do
+    if is_if_incomplete?(node) do
+      %{type: :if_statement, expecting: "fi"}
     else
-      children = node["children"] || []
-      Enum.find_value(children, &find_error_node/1)
+      check_children_for_incomplete(node)
     end
   end
-  defp find_error_node(_), do: nil
+
+  def identify_incomplete_structure(%BashParser.AST.Types.ForStatement{} = node) do
+    if is_for_incomplete?(node) do
+      %{type: :for_statement, expecting: "done"}
+    else
+      check_children_for_incomplete(node)
+    end
+  end
+
+  def identify_incomplete_structure(%BashParser.AST.Types.WhileStatement{}), do: %{type: :while_statement, expecting: "done"}
+  def identify_incomplete_structure(%BashParser.AST.Types.CaseStatement{}), do: %{type: :case_statement, expecting: "esac"}
+  def identify_incomplete_structure(%BashParser.AST.Types.FunctionDefinition{}), do: %{type: :function_definition, expecting: "}"}
+
+  def identify_incomplete_structure(%BashParser.AST.Types.Program{} = node), do: check_children_for_incomplete(node)
+  def identify_incomplete_structure(node) when is_struct(node), do: check_children_for_incomplete(node)
+  def identify_incomplete_structure(_), do: nil
+
+  # Check if an IfStatement is incomplete
+  defp is_if_incomplete?(node) do
+    # An IfStatement from tree-sitter is complete if it parsed successfully
+    # The only way it's incomplete is if the source text doesn't end with "fi"
+    source_text = node.source_info.text || ""
+    not String.ends_with?(String.trim(source_text), "fi")
+  end
+
+  # Check if a ForStatement is incomplete
+  defp is_for_incomplete?(node) do
+    source_text = node.source_info.text || ""
+    not String.ends_with?(String.trim(source_text), "done")
+  end
+
+  # Helper to check children for incomplete structures
+  defp check_children_for_incomplete(node) do
+    if Map.has_key?(node, :children) && is_list(node.children) do
+      Enum.find_value(node.children, &identify_incomplete_structure/1)
+    else
+      nil
+    end
+  end
 end

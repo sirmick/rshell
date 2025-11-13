@@ -2,38 +2,75 @@ defmodule RShell.Builtins do
   @moduledoc """
   Built-in shell commands implemented in Elixir.
 
-  Each builtin follows the unified signature:
-  ```
-  shell_*(argv, stdin, context) -> {new_context, stdout, stderr, exit_code}
+  Each builtin must declare its invocation mode using the `@shell_*_opts` attribute:
+  - `@shell_name_opts :parsed` - Parse options from docstring, receive ParsedOptions or ParseError struct
+  - `@shell_name_opts :argv` - Receive raw argv list for custom parsing
+
+  ## Invocation Modes
+
+  ### :parsed Mode
+  Builtin receives either ParsedOptions (success) or ParseError (failure):
+  ```elixir
+  @shell_echo_opts :parsed
+  def shell_echo(%ParsedOptions{} = opts, stdin, context) do
+    # opts.options = %{no_newline: true, ...}
+    # opts.arguments = ["hello", "world"]
+    # opts.argv = ["-n", "hello", "world"]
+  end
+
+  def shell_echo(%ParseError{} = error, stdin, context) do
+    # error.reason = "Unknown option: -z"
+    # error.argv = ["-z", "hello"]
+  end
   ```
 
-  ## Parameters
-  - `argv`: POSIX-style argument vector (list of strings)
-  - `stdin`: Input data - can be String, Stream, Enumerable, or IO.device
-  - `context`: Current shell context (env vars, cwd, etc.)
+  ### :argv Mode
+  Builtin receives raw argv list:
+  ```elixir
+  @shell_source_opts :argv
+  def shell_source(argv, stdin, context) when is_list(argv) do
+    # Custom parsing logic
+  end
+  ```
 
   ## Return Value
   A tuple with:
   - `new_context`: Updated context (unchanged for pure builtins)
-  - `stdout`: Output data (String, Stream, or Enumerable)
-  - `stderr`: Error output (String)
+  - `stdout`: Output stream (always Stream.t())
+  - `stderr`: Error stream (always Stream.t())
   - `exit_code`: Integer exit code (0 for success)
-
-  Builtins are discovered via reflection using `function_exported?/3`.
-  Options are automatically parsed from docstrings at compile time.
   """
 
   use RShell.Builtins.Helpers
+
+  defmodule ParsedOptions do
+    @moduledoc "Represents successfully parsed builtin options"
+    defstruct [:options, :arguments, :argv]
+  end
+
+  defmodule ParseError do
+    @moduledoc "Represents a parse error for builtin options"
+    defstruct [:reason, :argv]
+  end
 
   @doc """
   Execute a builtin command by name.
 
   Uses reflection to invoke the appropriate `shell_*` function.
+  Returns `{context, stdout_stream, stderr_stream, exit_code}`.
+  Stdout and stderr are `Stream.t()` that must be materialized.
 
   ## Examples
 
-      iex> RShell.Builtins.execute("echo", ["hello"], "", %{})
-      {%{}, "hello\\n", "", 0}
+      iex> {ctx, stdout, stderr, exit_code} = RShell.Builtins.execute("echo", ["hello"], "", %{})
+      iex> ctx
+      %{}
+      iex> Enum.join(stdout, "")
+      "hello\\n"
+      iex> Enum.join(stderr, "")
+      ""
+      iex> exit_code
+      0
 
       iex> RShell.Builtins.execute("unknown", [], "", %{})
       {:error, :not_a_builtin}
@@ -42,7 +79,31 @@ defmodule RShell.Builtins do
     function_name = String.to_atom("shell_#{name}")
 
     if function_exported?(__MODULE__, function_name, 3) do
-      apply(__MODULE__, function_name, [argv, stdin, context])
+      # Check mode using compile-time generated function
+      mode = __builtin_mode__(String.to_atom(name))
+
+      case mode do
+        :argv ->
+          # Raw argv mode - pass list directly
+          apply(__MODULE__, function_name, [argv, stdin, context])
+
+        :parsed ->
+          # Parsed mode - parse options from docstring
+          option_specs = __builtin_options__(String.to_atom(name))
+          case RShell.Builtins.OptionParser.parse(argv, option_specs) do
+            {:ok, opts, args} ->
+              parsed = %ParsedOptions{options: opts, arguments: args, argv: argv}
+              apply(__MODULE__, function_name, [parsed, stdin, context])
+
+            {:error, reason} ->
+              error = %ParseError{reason: reason, argv: argv}
+              apply(__MODULE__, function_name, [error, stdin, context])
+          end
+
+        nil ->
+          # No mode specified - error!
+          {:error, :missing_opts_attribute}
+      end
     else
       {:error, :not_a_builtin}
     end
@@ -97,63 +158,59 @@ defmodule RShell.Builtins do
       echo -n test
       echo -e "line1\\nline2"
   """
-  def shell_echo(argv, _stdin, context) do
-    # Parse options manually to handle -e/-E mutual exclusion
-    {opts, args} = parse_echo_options(argv)
+  @shell_echo_opts :parsed
+  def shell_echo(%ParseError{reason: reason}, _stdin, context) do
+    help_text = get_builtin_help("echo")
+    stderr = "echo: #{reason}\n\n#{help_text}"
+    {context, stream(""), stream(stderr), 1}
+  end
+
+  def shell_echo(%ParsedOptions{} = opts, _stdin, context) do
+    args = opts.arguments
+
+    # Handle -e/-E mutual exclusion: -E overrides -e
+    should_escape = opts.options.enable_escapes && !opts.options.disable_escapes
 
     output =
       args
+      |> Enum.map(&convert_arg_to_string/1)
       |> Enum.join(" ")
       |> then(fn text ->
-        if opts.enable_escapes do
+        if should_escape do
           process_escapes(text)
         else
           text
         end
       end)
       |> then(fn text ->
-        if opts.no_newline do
+        if opts.options.no_newline do
           text
         else
           text <> "\n"
         end
       end)
 
-    {context, output, "", 0}
+    {context, stream(output), stream(""), 0}
   end
 
-  # Custom parser for echo that handles -e/-E mutual exclusion
-  defp parse_echo_options(argv) do
-    parse_echo_options(argv, %{no_newline: false, enable_escapes: false}, [])
-  end
-
-  defp parse_echo_options([], opts, args), do: {opts, Enum.reverse(args)}
-
-  defp parse_echo_options([arg | rest], opts, args) do
-    case arg do
-      "-n" ->
-        parse_echo_options(rest, %{opts | no_newline: true}, args)
-
-      "-e" ->
-        parse_echo_options(rest, %{opts | enable_escapes: true}, args)
-
-      "-E" ->
-        parse_echo_options(rest, %{opts | enable_escapes: false}, args)
-
-      "--no-newline" ->
-        parse_echo_options(rest, %{opts | no_newline: true}, args)
-
-      "--enable-escapes" ->
-        parse_echo_options(rest, %{opts | enable_escapes: true}, args)
-
-      "--disable-escapes" ->
-        parse_echo_options(rest, %{opts | enable_escapes: false}, args)
-
-      # Non-option argument - stop parsing and collect remaining
-      _ ->
-        {opts, Enum.reverse(args) ++ [arg | rest]}
+  # Convert rich types to strings for echo output
+  defp convert_arg_to_string(arg) when is_binary(arg), do: arg
+  defp convert_arg_to_string(arg) when is_map(arg), do: RShell.EnvJSON.format(arg)
+  defp convert_arg_to_string(arg) when is_list(arg) do
+    # Check if charlist
+    if Enum.all?(arg, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
+      List.to_string(arg)
+    else
+      RShell.EnvJSON.format(arg)
     end
   end
+  defp convert_arg_to_string(arg) when is_integer(arg), do: Integer.to_string(arg)
+  defp convert_arg_to_string(arg) when is_float(arg), do: Float.to_string(arg)
+  defp convert_arg_to_string(true), do: "true"
+  defp convert_arg_to_string(false), do: "false"
+  defp convert_arg_to_string(nil), do: ""
+  defp convert_arg_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
+
 
   @doc """
   true - do nothing, successfully
@@ -165,8 +222,9 @@ defmodule RShell.Builtins do
   ## Examples
       true
   """
+  @shell_true_opts :argv
   def shell_true(_argv, _stdin, context) do
-    {context, "", "", 0}
+    {context, stream(""), stream(""), 0}
   end
 
   @doc """
@@ -179,8 +237,9 @@ defmodule RShell.Builtins do
   ## Examples
       false
   """
+  @shell_false_opts :argv
   def shell_false(_argv, _stdin, context) do
-    {context, "", "", 1}
+    {context, stream(""), stream(""), 1}
   end
 
   @doc """
@@ -193,8 +252,9 @@ defmodule RShell.Builtins do
   ## Examples
       pwd
   """
+  @shell_pwd_opts :argv
   def shell_pwd(_argv, _stdin, context) do
-    {context, context.cwd <> "\n", "", 0}
+    {context, stream(context.cwd <> "\n"), stream(""), 0}
   end
 
   @doc """
@@ -202,39 +262,51 @@ defmodule RShell.Builtins do
 
   Change the current working directory to DIR.
 
-  Usage: cd [DIR]
+  Usage: cd [OPTIONS] [DIR]
 
   If no DIR is specified, changes to the home directory (if available in context).
+
+  Options:
+    -L, --logical
+        type: boolean
+        default: true
+        desc: Follow symbolic links (default behavior)
+
+    -P, --physical
+        type: boolean
+        default: false
+        desc: Use physical directory structure without following symbolic links
 
   ## Examples
       cd /tmp
       cd ..
       cd
+      cd -P /path/with/symlink
   """
-  def shell_cd(argv, _stdin, context) do
-    target_dir = case argv do
+  @shell_cd_opts :parsed
+  def shell_cd(%ParseError{reason: reason}, _stdin, context) do
+    help_text = get_builtin_help("cd")
+    stderr = "cd: #{reason}\n\n#{help_text}"
+    {context, stream(""), stream(stderr), 1}
+  end
+
+  def shell_cd(%ParsedOptions{} = opts, _stdin, context) do
+    args = opts.arguments
+
+    target_dir = case args do
       [] ->
         # No argument - try to go to HOME
         Map.get(context.env || %{}, "HOME", context.cwd)
       [dir | _] ->
+        # Physical mode is a hint for future implementation
+        # Currently we always use Path.expand which resolves symlinks
+        _physical = opts.options.physical
         resolve_path(dir, context.cwd)
     end
 
-    # In simulate mode, we just update the context without checking if the directory exists
-    # In real mode, we would validate with File.dir?/1
-    case context.mode do
-      :real ->
-        if File.dir?(target_dir) do
-          new_context = %{context | cwd: target_dir}
-          {new_context, "", "", 0}
-        else
-          {context, "", "cd: #{target_dir}: No such file or directory\n", 1}
-        end
-      _ ->
-        # Simulate mode - just update context
-        new_context = %{context | cwd: target_dir}
-        {new_context, "", "", 0}
-    end
+    # Always update context (no mode check - just execute)
+    new_context = %{context | cwd: target_dir}
+    {new_context, stream(""), stream(""), 0}
   end
 
   # Resolve a path relative to the current working directory
@@ -270,17 +342,24 @@ defmodule RShell.Builtins do
       export DEBUG=true
       export -n DEBUG
   """
-  def shell_export(argv, _stdin, context) do
-    {opts, args} = parse_export_options(argv)
+  @shell_export_opts :parsed
+  def shell_export(%ParseError{reason: reason}, _stdin, context) do
+    help_text = get_builtin_help("export")
+    stderr = "export: #{reason}\n\n#{help_text}"
+    {context, stream(""), stream(stderr), 1}
+  end
+
+  def shell_export(%ParsedOptions{} = opts, _stdin, context) do
+    args = opts.arguments
 
     cond do
-      opts.unset && length(args) > 0 ->
+      opts.options.unset && length(args) > 0 ->
         # Remove variables
         new_env = Enum.reduce(args, context.env || %{}, fn var_name, env ->
           Map.delete(env, var_name)
         end)
         new_context = %{context | env: new_env}
-        {new_context, "", "", 0}
+        {new_context, stream(""), stream(""), 0}
 
       length(args) == 0 ->
         # No arguments - print all environment variables
@@ -290,7 +369,7 @@ defmodule RShell.Builtins do
           |> Enum.sort()
           |> Enum.join("\n")
         output = if output == "", do: "", else: output <> "\n"
-        {context, output, "", 0}
+        {context, stream(output), stream(""), 0}
 
       true ->
         # Set variables
@@ -301,21 +380,7 @@ defmodule RShell.Builtins do
           end
         end)
         new_context = %{context | env: new_env}
-        {new_context, "", "", 0}
-    end
-  end
-
-  defp parse_export_options(argv) do
-    parse_export_options(argv, %{unset: false}, [])
-  end
-
-  defp parse_export_options([], opts, args), do: {opts, Enum.reverse(args)}
-
-  defp parse_export_options([arg | rest], opts, args) do
-    case arg do
-      "-n" -> parse_export_options(rest, %{opts | unset: true}, args)
-      "--unset" -> parse_export_options(rest, %{opts | unset: true}, args)
-      _ -> {opts, Enum.reverse(args) ++ [arg | rest]}
+        {new_context, stream(""), stream(""), 0}
     end
   end
 
@@ -324,33 +389,50 @@ defmodule RShell.Builtins do
 
   Print the values of environment variables.
 
-  Usage: printenv [NAME]...
+  Usage: printenv [OPTIONS] [NAME]...
 
   If no NAME is specified, print all environment variables.
+
+  Options:
+    -0, --null
+        type: boolean
+        default: false
+        desc: End each output line with null byte instead of newline
 
   ## Examples
       printenv
       printenv PATH
       printenv HOME USER
+      printenv -0 PATH
   """
-  def shell_printenv(argv, _stdin, context) do
-    env = context.env || %{}
+  @shell_printenv_opts :parsed
+  def shell_printenv(%ParseError{reason: reason}, _stdin, context) do
+    help_text = get_builtin_help("printenv")
+    stderr = "printenv: #{reason}\n\n#{help_text}"
+    {context, stream(""), stream(stderr), 1}
+  end
 
-    output = if length(argv) == 0 do
+  def shell_printenv(%ParsedOptions{} = opts, _stdin, context) do
+    args = opts.arguments
+    env = context.env || %{}
+    use_null = opts.options.null
+    separator = if use_null, do: <<0>>, else: "\n"
+
+    output = if length(args) == 0 do
       # Print all variables
       env
       |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
       |> Enum.sort()
-      |> Enum.join("\n")
+      |> Enum.join(separator)
     else
       # Print specific variables
-      argv
+      args
       |> Enum.map(fn name -> Map.get(env, name, "") end)
-      |> Enum.join("\n")
+      |> Enum.join(separator)
     end
 
-    output = if output == "", do: "", else: output <> "\n"
-    {context, output, "", 0}
+    output = if output == "", do: "", else: output <> separator
+    {context, stream(output), stream(""), 0}
   end
 
   @doc """
@@ -370,43 +452,139 @@ defmodule RShell.Builtins do
       man echo
       man -a
   """
-  def shell_man(argv, _stdin, context) do
-    {opts, args} = parse_man_options(argv)
+  @shell_man_opts :parsed
+  def shell_man(%ParseError{reason: reason}, _stdin, context) do
+    help_text = get_builtin_help("man")
+    stderr = "man: #{reason}\n\n#{help_text}"
+    {context, stream(""), stream(stderr), 1}
+  end
+
+  def shell_man(%ParsedOptions{} = opts, _stdin, context) do
+    args = opts.arguments
 
     cond do
-      opts.all ->
+      opts.options.all ->
         # List all builtins
         builtins = list_all_builtins()
         output = "Available builtins:\n" <> Enum.join(builtins, "\n") <> "\n"
-        {context, output, "", 0}
+        {context, stream(output), stream(""), 0}
 
       length(args) == 0 ->
-        {context, "", "man: missing command name\nUsage: man [COMMAND]\n", 1}
+        {context, stream(""), stream("man: missing command name\nUsage: man [COMMAND]\n"), 1}
 
       true ->
         [command_name | _] = args
 
         if is_builtin?(command_name) do
           help_text = get_builtin_help(command_name)
-          {context, help_text <> "\n", "", 0}
+          {context, stream(help_text <> "\n"), stream(""), 0}
         else
-          {context, "", "man: no manual entry for #{command_name}\n", 1}
+          {context, stream(""), stream("man: no manual entry for #{command_name}\n"), 1}
         end
     end
   end
 
-  defp parse_man_options(argv) do
-    parse_man_options(argv, %{all: false}, [])
+  @doc """
+  env - get or set environment variables
+
+  Unified environment variable management with rich data type support.
+
+  Usage: env [NAME=VALUE]... [NAME]...
+
+  With no arguments, list all environment variables.
+  With NAME=VALUE pairs, set environment variables (supports JSON values).
+  With NAME arguments, print the values of the specified variables.
+
+  Values are parsed as JSON to support rich data types:
+    - Maps: {"host":"localhost","port":5432}
+    - Lists: ["web1","web2","db1"]
+    - Numbers: 42, 3.14
+    - Booleans: true, false
+    - Strings: "hello" (must be quoted!)
+
+  ## Examples
+      env                              # List all variables
+      env PATH                         # Show PATH value
+      env A={"x":1} B=12 C="hello"    # Set multiple variables
+      env CONFIG                       # Show CONFIG (pretty-printed if JSON)
+  """
+  @shell_env_opts :argv
+  def shell_env(argv, _stdin, context) do
+    cond do
+      # No arguments - list all
+      length(argv) == 0 ->
+        env = context.env || %{}
+        output = env
+          |> Enum.map(fn {k, v} ->
+            formatted_value = RShell.EnvJSON.format(v)
+            "#{k}=#{formatted_value}"
+          end)
+          |> Enum.sort()
+          |> Enum.join("\n")
+        output = if output == "", do: "", else: output <> "\n"
+        {context, stream(output), stream(""), 0}
+
+      # Has arguments - check if they're assignments or lookups
+      true ->
+        {assignments, lookups} = split_assignments_and_lookups(argv)
+
+        # Process assignments first
+        new_context = if length(assignments) > 0 do
+          new_env = Enum.reduce(assignments, context.env || %{}, fn {name, value_str}, env ->
+            case RShell.EnvJSON.parse(value_str) do
+              {:ok, parsed_value} ->
+                # Successfully parsed as JSON
+                Map.put(env, name, parsed_value)
+              {:error, _reason} ->
+                # If parse fails, treat as plain string (common case)
+                # No warning - plain strings are expected
+                Map.put(env, name, value_str)
+            end
+          end)
+          %{context | env: new_env}
+        else
+          context
+        end
+
+        # Process lookups
+        if length(lookups) > 0 do
+          env = new_context.env || %{}
+          values = lookups
+            |> Enum.map(fn name ->
+              case Map.get(env, name) do
+                nil -> nil
+                value -> RShell.EnvJSON.format(value)
+              end
+            end)
+            |> Enum.reject(&is_nil/1)
+
+          output = if length(values) > 0 do
+            Enum.join(values, "\n") <> "\n"
+          else
+            ""
+          end
+
+          {new_context, stream(output), stream(""), 0}
+        else
+          # Only assignments, no output
+          {new_context, stream(""), stream(""), 0}
+        end
+    end
   end
 
-  defp parse_man_options([], opts, args), do: {opts, Enum.reverse(args)}
-
-  defp parse_man_options([arg | rest], opts, args) do
-    case arg do
-      "-a" -> parse_man_options(rest, %{opts | all: true}, args)
-      "--all" -> parse_man_options(rest, %{opts | all: true}, args)
-      _ -> {opts, Enum.reverse(args) ++ [arg | rest]}
-    end
+  # Split argv into assignments (NAME=VALUE) and lookups (NAME)
+  defp split_assignments_and_lookups(argv) do
+    Enum.reduce(argv, {[], []}, fn arg, {assignments, lookups} ->
+      case String.split(arg, "=", parts: 2) do
+        [name, value] ->
+          {[{name, value} | assignments], lookups}
+        [name] ->
+          {assignments, [name | lookups]}
+      end
+    end)
+    |> then(fn {assignments, lookups} ->
+      {Enum.reverse(assignments), Enum.reverse(lookups)}
+    end)
   end
 
   defp list_all_builtins do
@@ -421,6 +599,10 @@ defmodule RShell.Builtins do
     end)
     |> Enum.sort()
   end
+
+  # Helper: Convert text to Stream
+  # Wraps text in a single-element list so Stream yields the text as one chunk
+  defp stream(text) when is_binary(text), do: Stream.concat([[text]])
 
   # Process backslash escape sequences
   defp process_escapes(text) do

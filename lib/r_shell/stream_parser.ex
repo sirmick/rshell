@@ -1,6 +1,9 @@
 defmodule RShell.StreamParser do
   @moduledoc """
-  Synchronous wrapper around IncrementalParser GenServer for testing.
+  **TEST-ONLY MODULE** - Synchronous wrapper around IncrementalParser GenServer.
+
+  ⚠️ **WARNING**: This module is designed exclusively for test environments.
+  Do NOT use in production code. Use `RShell.IncrementalParser` directly instead.
 
   This module provides a simple interface that automatically:
   - Starts a named GenServer on first use (or reuses existing)

@@ -1,6 +1,6 @@
 # RShell Builtin Commands Design
 
-**Last Updated**: 2025-11-11
+**Last Updated**: 2025-11-12
 
 ---
 
@@ -15,19 +15,24 @@ Builtin commands are functions implemented in Elixir that execute within the run
 - ✅ Unified signature for all builtins
 - ✅ 40 unit tests covering all echo functionality
 - ✅ Integration with Runtime execution flow
-- 🚧 Docstring-based options parsing and help text generation
-- 🚧 Compile-time option parser generation from @doc attributes
+- ✅ Docstring-based options parsing and help text generation
+- ✅ Compile-time option parser generation from @doc attributes
+- ✅ Stream-only I/O design with protocol-based conversion
 
 ---
 
-## Options Parsing and Help Text (NEW)
+## Options Parsing and Help Text
 
 ### Design Philosophy
 
-**Low-overhead, declarative approach**: Builtin options and help text are embedded in standard Elixir `@doc` attributes using a structured format. At compile time, these docstrings are parsed to generate:
-1. Option parser specifications
-2. Help text for `.help <builtin>` commands
-3. Man-page style documentation
+**Low-overhead, declarative approach**: Builtin options and help text are embedded in standard Elixir `@doc` attributes using a structured format.
+
+**At compile time**, the `@before_compile` hook in [`RShell.Builtins.Helpers`](lib/r_shell/builtins/helpers.ex:1) parses these docstrings to generate:
+1. `__builtin_options__/1` - Option parser specifications
+2. `__builtin_help__/1` - Formatted help text for `man` builtin
+3. `__builtin_mode__/1` - Invocation mode (:parsed or :argv)
+
+**At runtime**, [`RShell.Builtins.OptionParser`](lib/r_shell/builtins/option_parser.ex:1) uses the generated specs to parse command-line arguments.
 
 ### Docstring Format
 
@@ -102,48 +107,68 @@ end
 
 ### Implementation Flow
 
-1. **Compile Time**:
-   - `@before_compile` hook scans all `shell_*` functions
-   - Parses `@doc` attributes for "Options:" section
-   - Generates `__builtin_options__(:command_name)` functions
-   - Generates `__builtin_help__(:command_name)` functions
+1. **Compile Time** ([`RShell.Builtins.Helpers.__before_compile__/1`](lib/r_shell/builtins/helpers.ex:19)):
+   - Scans all `shell_*` functions with arity 3
+   - Reads `@shell_*_opts` module attribute for mode (:parsed or :argv)
+   - Parses `@doc` attributes using [`DocParser.parse_options/1`](lib/r_shell/builtins/doc_parser.ex:37)
+   - Generates private `__builtin_options__(name)` functions returning option specs
+   - Generates private `__builtin_help__(name)` functions returning formatted help text
+   - Generates private `__builtin_mode__(name)` functions returning invocation mode
 
-2. **Runtime**:
-   - Builtin calls `parse_builtin_options(:name, argv)`
-   - Returns `{:ok, options_map, remaining_args}` or `{:error, reason}`
-   - `.help echo` retrieves and displays `__builtin_help__(:echo)`
+2. **Runtime** ([`RShell.Builtins.execute/4`](lib/r_shell/builtins.ex:69)):
+   - Checks invocation mode via `__builtin_mode__(name)`
+   - **:parsed mode**: Parses options using [`OptionParser.parse/2`](lib/r_shell/builtins/option_parser.ex:68)
+     - On success: Calls builtin with `%ParsedOptions{}` struct
+     - On error: Calls builtin with `%ParseError{}` struct
+   - **:argv mode**: Passes raw argv list directly to builtin
+   - `man <builtin>` command retrieves help via `get_builtin_help(name)`
 
-### Signature (Option 1: Keep Current, Parse Inside)
+### Invocation Modes
 
-All builtins keep the existing signature:
+Builtins declare their mode using `@shell_*_opts` attribute:
+
+**:parsed mode** - Automatic option parsing from docstring:
 ```elixir
-@spec shell_*(argv, stdin, context) :: {new_context, stdout, stderr, exit_code}
-
-@type argv :: [String.t()]  # POSIX-style argument vector
-@type stdin :: String.t() | Stream.t() | Enumerable.t() | IO.device()
-@type context :: Runtime.context()
-```
-
-Internally, each builtin parses its options:
-```elixir
-def shell_echo(argv, stdin, context) do
-  {:ok, opts, args} = parse_builtin_options(:echo, argv)
-  
+@shell_echo_opts :parsed
+def shell_echo(%ParsedOptions{} = opts, stdin, context) do
+  # opts.options = %{no_newline: true, enable_escapes: false, ...}
+  # opts.arguments = ["hello", "world"]
+  # opts.argv = ["-n", "hello", "world"]
   output =
-    args
+    opts.arguments
     |> Enum.join(" ")
-    |> maybe_process_escapes(opts.enable_escapes)
-    |> maybe_add_newline(opts.no_newline)
+    |> maybe_process_escapes(opts.options.enable_escapes)
+    |> maybe_add_newline(opts.options.no_newline)
   
-  {context, output, "", 0}
+  {context, stream(output), stream(""), 0}
+end
+
+def shell_echo(%ParseError{} = error, stdin, context) do
+  # error.reason = "Unknown option: -z"
+  # error.argv = ["-z", "hello"]
+  help_text = get_builtin_help("echo")
+  stderr = "echo: #{error.reason}\n\n#{help_text}"
+  {context, stream(""), stream(stderr), 1}
 end
 ```
 
-### Generated Helper Functions
+**:argv mode** - Raw argument list (for custom parsing):
+```elixir
+@shell_pwd_opts :argv
+def shell_pwd(_argv, _stdin, context) do
+  {context, stream(context.cwd <> "\n"), stream(""), 0}
+end
+```
+
+### Generated Helper Functions (Compile-Time)
+
+The `@before_compile` hook generates these private functions:
 
 ```elixir
-# Generated by @before_compile hook
+# Option specs (parsed from docstring)
 defp __builtin_options__(:echo) do
+  # Reads docstring at runtime via Code.fetch_docs/1
+  # Parses via DocParser.parse_options/1
   [
     %{
       short: "-n",
@@ -153,20 +178,14 @@ defp __builtin_options__(:echo) do
       default: false,
       description: "Do not output the trailing newline"
     },
-    %{
-      short: "-e",
-      long: "--enable-escapes",
-      type: :boolean,
-      key: :enable_escapes,
-      default: false,
-      description: "Enable interpretation of backslash escapes"
-    },
     # ...
   ]
 end
 
+# Help text (extracted from docstring)
 defp __builtin_help__(:echo) do
-  # Returns the full formatted docstring
+  # Reads docstring at runtime via Code.fetch_docs/1
+  # Extracts via DocParser.extract_help_text/1
   """
   echo - write arguments to standard output
   
@@ -174,15 +193,21 @@ defp __builtin_help__(:echo) do
   
   Options:
     -n, --no-newline        Do not output the trailing newline
-    -e, --enable-escapes    Enable interpretation of backslash escapes
   ...
   """
 end
 
-defp parse_builtin_options(name, argv) do
-  RShell.Builtins.OptionParser.parse(argv, __builtin_options__(name))
+# Invocation mode (from @shell_*_opts attribute)
+defp __builtin_mode__(:echo), do: :parsed
+defp __builtin_mode__(:pwd), do: :argv
+
+# Public helper for man builtin
+def get_builtin_help(name) when is_binary(name) do
+  __builtin_help__(String.to_atom(name))
 end
 ```
+
+**Note**: Option specs and help text are parsed at runtime from compiled docs, not stored as module attributes. This keeps the compiled beam file smaller.
 
 ---
 
@@ -204,10 +229,10 @@ end
 @spec shell_*(args, stdin, context) :: {new_context, stdout, stderr, exit_code}
 
 @type args :: [String.t()]
-@type stdin :: String.t() | Stream.t() | Enumerable.t() | IO.device()
+@type stdin :: Stream.t()   # Always Stream!
 @type context :: Runtime.context()
-@type stdout :: String.t() | Stream.t() | Enumerable.t()
-@type stderr :: String.t() | Stream.t() | Enumerable.t()
+@type stdout :: Stream.t()  # Always Stream!
+@type stderr :: Stream.t()  # Always Stream!
 @type exit_code :: integer()
 ```
 
@@ -224,82 +249,158 @@ end
 
 ---
 
-## I/O Flexibility
+## I/O Design: Stream-Only Architecture
 
-### stdin Handling with Pattern Matching
+**Design Decision**: ALL I/O uses `Stream.t()` - no String, no Enumerable, no IO.device.
 
-Builtins can elegantly handle multiple input types:
+### Why Stream-Only?
+
+1. ✅ **Uniform type** - No type detection, no conversion logic
+2. ✅ **Lazy by default** - Efficient pipelines without memory pressure
+3. ✅ **Composable** - All commands chain naturally
+4. ✅ **Supports structured data** - Stream elements can be ANY type (strings, structs, etc.)
+5. ✅ **Simple to write** - `Stream.concat([text])` is trivial
+
+### Stream Elements Can Be Any Type
 
 ```elixir
-# String stdin
-def shell_grep([pattern], stdin, context) when is_binary(stdin) do
-  lines = stdin |> String.split("\n") |> Enum.filter(&String.contains?(&1, pattern))
-  {context, Enum.join(lines, "\n"), "", 0}
-end
+# Text stream (traditional shell output)
+Stream.concat(["line1\n", "line2\n", "line3\n"])
 
-# Stream stdin (lazy evaluation)
+# Struct stream (rich data, PowerShell-like)
+Stream.map(files, fn name ->
+  %FileInfo{name: name, size: File.stat!(name).size, ...}
+end)
+
+# Mixed stream (unusual but allowed)
+Stream.concat([%FileInfo{}, "text line", 42])
+```
+
+### Pattern Matching on Stream Elements
+
+Builtins process stream elements uniformly, regardless of type:
+
+```elixir
 def shell_grep([pattern], stdin, context) when is_struct(stdin, Stream) do
-  filtered = Stream.filter(stdin, &String.contains?(&1, pattern))
-  {context, filtered, "", 0}
-end
-
-# Generic enumerable
-def shell_grep([pattern], stdin, context) do
-  filtered = Stream.filter(stdin, &matches?(&1, pattern))
-  {context, filtered, "", 0}
+  # Filter works on ANY stream element type
+  filtered = Stream.filter(stdin, fn item ->
+    # Convert to text for pattern matching
+    text = RShell.Streamable.to_text(item)
+    String.contains?(text, pattern)
+  end)
+  
+  {context, filtered, Stream.concat([]), 0}
 end
 ```
 
-### stdout/stderr Types
+### Helper for Simple Cases
 
-Builtins can return different output types:
-
-**String (immediate output)**
 ```elixir
+# Helper function for simple text output
+defp stream(text) when is_binary(text), do: Stream.concat([text])
+
+# Usage in builtins
+def shell_pwd(_argv, _stdin, context) do
+  {context, stream(context.cwd <> "\n"), stream(""), 0}
+end
+
 def shell_echo(args, _stdin, context) do
   output = Enum.join(args, " ") <> "\n"
-  {context, output, "", 0}
+  {context, stream(output), stream(""), 0}
 end
 ```
 
-**Stream (lazy, for large data)**
+### Type Conversion via Protocol
+
+**Protocol definition**:
 ```elixir
-def shell_cat(args, _stdin, context) when length(args) > 0 do
-  stream = args
-    |> Enum.map(&File.stream!/1)
-    |> Stream.concat()
-  {context, stream, "", 0}
+defprotocol RShell.Streamable do
+  @doc "Convert value to text representation"
+  def to_text(value)
+end
+
+# String implementation (pass-through)
+defimpl RShell.Streamable, for: BitString do
+  def to_text(str), do: str
+end
+
+# Struct implementations (custom formatting)
+defimpl RShell.Streamable, for: RShell.FileInfo do
+  def to_text(file) do
+    # ls -la style output
+    "#{file.permissions} #{file.size} #{file.name}\n"
+  end
 end
 ```
 
-**Enumerable (flexible)**
-```elixir
-def shell_find([dir], _stdin, context) do
-  files = Path.wildcard(dir <> "/**")
-  {context, files, "", 0}  # List is enumerable
-end
-```
-
-### Stream Materialization
-
-**Between builtins**: Streams stay lazy (efficient pipelines)
-
-```elixir
-# cat large.txt | grep foo | wc -l
-# All lazy until final wc forces evaluation
-```
-
-**At terminal output**: Runtime materializes streams to strings
+**Automatic conversion when needed**:
 
 ```elixir
-defp materialize_output(output) when is_binary(output), do: output
-defp materialize_output(output) when is_struct(output, Stream) do
-  output |> Enum.to_list() |> Enum.join("")
+# Terminal output - convert stream to text
+defp display_to_terminal(stream) do
+  stream
+  |> Stream.map(&RShell.Streamable.to_text/1)
+  |> Enum.each(&IO.write/1)
 end
-defp materialize_output(output) when is_list(output) do
-  Enum.join(output, "")
+
+# External process input - convert stream to text
+defp feed_to_external(stream, pipeline_handle) do
+  stream
+  |> Stream.map(&RShell.Streamable.to_text/1)
+  |> Stream.into(Pipeline.stdin_writer(pipeline_handle))
+  |> Stream.run()
+end
+
+# Builtin → Builtin - NO CONVERSION (preserves structs!)
+defp builtin_to_builtin(stream, next_builtin) do
+  next_builtin.(stream)
 end
 ```
+
+### Complete Example
+
+```elixir
+# Builtin that produces struct stream
+def shell_ls([], _stdin, context) do
+  files = File.ls!(".")
+  
+  stream = Stream.map(files, fn name ->
+    stat = File.stat!(name)
+    %RShell.FileInfo{
+      name: name,
+      size: stat.size,
+      permissions: format_perms(stat.mode),
+      modified: stat.mtime
+    }
+  end)
+  
+  {context, stream, Stream.concat([]), 0}
+end
+
+# Builtin that works with ANY stream element type
+def shell_head(["-n", n], stdin, context) do
+  count = String.to_integer(n)
+  limited = Stream.take(stdin, count)
+  {context, limited, Stream.concat([]), 0}
+end
+```
+
+**Usage scenarios**:
+- `ls | head -5` → Struct stream throughout (rich data!)
+- `ls | grep foo` → Automatic to_text conversion when grep matches
+- `ls` → Terminal display converts structs to text via protocol
+- `ls | external_cmd` → Runtime converts struct stream to text stream
+
+### Benefits of Stream-Only Design
+
+| Benefit | Description |
+|---------|-------------|
+| **No dual implementations** | Each builtin has ONE output logic |
+| **No type detection** | Runtime doesn't guess String vs Stream vs Enumerable |
+| **Auto-conversion** | Protocol handles text conversion only when needed |
+| **Preserves structure** | Builtin chains keep rich types (like PowerShell!) |
+| **Simple to write** | `stream(text)` helper makes simple cases trivial |
+| **Lazy pipelines** | Memory-efficient for large data |
 
 ---
 
@@ -475,9 +576,11 @@ defmodule RShell.Builtins do
   """
 
   @type args :: [String.t()]
-  @type stdin :: String.t() | Stream.t() | Enumerable.t()
+  @type stdin :: Stream.t()   # Always Stream!
   @type context :: map()
-  @type result :: {context, String.t(), String.t(), integer()}
+  @type stdout :: Stream.t()  # Always Stream!
+  @type stderr :: Stream.t()  # Always Stream!
+  @type result :: {context, stdout, stderr, integer()}
 
   @doc """
   Execute a builtin by name using reflection.
@@ -744,17 +847,22 @@ end
 
 ✅ **Reflection-based discovery** - Add functions, they're automatically available
 ✅ **Unified signature** - `shell_*(args, stdin, context) → {new_context, stdout, stderr, exit_code}`
-✅ **Flexible I/O** - String, Stream, Enumerable, IO.device support
-✅ **Pattern matching** - Elegant handling of different input types
-✅ **Lazy evaluation** - Streams stay lazy between builtins
+✅ **Stream-only I/O** - Uniform type, no conversions between builtins
+✅ **Protocol-based conversion** - Automatic text conversion for terminal/external processes
+✅ **Structured data support** - Stream elements can be structs (PowerShell-like!)
+✅ **Lazy evaluation** - Streams stay lazy throughout pipelines
 ✅ **Immutable context** - Functional updates, no mutation
 ✅ **Pure and stateful** - Same signature for both categories
 
 ### Adding New Builtins
 
 1. Define `shell_<name>/3` function in `RShell.Builtins`
-2. Handle different stdin types with pattern matching
-3. Return `{new_context, stdout, stderr, exit_code}`
-4. Write tests
+2. Accept `stdin` as `Stream.t()`, output as `Stream.t()`
+3. Use `stream(text)` helper for simple text output
+4. Implement `RShell.Streamable` protocol for custom structs
+5. Return `{new_context, stdout_stream, stderr_stream, exit_code}`
+6. Write tests
 
 No registration needed - reflection handles discovery automatically!
+
+**For structured data output**: Define structs and implement `RShell.Streamable.to_text/1` protocol for terminal display.

@@ -21,11 +21,11 @@
 
 RShell is a bash parser and runtime built with tree-sitter (Rust) and Elixir. The system supports:
 
-- **Incremental Parsing**: Parse bash fragments as they arrive (line-by-line input)
+- **Batch Parsing with Input Buffer**: CLI-level buffering ensures parser only receives complete input
 - **Event-Driven Architecture**: Components communicate via Phoenix.PubSub
 - **Runtime Execution**: Execute parsed AST with multiple modes (simulate, capture, real)
 - **Strongly-Typed AST**: Pattern matching on 59 typed structs throughout
-- **Error Classification**: Distinguishes syntax errors from incomplete structures
+- **Continuation Detection**: Lightweight InputBuffer detects incomplete structures before parsing
 
 ### Key Design Principles
 
@@ -40,33 +40,42 @@ RShell is a bash parser and runtime built with tree-sitter (Rust) and Elixir. Th
 
 ### Architecture Components
 
-**Two GenServers connected by PubSub:**
+**Three-layer architecture:**
 
-1. **IncrementalParser GenServer**
+1. **InputBuffer Module** (NEW)
+   - Lightweight lexical analysis at CLI level
+   - Detects continuation needs without AST analysis
+   - Checks for: line continuations (`\`), unclosed quotes, heredocs, control structures
+   - Only sends complete fragments to parser
+   - Prevents ERROR nodes for incomplete input
+
+2. **IncrementalParser GenServer**
    - Manages Rust NIF parser resource
-   - Accumulates bash input incrementally
+   - Receives complete bash fragments from CLI
    - Broadcasts typed AST events via PubSub
-   - Detects complete executable nodes
-   - Classifies errors (syntax vs incomplete)
+   - Detects executable nodes
+   - Parser only sees complete, parseable input
 
-2. **Runtime GenServer**
+3. **Runtime GenServer**
    - Subscribes to Parser's executable node events
    - Executes AST nodes (simulate/capture/real modes)
    - Manages execution context (env vars, cwd, command count)
    - Broadcasts execution events and output via PubSub
    - Auto-execute or manual execution modes
 
-3. **Phoenix.PubSub**
+4. **Phoenix.PubSub**
    - Event bus connecting Parser ↔ Runtime
    - Session-based topic isolation
    - 5 topics: `:ast`, `:executable`, `:runtime`, `:output`, `:context`
 
 ### Core Features
 
-✅ **Incremental Parsing**
+✅ **Batch Parsing with Input Buffering**
+- InputBuffer detects continuation needs at CLI level
+- Parser only receives complete, parseable input
 - Tree-sitter bash parser via Rust NIF
-- InputEdit tracking for efficient incremental updates
-- 21 passing NIF tests
+- No ERROR nodes for incomplete structures
+- 21 passing NIF tests + 51 InputBuffer tests
 
 ✅ **Strongly-Typed AST**
 - 59 typed struct definitions auto-generated from grammar
@@ -232,10 +241,19 @@ test/
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              Application Layer (CLI, REPL)              │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │          InputBuffer (Continuation Detector)        │ │
+│  │  - Line continuation detection (backslash-newline)  │ │
+│  │  - Quote tracking (single, double, escaped)         │ │
+│  │  - Heredoc detection (<<MARKER syntax)              │ │
+│  │  - Control structure tracking (for/if/while/case)   │ │
+│  │  - Only sends COMPLETE fragments to parser          │ │
+│  └────────────────────────────────────────────────────┘ │
 └────────────────────┬────────────────────────────────────┘
                      │
                      ├─ Start Parser & Runtime
-                     ├─ Send Input Fragments
+                     ├─ Send COMPLETE Fragments Only
                      ├─ Subscribe to Events
                      └─ Query State
                      │
@@ -259,16 +277,16 @@ test/
   │                  │  │                 │
   │ - parser_resource│  │ - context       │
   │ - session_id     │  │ - session_id    │
-  │ - accumulated    │  │ - env vars      │
-  │   input          │  │ - cwd           │
+  │ - (no incomplete │  │ - env vars      │
+  │    input state)  │  │ - cwd           │
   │                  │  │ - command_count │
-  │ Broadcasts:      │  │ - mode          │
-  │  :ast            │  │                 │
-  │  :executable     │  │ Subscribes:     │
+  │ Receives:        │  │ - mode          │
+  │  Complete        │  │                 │
+  │  fragments only  │  │ Subscribes:     │
   │                  │  │  :executable    │
-  │                  │  │                 │
-  │                  │  │ Broadcasts:     │
-  │                  │  │  :runtime       │
+  │ Broadcasts:      │  │                 │
+  │  :ast            │  │ Broadcasts:     │
+  │  :executable     │  │  :runtime       │
   │                  │  │  :output        │
   │                  │  │  :context       │
   └─────────────────┘  └─────────────────┘
@@ -277,20 +295,85 @@ test/
 ### Component Interaction
 
 ```
-User Input → Parser → PubSub → Runtime → Output
-     ↓          ↓         ↓         ↓        ↓
-  Fragment   Typed    Events   Execution  stdout/
-             AST +             Context    stderr
-             Detect            Changes    
-             Complete          
-             Nodes
+User Input → InputBuffer → Complete Fragment → Parser → PubSub → Runtime → Output
+     ↓            ↓              ↓                ↓         ↓         ↓        ↓
+   Lines    Continuation    Only when         Typed    Events   Execution  stdout/
+             Check          ready!            AST +             Context    stderr
+             (no AST!)                        Detect            Changes
+                                              Executable
+                                              Nodes
 ```
+
+**Key Innovation**: InputBuffer prevents parser from seeing incomplete input, eliminating ERROR nodes for incomplete structures.
 
 ---
 
 ## Components
 
-### 1. RShell.PubSub
+### 1. RShell.InputBuffer (NEW)
+
+**Module**: `lib/r_shell/input_buffer.ex`
+
+**Purpose**: Lightweight lexical analysis to detect when input is ready for parsing, WITHOUT using AST analysis.
+
+**API**:
+```elixir
+# Check if input is complete
+InputBuffer.ready_to_parse?("echo hello\n")  # => true
+InputBuffer.ready_to_parse?("for i in 1 2 3")  # => false
+
+# Determine continuation type
+InputBuffer.continuation_type("echo hello\\")  # => :line_continuation
+InputBuffer.continuation_type("echo 'hello")   # => :quote_continuation
+InputBuffer.continuation_type("cat <<EOF")     # => :heredoc_continuation
+InputBuffer.continuation_type("for i in 1")    # => :structure_continuation
+InputBuffer.continuation_type("echo done")     # => :complete
+```
+
+**Detection Logic**:
+
+1. **Line Continuation**: Checks if last line ends with `\`
+   ```elixir
+   # Continuation if last non-empty line ends with backslash
+   "echo yo \\\n" -> :line_continuation
+   "echo yo \\\ndude \\\n" -> :line_continuation
+   "echo yo \\\ndude \\\n\n" -> :complete (empty line breaks continuation)
+   ```
+
+2. **Quote Tracking**: State machine tracks quote context
+   ```elixir
+   # Counts unescaped quotes
+   "echo 'hello" -> :quote_continuation
+   "echo \"hello" -> :quote_continuation
+   "echo 'hello'" -> :complete
+   ```
+
+3. **Heredoc Detection**: Regex-based marker matching
+   ```elixir
+   # Looks for <<MARKER without matching end line
+   "cat <<EOF\n" -> :heredoc_continuation
+   "cat <<EOF\nline\nEOF\n" -> :complete
+   ```
+
+4. **Control Structure Tracking**: Stack-based keyword matching
+   ```elixir
+   # Stack tracks nested structures
+   "for i in 1 2 3" -> [:for] -> :structure_continuation
+   "for i; do echo; done" -> [] -> :complete
+   "if true; then" -> [:if] -> :structure_continuation
+   "if true; then echo; fi" -> [] -> :complete
+   ```
+
+**Benefits**:
+- ✅ No AST analysis required (much faster)
+- ✅ Parser only sees complete input
+- ✅ No ERROR nodes for incomplete structures
+- ✅ Clear separation: InputBuffer for continuation, Parser for AST
+- ✅ Matches bash architecture (separate lexer/parser)
+
+---
+
+### 2. RShell.PubSub
 
 **Module**: `lib/r_shell/pubsub.ex`
 
@@ -315,7 +398,7 @@ PubSub.broadcast(session_id, :ast, {:ast_updated, ast})
 
 ---
 
-### 2. RShell.IncrementalParser
+### 3. RShell.IncrementalParser
 
 **Module**: `lib/r_shell/incremental_parser.ex`
 
@@ -350,7 +433,7 @@ PubSub.broadcast(session_id, :executable, {:executable_node, node, count})
 
 ---
 
-### 3. RShell.Runtime
+### 4. RShell.Runtime
 
 **Module**: `lib/r_shell/runtime.ex`
 
@@ -415,7 +498,7 @@ PubSub.broadcast(session_id, :context, {:cwd_changed, %{old: "/", new: "/tmp"}})
 
 ---
 
-### 4. BashParser.AST.Types
+### 5. BashParser.AST.Types
 
 **Module**: `lib/bash_parser/ast/types.ex`
 
@@ -440,7 +523,7 @@ end
 
 ---
 
-### 5. RShell.ErrorClassifier
+### 6. RShell.ErrorClassifier
 
 **Module**: `lib/r_shell/error_classifier.ex`
 

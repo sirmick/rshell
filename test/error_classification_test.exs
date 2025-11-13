@@ -54,10 +54,8 @@ defmodule ErrorClassificationTest do
         Map.get(child, "type") == "ERROR"
       end)
 
-      IO.puts("\n🔴 True Syntax Error: if then fi")
-      IO.puts("   has_errors: #{BashParser.has_errors(resource)}")
-      IO.puts("   has ERROR nodes: #{has_error_nodes}")
-      IO.puts("   children types: #{inspect(Enum.map(children, &Map.get(&1, "type")))}")
+      # Verify we detected error nodes in true syntax error
+      assert has_error_nodes == true
     end
 
     test "INCOMPLETE STRUCTURE: if without fi" do
@@ -73,21 +71,15 @@ defmodule ErrorClassificationTest do
       children = ast["children"] || []
       assert length(children) > 0
 
-      # May or may not have ERROR nodes
-      has_error_nodes = Enum.any?(children, fn child ->
+      # May or may not have ERROR nodes (not used in this test)
+      _has_error_nodes = Enum.any?(children, fn child ->
         Map.get(child, "type") == "ERROR"
       end)
 
-      IO.puts("\n🟡 Incomplete Structure: if true; then (no fi)")
-      IO.puts("   has_errors: #{BashParser.has_errors(resource)}")
-      IO.puts("   has ERROR nodes: #{has_error_nodes}")
-      IO.puts("   children types: #{inspect(Enum.map(children, &Map.get(&1, "type")))}")
-
-      # Complete it
+      # Incomplete structure may have ERROR nodes
+      # Complete it and verify errors are resolved
       {:ok, _ast2} = BashParser.parse_incremental(resource, "fi\n")
-
-      IO.puts("\n✅ After completion with fi:")
-      IO.puts("   has_errors: #{BashParser.has_errors(resource)}")
+      assert BashParser.has_errors(resource) == false
     end
 
     test "COMPARISON: both show has_errors=true but different causes" do
@@ -102,15 +94,10 @@ defmodule ErrorClassificationTest do
       incomplete = BashParser.has_errors(resource2)
 
       # BOTH are true, but for different reasons!
+      # This is the core challenge: cannot distinguish between syntax errors
+      # and incomplete structures using has_errors flag alone
       assert syntax_error == true
       assert incomplete == true
-
-      IO.puts("\n⚠️  PROBLEM: Cannot distinguish:")
-      IO.puts("   Syntax error (if then fi):   has_errors=#{syntax_error}")
-      IO.puts("   Incomplete (if true; then):  has_errors=#{incomplete}")
-      IO.puts("\n   Both return true, but user needs different feedback:")
-      IO.puts("   - Syntax error → 'Invalid syntax at line 1'")
-      IO.puts("   - Incomplete   → 'Waiting for closing keyword: fi'")
     end
 
     test "ERROR nodes as potential differentiator" do
@@ -126,11 +113,10 @@ defmodule ErrorClassificationTest do
       children2 = ast2["children"] || []
       error_count2 = Enum.count(children2, &(Map.get(&1, "type") == "ERROR"))
 
-      IO.puts("\n🔍 ERROR node analysis:")
-      IO.puts("   Syntax error: #{error_count1} ERROR nodes")
-      IO.puts("   Incomplete:   #{error_count2} ERROR nodes")
-
-      # This MIGHT be a heuristic, but not reliable
+      # Both cases may have ERROR nodes, so this alone is not a reliable
+      # heuristic for distinguishing syntax errors from incomplete structures
+      assert error_count1 >= 0
+      assert error_count2 >= 0
       # Tree-sitter can create if_statement nodes even for incomplete structures
     end
 
@@ -151,13 +137,9 @@ defmodule ErrorClassificationTest do
       children1 = ast1["children"] || []
       children2 = ast2["children"] || []
 
-      IO.puts("\n🔁 For loop comparison:")
-      IO.puts("   Incomplete (for i in 1 2 3):")
-      IO.puts("     has_errors: #{incomplete}")
-      IO.puts("     types: #{inspect(Enum.map(children1, &Map.get(&1, "type")))}")
-      IO.puts("   Syntax error (for in done):")
-      IO.puts("     has_errors: #{syntax_error}")
-      IO.puts("     types: #{inspect(Enum.map(children2, &Map.get(&1, "type")))}")
+      # Both incomplete and syntax error show has_errors=true
+      assert length(children1) > 0
+      assert length(children2) > 0
     end
 
     test "unclosed quote: clear syntax error" do
@@ -172,11 +154,7 @@ defmodule ErrorClassificationTest do
         has_error_in_subtree?(child)
       end)
 
-      IO.puts("\n🚨 Unclosed quote (clear syntax error):")
-      IO.puts("   has_errors: #{BashParser.has_errors(resource)}")
-      IO.puts("   has ERROR in tree: #{has_error}")
-
-      # This case SHOULD be identifiable as syntax error
+      # Unclosed quotes should be identifiable as syntax error
       # because quotes are not multi-line constructs in bash
       assert has_error == true
     end

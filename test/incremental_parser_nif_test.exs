@@ -77,8 +77,9 @@ defmodule IncrementalParserNifTest do
       {:ok, ast3} = BashParser.parse_incremental(resource, "fi\n")
 
       assert ast3["type"] == "program"
-      # Should have complete if statement
-      assert length(ast3["children"]) >= 1
+      # Should have exactly 1 complete if statement
+      assert length(ast3["children"]) == 1,
+        "Expected 1 complete if_statement, got #{length(ast3["children"])}"
     end
 
     test "enforces buffer size limit" do
@@ -116,9 +117,10 @@ defmodule IncrementalParserNifTest do
       # Add more content (tree-sitter should reuse previous parse tree)
       {:ok, ast2} = BashParser.parse_incremental(resource, "echo 'third'\n")
 
-      # Should have all commands (at least 3 children)
+      # Should have all commands (if + 3 echo commands)
       assert ast2["type"] == "program"
-      assert length(ast2["children"]) >= 3
+      assert length(ast2["children"]) == 4,
+        "Expected 4 children (1 if + 3 echo), got #{length(ast2["children"])}"
       # Verify third command is present
       input = BashParser.get_accumulated_input(resource)
       assert String.contains?(input, "third")
@@ -140,7 +142,8 @@ defmodule IncrementalParserNifTest do
       # Now should be a complete, valid command
       assert ast2["type"] == "program"
       assert is_list(ast2["children"])
-      assert length(ast2["children"]) >= 1
+      assert length(ast2["children"]) == 1,
+        "Expected 1 complete command, got #{length(ast2["children"])}"
 
       # Verify accumulated input
       input = BashParser.get_accumulated_input(resource)
@@ -235,40 +238,48 @@ defmodule IncrementalParserNifTest do
       # Fragment 1: Start of for-loop (incomplete - should have error)
       {:ok, ast1} = BashParser.parse_incremental(resource, "for i in $a\n")
       assert ast1["type"] == "program"
-      assert length(ast1["children"]) == 1
+      assert length(ast1["children"]) == 1,
+        "Fragment 1: Expected 1 child, got #{length(ast1["children"])}"
       first_child = hd(ast1["children"])
       # First child should be an ERROR node or incomplete for_statement
-      assert first_child["type"] in ["ERROR", "for_statement"]
+      assert first_child["type"] in ["ERROR", "for_statement"],
+        "Fragment 1: Expected ERROR or for_statement, got #{first_child["type"]}"
       assert Map.has_key?(ast1, "has_errors") == false or ast1["has_errors"] == true
 
       # Fragment 2: Add "do" (still incomplete)
       {:ok, ast2} = BashParser.parse_incremental(resource, "do\n")
       assert ast2["type"] == "program"
-      assert length(ast2["children"]) == 1
+      assert length(ast2["children"]) == 1,
+        "Fragment 2: Expected 1 child, got #{length(ast2["children"])}"
 
       # Fragment 3: Add body (still incomplete)
       {:ok, ast3} = BashParser.parse_incremental(resource, "echo $i\n")
       assert ast3["type"] == "program"
-      assert length(ast3["children"]) == 1
+      assert length(ast3["children"]) == 1,
+        "Fragment 3: Expected 1 child, got #{length(ast3["children"])}"
 
       # Fragment 4: Complete with "done" (should now be valid for_statement)
       {:ok, ast4} = BashParser.parse_incremental(resource, "done\n")
       assert ast4["type"] == "program"
-      assert length(ast4["children"]) == 1
+      assert length(ast4["children"]) == 1,
+        "Fragment 4: Expected 1 complete for_statement, got #{length(ast4["children"])}"
 
       # Final child should be a complete for_statement without errors
       final_child = hd(ast4["children"])
-      assert final_child["type"] == "for_statement"
-      assert BashParser.has_errors(resource) == false
+      assert final_child["type"] == "for_statement",
+        "Expected for_statement, got #{final_child["type"]}"
+      assert BashParser.has_errors(resource) == false,
+        "Expected no errors in complete for-loop"
 
       # Verify the structure is complete
-      assert is_map(final_child["body"])
-      assert is_map(final_child["value"])
-      assert is_map(final_child["variable"])
+      assert is_map(final_child["body"]), "for_statement should have body map"
+      assert is_map(final_child["value"]), "for_statement should have value map"
+      assert is_map(final_child["variable"]), "for_statement should have variable map"
 
       # Verify accumulated input
       input = BashParser.get_accumulated_input(resource)
-      assert input == "for i in $a\ndo\necho $i\ndone\n"
+      assert input == "for i in $a\ndo\necho $i\ndone\n",
+        "Accumulated input mismatch:\n#{inspect(input)}"
     end
 
   end

@@ -56,20 +56,6 @@ defmodule RShell do
   end
   defp convert_to_typed(value), do: value
 
-  defp build_options(opts) do
-    %{
-      field_extraction: Keyword.get(opts, :field_extraction, true),
-      source_tracking: Keyword.get(opts, :source_tracking, true)
-    }
-  end
-
-  @doc """
-  Parses a Bash script with basic options (backwards compatibility).
-  """
-  def parse_script(script) when is_binary(script) do
-    parse(script, type_discovery: false, field_extraction: false, source_tracking: true)
-  end
-
   @doc """
   Parses a Bash script file and returns the enhanced AST.
 
@@ -84,13 +70,9 @@ defmodule RShell do
 
   def find_nodes(ast, node_type) do
     cond do
-      is_struct(ast, BashParser.AST) ->
-        AST.find_nodes(ast, node_type)
       is_struct(ast) ->
-        # New typed structs - use generic traversal
+        # Typed structs - use generic traversal
         find_typed_nodes(ast, node_type, [])
-      is_map(ast) ->
-        AST.find_nodes(ast, node_type)
       true ->
         []
     end
@@ -144,14 +126,8 @@ defmodule RShell do
   def traverse(ast, fun, opts \\ []) do
     order = Keyword.get(opts, :order, :pre)
     cond do
-      is_struct(ast, BashParser.AST) ->
-        AST.traverse(ast, fun, order)
-        :ok
       is_struct(ast) ->
         traverse_typed(ast, fun, order)
-        :ok
-      is_map(ast) ->
-        AST.traverse(ast, fun, order)
         :ok
       true ->
         {:error, "Invalid AST for traversal"}
@@ -195,13 +171,10 @@ defmodule RShell do
   - `text` - Raw text content
   """
   def variable_assignments(ast) do
-    cond do
-      is_struct(ast, BashParser.AST) ->
-        AST.variable_assignments(ast)
-      is_struct(ast) ->
-        find_nodes(ast, "variable_assignment")
-      true ->
-        []
+    if is_struct(ast) do
+      find_nodes(ast, "variable_assignment")
+    else
+      []
     end
   end
 
@@ -209,13 +182,10 @@ defmodule RShell do
   Gets commands with field extraction (name, arguments, redirects).
   """
   def commands(ast) do
-    cond do
-      is_struct(ast, BashParser.AST) ->
-        AST.commands(ast)
-      is_struct(ast) ->
-        find_nodes(ast, "command")
-      true ->
-        []
+    if is_struct(ast) do
+      find_nodes(ast, "command")
+    else
+      []
     end
   end
 
@@ -223,13 +193,10 @@ defmodule RShell do
   Gets function definitions with enhanced source tracking.
   """
   def function_definitions(ast) do
-    cond do
-      is_struct(ast, BashParser.AST) ->
-        AST.function_definitions(ast)
-      is_struct(ast) ->
-        find_nodes(ast, "function_definition")
-      true ->
-        []
+    if is_struct(ast) do
+      find_nodes(ast, "function_definition")
+    else
+      []
     end
   end
 
@@ -274,13 +241,10 @@ defmodule RShell do
   Returns a map of node type => field names present.
   """
   def analyze_types(ast) do
-    cond do
-      is_struct(ast, BashParser.AST) ->
-        AST.analyze_types(ast)
-      is_struct(ast) ->
-        analyze_typed_ast(ast)
-      true ->
-        %{node_types: [], type_summary: %{}, total_diverse_types: 0}
+    if is_struct(ast) do
+      analyze_typed_ast(ast)
+    else
+      %{node_types: [], type_summary: %{}, total_diverse_types: 0}
     end
   end
 
@@ -319,13 +283,10 @@ defmodule RShell do
   Format a node with source position for display.
   """
   def format_node(node, opts \\ []) do
-    cond do
-      is_struct(node, BashParser.AST) ->
-        AST.format_node(node, Keyword.get(opts, :indent_level, 0))
-      is_struct(node) ->
-        format_typed_node(node)
-      true ->
-        "Unknown node format"
+    if is_struct(node) do
+      format_typed_node(node)
+    else
+      "Unknown node format"
     end
   end
 
