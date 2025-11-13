@@ -224,14 +224,14 @@ defmodule RShell.Runtime do
       %Types.List{} ->
         raise "List execution not yet implemented"
 
-      %Types.IfStatement{} ->
-        raise "IfStatement execution not yet implemented"
+      %Types.IfStatement{} = stmt ->
+        execute_if_statement(stmt, new_context, session_id)
 
-      %Types.ForStatement{} ->
-        raise "ForStatement execution not yet implemented"
+      %Types.ForStatement{} = stmt ->
+        execute_for_statement(stmt, new_context, session_id)
 
-      %Types.WhileStatement{} ->
-        raise "WhileStatement execution not yet implemented"
+      %Types.WhileStatement{} = stmt ->
+        execute_while_statement(stmt, new_context, session_id)
 
       %Types.CaseStatement{} ->
         raise "CaseStatement execution not yet implemented"
@@ -473,5 +473,165 @@ defmodule RShell.Runtime do
     stream
     |> Enum.map(&to_string/1)
     |> Enum.join("")
+  end
+  defp materialize_output(string) when is_binary(string), do: string
+  defp materialize_output(_), do: ""
+
+  # =============================================================================
+  # Control Flow Helper Functions
+  # =============================================================================
+
+  # Execute a list of commands sequentially, threading context through each
+  defp execute_command_list(nodes, context, session_id) when is_list(nodes) do
+    Enum.reduce(nodes, context, fn node, acc_context ->
+      simple_execute(node, acc_context, session_id)
+    end)
+  end
+  defp execute_command_list(_, context, _session_id), do: context
+
+  # Execute DoGroup, CompoundStatement, or single node
+  defp execute_do_group_or_node(%Types.DoGroup{children: children}, context, session_id) do
+    execute_command_list(children, context, session_id)
+  end
+
+  defp execute_do_group_or_node(%Types.CompoundStatement{children: children}, context, session_id) do
+    execute_command_list(children, context, session_id)
+  end
+
+  defp execute_do_group_or_node(node, context, session_id) when is_struct(node) do
+    simple_execute(node, context, session_id)
+  end
+
+  defp execute_do_group_or_node(_, context, _session_id), do: context
+
+  # Extract iteration values from for statement value nodes with native type support
+  defp extract_loop_values(nil, _context), do: []
+  defp extract_loop_values([], _context), do: []
+  defp extract_loop_values(value_nodes, context) when is_list(value_nodes) do
+    value_nodes
+    |> Enum.flat_map(fn node ->
+      value = extract_text_from_node(node, context)
+
+      # CRITICAL: Variable expansion preserves native types!
+      # $A where A=[1,2,3] returns [1,2,3], NOT string "[1, 2, 3]"
+      case value do
+        # Native list - iterate over elements
+        list when is_list(list) ->
+          list
+
+        # Native map - single value
+        map when is_map(map) ->
+          [map]
+
+        # String - split on whitespace (traditional bash)
+        string when is_binary(string) ->
+          String.split(string, ~r/\s+/, trim: true)
+
+        # Other native types (numbers, booleans, atoms)
+        other ->
+          [other]
+      end
+    end)
+  end
+
+  # =============================================================================
+  # Control Flow Execution Functions
+  # =============================================================================
+
+  # Execute if statement with elif/else support
+  defp execute_if_statement(%Types.IfStatement{condition: condition_nodes, children: children}, context, session_id) do
+    # Execute condition commands
+    condition_context = execute_command_list(condition_nodes, context, session_id)
+
+    if condition_context.exit_code == 0 do
+      # Condition succeeded - execute then-body (first non-elif/else child)
+      then_body = Enum.reject(children, fn child ->
+        match?(%Types.ElifClause{}, child) or match?(%Types.ElseClause{}, child)
+      end)
+      execute_command_list(then_body, condition_context, session_id)
+    else
+      # Condition failed - try elif clauses, then else clause
+      execute_elif_else_chain(children, condition_context, session_id)
+    end
+  end
+
+  # Try elif clauses in order, then else clause
+  defp execute_elif_else_chain(children, context, session_id) do
+    # Get all elif clauses
+    elif_clauses = Enum.filter(children, &match?(%Types.ElifClause{}, &1))
+
+    # Try each elif clause
+    case try_elif_clauses(elif_clauses, context, session_id) do
+      {:executed, new_context} ->
+        new_context
+
+      :no_match ->
+        # No elif matched, try else clause
+        case Enum.find(children, &match?(%Types.ElseClause{}, &1)) do
+          %Types.ElseClause{children: else_body} ->
+            execute_command_list(else_body, context, session_id)
+
+          nil ->
+            # No else clause - return context from condition
+            context
+        end
+    end
+  end
+
+  # Try elif clauses until one matches
+  defp try_elif_clauses([], _context, _session_id), do: :no_match
+  defp try_elif_clauses([%Types.ElifClause{children: elif_children} | rest], context, session_id) do
+    # ElifClause.children contains both condition and body commands
+    # Need to separate them (similar to IfStatement structure)
+    # The condition commands come first, then the body commands
+
+    # For now, execute all children as condition+body in sequence
+    # TODO: Properly separate condition from body based on AST structure
+    elif_context = execute_command_list(elif_children, context, session_id)
+
+    if elif_context.exit_code == 0 do
+      # This elif matched - return executed context
+      {:executed, elif_context}
+    else
+      # Try next elif
+      try_elif_clauses(rest, context, session_id)
+    end
+  end
+
+  # Execute for statement with native type support
+  defp execute_for_statement(%Types.ForStatement{variable: var_node, value: value_nodes, body: body}, context, session_id) do
+    # Extract variable name
+    var_name = extract_variable_name(var_node)
+
+    # Extract values with native type preservation
+    values = extract_loop_values(value_nodes, context)
+
+    # Iterate over values
+    Enum.reduce(values, context, fn value, acc_context ->
+      # Store native value in environment
+      new_env = Map.put(acc_context.env, var_name, value)
+      loop_context = %{acc_context | env: new_env}
+      execute_do_group_or_node(body, loop_context, session_id)
+    end)
+  end
+
+  # Execute while statement
+  defp execute_while_statement(%Types.WhileStatement{condition: condition_nodes, body: body}, context, session_id) do
+    execute_while_loop(condition_nodes, body, context, session_id)
+  end
+
+  # Recursive while loop execution
+  defp execute_while_loop(condition_nodes, body, context, session_id) do
+    # Execute condition
+    condition_context = execute_command_list(condition_nodes, context, session_id)
+
+    if condition_context.exit_code == 0 do
+      # Condition succeeded - execute body and continue
+      body_context = execute_do_group_or_node(body, condition_context, session_id)
+      execute_while_loop(condition_nodes, body, body_context, session_id)
+    else
+      # Condition failed - exit loop
+      condition_context
+    end
   end
 end

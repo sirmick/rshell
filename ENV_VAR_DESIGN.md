@@ -736,4 +736,107 @@ end
 - `encode/1` converts native terms → compact JSON text
 - `format/1` converts native terms → pretty JSON text
 
+
+---
+
+## TODO: DeclarationCommand Implementation
+
+**Status**: Not yet implemented  
+**Blocking**: Control flow tests that use `export` statements
+
+### Overview
+
+`DeclarationCommand` is the AST node for bash declaration statements:
+- `export VAR=value` - Export variable to environment
+- `declare VAR=value` - Declare variable with attributes
+- `local VAR=value` - Declare local variable (function scope)
+- `readonly VAR=value` - Make variable read-only
+
+### AST Structure
+
+```elixir
+%BashParser.AST.Types.DeclarationCommand{
+  children: [
+    %BashParser.AST.Types.VariableAssignment{
+      name: %BashParser.AST.Types.VariableName{source_info: %{text: "COUNT"}},
+      value: %BashParser.AST.Types.Number{source_info: %{text: "0"}}
+    }
+  ]
+}
+```
+
+### Required Context Enhancements
+
+To properly implement declarations, the context structure needs to support:
+
+1. **Variable Attributes**:
+   ```elixir
+   %{
+     env: %{
+       "VAR" => %{
+         value: "actual_value",
+         readonly: true,
+         exported: true,
+         scope: :global  # or :local for function scope
+       }
+     }
+   }
+   ```
+
+2. **Scope Stack** (for local variables in functions):
+   ```elixir
+   %{
+     env_stack: [
+       %{"LOCAL_VAR" => %{value: "local", scope: :local}},  # Current function scope
+       %{"GLOBAL_VAR" => %{value: "global", scope: :global}}  # Global scope
+     ],
+     env: %{...}  # Flattened view for lookups
+   }
+   ```
+
+3. **Read-only Protection**:
+   - Check `readonly` attribute before modification
+   - Return error if attempting to modify readonly variable
+
+### Implementation Strategy
+
+#### Phase 1: Basic Export (Simple)
+For immediate use in control flow tests, implement simple version:
+```elixir
+defp execute_declaration_command(%Types.DeclarationCommand{children: assignments}, context, _session_id) do
+  # Extract variable assignments and set in env
+  new_env = Enum.reduce(assignments, context.env || %{}, fn assignment, env ->
+    case assignment do
+      %Types.VariableAssignment{name: name_node, value: value_node} ->
+        var_name = extract_variable_name(name_node)
+        var_value = extract_value(value_node, context)
+        Map.put(env, var_name, var_value)
+      _ ->
+        env
+    end
+  end)
+  
+  %{context | env: new_env}
+end
+```
+
+#### Phase 2: Full Declaration Support (Future)
+- Parse declaration command type (export, declare, local, readonly)
+- Implement variable attributes (readonly, exported, scope)
+- Add scope stack for local variables
+- Implement read-only protection
+- Support `declare -r`, `declare -x`, etc. flags
+
+### Related Design Documents
+- See [`RUNTIME_DESIGN.md`](RUNTIME_DESIGN.md) for context structure
+- See [`CONTROL_FLOW_DESIGN.md`](CONTROL_FLOW_DESIGN.md) for function scope requirements
+
+### Blocking Issues
+Currently 6 control flow tests fail because they use `export COUNT=0` statements which raise "DeclarationCommand execution not yet implemented".
+
+### Next Steps
+1. Implement Phase 1 (simple export) to unblock control flow tests
+2. Design enhanced context structure for Phase 2
+3. Update RUNTIME_DESIGN.md with new context fields
+4. Implement full declaration support with attributes and scoping
 This separation keeps concerns clean: pipelines use protocols for streaming data, env vars use JSON for serialization.

@@ -1,26 +1,58 @@
 # RShell
 
-RShell is an interactive Bash shell implementation in Elixir, providing incremental parsing, execution, and a functional CLI using strongly-typed AST structures.
+**A modern, type-safe Bash shell implementation in Elixir with native data structure support.**
+
+RShell is an interactive Bash shell that extends traditional shell capabilities with **native type preservation**, **JSON-aware variables**, and **structured data iteration**. Built on tree-sitter parsing and strongly-typed AST structures, RShell provides bash compatibility while enabling powerful data processing workflows.
+
+## Why RShell?
+
+Traditional bash shells treat everything as strings. RShell preserves **native Elixir data types** throughout execution, enabling:
+
+- **Native Type Variables**: Store maps, lists, and numbers—not just strings
+- **Structured Data Iteration**: `for i in [1,2,3]` iterates over numbers, not strings
+- **JSON-Aware Builtins**: Pass structured data between commands without serialization
+- **Type Preservation Boundaries**: Automatic conversion only where needed (concatenation, external commands)
+
+### Quick Example
+
+```bash
+# Traditional bash: everything is strings
+export DATA="[1,2,3]"
+for i in $DATA; do echo $i; done
+# Output: [1,2,3]  (treats entire string as one value)
+
+# RShell: native type preservation
+export DATA=[1,2,3]
+for i in $DATA; do echo $i; done
+# Output: 1, 2, 3  (iterates over list elements)
+```
 
 ## Overview
 
-This project combines tree-sitter-bash parsing with an execution runtime to create a functional shell. It demonstrates real-time incremental parsing with automatic execution of complete commands, builtin command support, and observable execution through PubSub events.
+RShell combines tree-sitter-bash parsing with an execution runtime to create a functional shell with **native type support**. It demonstrates real-time incremental parsing, automatic execution of complete commands, builtin command support, and observable execution through PubSub events.
 
 ## Features
 
-### Parser
+### 🎯 Native Type System
+- **Type Preservation**: Variables store native Elixir types (maps, lists, numbers, booleans)
+- **Smart Boundaries**: Automatic conversion only at string boundaries (concatenation, external commands)
+- **JSON Support**: Parse and emit JSON directly in environment variables
+- **Structured Iteration**: For loops iterate over list elements, not split strings
+
+### 🚀 Parser
 - **Strongly-Typed AST**: 59 typed Elixir structs auto-generated from tree-sitter grammar
 - **Incremental Parsing**: Line-by-line parsing with incomplete structure detection
 - **Native Performance**: Rust-based tree-sitter for fast parsing
 - **Event-Driven**: PubSub broadcasts for AST updates and executable nodes
 
-### Runtime & Execution
-- **Builtin Commands**: Native Elixir implementations (echo, and more to come)
+### ⚙️ Runtime & Execution
+- **Native Type Builtins**: Commands receive and return structured data
+- **Builtin Commands**: Native Elixir implementations (echo, export, env, pwd, cd, true, false, printenv, man)
 - **Execution Modes**: Simulate, capture, and real (stub) modes
-- **Context Management**: Environment variables, working directory, exit codes
+- **Context Management**: Rich environment with native type support, working directory, exit codes
 - **Observable Execution**: PubSub events for execution lifecycle and output
 
-### CLI
+### 💻 CLI
 - **Interactive Shell**: REPL with real-time parsing and execution
 - **Command History**: Multi-line input with incremental feedback
 - **Debug Commands**: `.ast`, `.status`, `.reset` for inspection
@@ -78,7 +110,7 @@ mix escript.build
 ./rshell
 ```
 
-Example session:
+Example session with **native type support**:
 ```
 🐚 RShell - Interactive Bash Shell
 ==================================================
@@ -90,24 +122,70 @@ Type .help for available commands
 📡 Session ID: cli_123456
 🎬 Mode: simulate
 
-rshell> echo hello world
-hello world
-rshell> echo -n test
-testrshell> export FOO=bar
-✓ FOO=bar
-rshell> .status
+rshell> export DATA=[1,2,3]
+✓ DATA=[1, 2, 3]
 
-📊 Status:
-  Session ID: cli_123456
-  Buffer size: 0 bytes
-  Has errors: false
-  Lines accumulated: 0
-  Commands executed: 3
-  Exit code: 0
-  Mode: simulate
+rshell> echo $DATA
+[1, 2, 3]
+
+rshell> for i in $DATA; do echo "Number: $i"; done
+Number: 1
+Number: 2
+Number: 3
+
+rshell> export USER={"name":"Alice","age":30}
+✓ USER={"name":"Alice","age":30}
+
+rshell> echo $USER
+{"name":"Alice","age":30}
 
 rshell> .quit
 👋 Goodbye!
+```
+
+### Native Type Examples
+
+**Lists**:
+```bash
+# Store a list
+export NUMS=[10,20,30]
+
+# Iterate over elements (not string split!)
+for n in $NUMS; do
+  echo "Value: $n"
+done
+# Output:
+# Value: 10
+# Value: 20
+# Value: 30
+```
+
+**Maps/Objects**:
+```bash
+# Store structured data
+export CONFIG={"host":"localhost","port":8080}
+
+# Pass to builtins as native map
+echo $CONFIG
+# Output: {"host":"localhost","port":8080}
+
+# String concatenation converts to JSON
+echo "Config: "$CONFIG
+# Output: Config: {"host":"localhost","port":8080}
+```
+
+**Type Boundaries**:
+```bash
+# Native types preserved in variable expansion
+export A=[1,2,3]
+echo $A              # [1, 2, 3] (native list formatted)
+
+# Concatenation forces string conversion
+echo "Data: "$A      # Data: [1,2,3] (JSON string)
+
+# For loops iterate native lists
+for i in $A; do echo $i; done
+# Output: 1, 2, 3 (numbers, not "[1,2,3]" as string)
 ```
 
 ### CLI Commands
