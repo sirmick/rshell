@@ -3,7 +3,7 @@ defmodule PubSubGuaranteesTest do
   Tests to ensure every input fragment gets at least one response message.
 
   Every call to IncrementalParser.append_fragment/2 MUST result in at least one message:
-  - Success: {:ast_updated, typed_ast} + {:parsing_complete}
+  - Success: {:ast_incremental, metadata}
   - Parser Error: {:parsing_failed, error}
   - Parser Crash: {:parsing_crashed, error}
 
@@ -15,7 +15,7 @@ defmodule PubSubGuaranteesTest do
   alias RShell.{IncrementalParser, PubSub}
 
   describe "fragment always gets response (no silent timeouts)" do
-    test "every fragment produces ast_updated and parsing_complete" do
+    test "every fragment produces ast_incremental" do
       session_id = "test_#{:rand.uniform(1_000_000)}"
       {:ok, parser} = IncrementalParser.start_link(session_id: session_id, broadcast: true)
       PubSub.subscribe(session_id, [:ast])
@@ -23,14 +23,10 @@ defmodule PubSubGuaranteesTest do
       # Submit fragment
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "echo test\n")
 
-      # MUST receive ast_updated within reasonable time
-      assert_receive {:ast_updated, ast}, 1000,
-        "TIMEOUT: Did not receive ast_updated for fragment"
-      assert is_struct(ast)
-
-      # MUST receive parsing_complete within reasonable time
-      assert_receive {:parsing_complete}, 1000,
-        "TIMEOUT: Did not receive parsing_complete for fragment"
+      # MUST receive ast_incremental within reasonable time
+      assert_receive {:ast_incremental, metadata}, 1000,
+        "TIMEOUT: Did not receive ast_incremental for fragment"
+      assert is_struct(metadata.full_ast)
     end
 
     test "multiple fragments all produce responses" do
@@ -51,12 +47,9 @@ defmodule PubSubGuaranteesTest do
         # Submit fragment
         {:ok, _ast} = IncrementalParser.append_fragment(parser, fragment)
 
-        # MUST receive both messages for THIS fragment
-        assert_receive {:ast_updated, _}, 1000,
-          "TIMEOUT: Missing ast_updated for fragment: #{inspect(fragment)}"
-
-        assert_receive {:parsing_complete}, 1000,
-          "TIMEOUT: Missing parsing_complete for fragment: #{inspect(fragment)}"
+        # MUST receive ast_incremental for THIS fragment
+        assert_receive {:ast_incremental, _}, 1000,
+          "TIMEOUT: Missing ast_incremental for fragment: #{inspect(fragment)}"
       end
     end
 
@@ -68,12 +61,13 @@ defmodule PubSubGuaranteesTest do
       # Submit executable command
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "echo hello\n")
 
-      # MUST receive ast_updated and executable_node (no command count anymore)
-      assert_receive {:ast_updated, _}, 1000
-      assert_receive {:executable_node, node}, 1000
+      # MUST receive ast_incremental and executable_node (with command count)
+      assert_receive {:ast_incremental, _}, 1000
+      assert_receive {:executable_node, node, count}, 1000
 
       # Verify executable node details
       assert is_struct(node)
+      assert count == 1
     end
 
     test "incomplete fragments do NOT produce executable_node" do
@@ -84,11 +78,11 @@ defmodule PubSubGuaranteesTest do
       # Submit incomplete structure
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "if true; then\n")
 
-      # MUST receive ast_updated
-      assert_receive {:ast_updated, _}, 1000
+      # MUST receive ast_incremental
+      assert_receive {:ast_incremental, _}, 1000
 
       # MUST NOT receive executable_node (incomplete structure)
-      refute_receive {:executable_node, _}, 100
+      refute_receive {:executable_node, _, _}, 100
     end
 
     test "rapid fragments all get responses" do
@@ -102,33 +96,29 @@ defmodule PubSubGuaranteesTest do
         {:ok, _} = IncrementalParser.append_fragment(parser, "echo #{i}\n")
       end
 
-      # MUST receive exactly 2 * count messages (ast_updated + parsing_complete for each)
-      received_updates = receive_n_messages({:ast_updated, :_}, count, 2000)
-      received_complete = receive_n_messages({:parsing_complete}, count, 2000)
+      # MUST receive exactly count ast_incremental messages
+      received_updates = receive_n_messages({:ast_incremental, :_}, count, 2000)
 
       assert length(received_updates) == count,
-        "Expected #{count} ast_updated messages, got #{length(received_updates)}"
-
-      assert length(received_complete) == count,
-        "Expected #{count} parsing_complete messages, got #{length(received_complete)}"
+        "Expected #{count} ast_incremental messages, got #{length(received_updates)}"
     end
 
-    test "error fragments still produce completion event" do
+    test "error fragments still produce ast_updated event" do
       session_id = "test_#{:rand.uniform(1_000_000)}"
       {:ok, parser} = IncrementalParser.start_link(session_id: session_id, broadcast: true)
       PubSub.subscribe(session_id, [:ast])
 
       # Note: Tree-sitter bash parser is very tolerant, so this might not actually error
-      # But if it does, we should get parsing_failed instead of parsing_complete
+      # But we should always get ast_incremental (or parsing_failed on error)
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "echo test\n")
 
-      # MUST receive ast_updated first
-      assert_receive {:ast_updated, _}, 1000
-
-      # MUST receive one of these completion signals
-      assert_receive msg, 1000
-      assert msg == {:parsing_complete} or match?({:parsing_failed, _}, msg),
-        "Expected completion signal, got: #{inspect(msg)}"
+      # MUST receive ast_incremental (or parsing_failed if there was an error)
+      receive do
+        {:ast_incremental, _} -> :ok
+        {:parsing_failed, _} -> :ok
+      after
+        1000 -> flunk("TIMEOUT: Did not receive any response for fragment")
+      end
     end
 
     test "parser crash sends error event (no silent timeout)" do

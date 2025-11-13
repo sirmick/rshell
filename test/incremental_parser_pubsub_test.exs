@@ -30,18 +30,20 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts AST update after each fragment", %{parser: parser} do
       {:ok, ast} = IncrementalParser.append_fragment(parser, "echo hello\n")
 
-      # Should receive AST update
-      assert_receive {:ast_updated, received_ast}, 200
-      assert get_type(received_ast) == "program"
-      assert received_ast == ast
+      # Should receive incremental AST update
+      assert_receive {:ast_incremental, metadata}, 200
+      assert get_type(metadata.full_ast) == "program"
+      assert metadata.full_ast == ast
     end
 
     test "broadcasts multiple AST updates for multiple fragments", %{parser: parser} do
       {:ok, ast1} = IncrementalParser.append_fragment(parser, "echo hello\n")
-      assert_receive {:ast_updated, ^ast1}, 200
+      assert_receive {:ast_incremental, metadata1}, 200
+      assert metadata1.full_ast == ast1
 
       {:ok, ast2} = IncrementalParser.append_fragment(parser, "echo world\n")
-      assert_receive {:ast_updated, ^ast2}, 200
+      assert_receive {:ast_incremental, metadata2}, 200
+      assert metadata2.full_ast == ast2
 
       # AST should accumulate both commands
       assert length(get_children(ast2)) == 2
@@ -59,7 +61,7 @@ defmodule RShell.IncrementalParserPubSubTest do
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "echo test\n")
 
       # Should not receive any broadcasts
-      refute_receive {:ast_updated, _}, 200
+      refute_receive {:ast_incremental, _}, 200
 
       PubSub.unsubscribe(session_id, [:ast])
     end
@@ -73,7 +75,7 @@ defmodule RShell.IncrementalParserPubSubTest do
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "echo test\n")
 
       # Should not receive any broadcasts (no session topic)
-      refute_receive {:ast_updated, _}, 200
+      refute_receive {:ast_incremental, _}, 200
     end
   end
 
@@ -81,8 +83,8 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts executable command", %{parser: parser} do
       {:ok, _ast} = IncrementalParser.append_fragment(parser, "echo hello\n")
 
-      # Should receive AST update first
-      assert_receive {:ast_updated, _}, 200
+      # Should receive incremental AST update first
+      assert_receive {:ast_incremental, _}, 200
 
       # Then executable node
       assert_receive {:executable_node, node, 1}, 200
@@ -92,17 +94,17 @@ defmodule RShell.IncrementalParserPubSubTest do
 
     test "broadcasts multiple executable commands with incremental counts", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo one\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node1, 1}, 200
       assert get_text(node1) =~ "echo one"
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo two\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node2, 2}, 200
       assert get_text(node2) =~ "echo two"
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo three\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node3, 3}, 200
       assert get_text(node3) =~ "echo three"
     end
@@ -110,7 +112,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts pipeline as executable", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "ls -la | grep test\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "pipeline"
     end
@@ -118,7 +120,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts list (commands with && or ||) as executable", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo first && echo second\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "list"
     end
@@ -126,7 +128,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts subshell as executable", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "(echo nested)\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "subshell"
     end
@@ -134,7 +136,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts variable declaration as executable", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "export FOO=bar\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "declaration_command"
     end
@@ -142,7 +144,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts function definition as executable", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "function myfunc() { echo hello; }\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "function_definition"
     end
@@ -153,20 +155,20 @@ defmodule RShell.IncrementalParserPubSubTest do
       # Incomplete command (no newline)
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo hello")
 
-      # Should receive AST update but no executable node
-      assert_receive {:ast_updated, _}, 200
+      # Should receive incremental AST update but no executable node
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 200
     end
 
     test "broadcasts when incomplete command becomes complete", %{parser: parser} do
       # Start with incomplete
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo ")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 100
 
       # Complete it
       {:ok, _} = IncrementalParser.append_fragment(parser, "hello\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_text(node) =~ "echo"
       assert get_text(node) =~ "hello"
@@ -176,8 +178,9 @@ defmodule RShell.IncrementalParserPubSubTest do
       # Invalid syntax (unclosed quote)
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo \"unclosed\n")
 
-      # Should receive AST update but no executable node (has ERROR nodes)
-      assert_receive {:ast_updated, ast}, 200
+      # Should receive incremental AST update but no executable node (has ERROR nodes)
+      assert_receive {:ast_incremental, metadata}, 200
+      ast = metadata.full_ast
 
       # Verify there's an ERROR node
       has_error = get_children(ast)
@@ -190,17 +193,17 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts multi-line command when complete", %{parser: parser} do
       # Start multi-line
       {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 100
 
       # Continue
       {:ok, _} = IncrementalParser.append_fragment(parser, "  echo hello\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 100
 
       # Complete
       {:ok, _} = IncrementalParser.append_fragment(parser, "fi\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "if_statement"
     end
@@ -209,11 +212,11 @@ defmodule RShell.IncrementalParserPubSubTest do
   describe "reset behavior" do
     test "resets command count after reset", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo one\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, _, 1}, 200
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo two\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, _, 2}, 200
 
       # Reset
@@ -221,13 +224,13 @@ defmodule RShell.IncrementalParserPubSubTest do
 
       # Next command should be count 1 again
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo three\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, _, 1}, 200
     end
 
     test "clears accumulated input after reset", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo hello\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, _, 1}, 200
 
       :ok = IncrementalParser.reset(parser)
@@ -242,12 +245,12 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "does not broadcast same executable node twice", %{parser: parser} do
       # First fragment
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo hello\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, _, 1}, 200
 
       # Add another fragment after the first (should only broadcast new one)
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo world\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 2}, 200
 
       # Should only receive one executable node event (the new one)
@@ -258,13 +261,13 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "tracks last executable row correctly", %{parser: parser} do
       # Line 0
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo line0\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node1, 1}, 200
       assert get_end_row(node1) == 0
 
       # Line 1
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo line1\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node2, 2}, 200
       assert get_end_row(node2) == 1
 
@@ -276,19 +279,19 @@ defmodule RShell.IncrementalParserPubSubTest do
   describe "complex command structures" do
     test "broadcasts for loop when complete", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "for i in 1 2 3\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 100
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "do\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 100
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "  echo $i\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       refute_receive {:executable_node, _, _}, 100
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "done\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "for_statement"
     end
@@ -296,7 +299,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts while loop when complete", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "while true; do echo loop; done\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "while_statement"
     end
@@ -316,13 +319,13 @@ defmodule RShell.IncrementalParserPubSubTest do
       # Send all fragments except last
       for fragment <- Enum.slice(fragments, 0..-2) do
         {:ok, _} = IncrementalParser.append_fragment(parser, fragment)
-        assert_receive {:ast_updated, _}, 200
+        assert_receive {:ast_incremental, _}, 200
         refute_receive {:executable_node, _, _}, 100
       end
 
       # Send last fragment
       {:ok, _} = IncrementalParser.append_fragment(parser, "esac\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node, 1}, 200
       assert get_type(node) == "case_statement"
     end
@@ -332,7 +335,7 @@ defmodule RShell.IncrementalParserPubSubTest do
     test "broadcasts multiple commands in correct order", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo first\necho second\necho third\n")
 
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
 
       # Should receive three executable nodes in order
       assert_receive {:executable_node, node1, 1}, 200
@@ -350,17 +353,17 @@ defmodule RShell.IncrementalParserPubSubTest do
 
     test "broadcasts commands added incrementally in correct order", %{parser: parser} do
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo first\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node1, 1}, 200
       assert get_start_row(node1) == 0
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo second\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node2, 2}, 200
       assert get_start_row(node2) == 1
 
       {:ok, _} = IncrementalParser.append_fragment(parser, "echo third\n")
-      assert_receive {:ast_updated, _}, 200
+      assert_receive {:ast_incremental, _}, 200
       assert_receive {:executable_node, node3, 3}, 200
       assert get_start_row(node3) == 2
     end

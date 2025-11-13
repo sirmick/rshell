@@ -149,9 +149,9 @@ defmodule RShell.Runtime do
   end
 
 
-  # Handle executable nodes from parser
+  # Handle executable nodes from parser (with command count)
   @impl true
-  def handle_info({:executable_node, node}, state) do
+  def handle_info({:executable_node, node, _count}, state) do
     if state.auto_execute do
       try do
         {_result, new_context} = execute_node_internal(node, state.context, state.session_id)

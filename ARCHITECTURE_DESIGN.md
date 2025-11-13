@@ -405,14 +405,20 @@ PubSub.broadcast(session_id, :ast, {:ast_updated, ast})
 **State**:
 ```elixir
 %State{
-  resource: ResourceArc,
-  buffer_size: integer(),
-  session_id: String.t(),
-  broadcast: boolean(),
-  last_executable_row: integer(),
-  command_count: integer()
+  resource: ResourceArc,           # Rust parser resource
+  buffer_size: integer(),          # Max buffer size
+  session_id: String.t(),          # PubSub session ID
+  broadcast: boolean(),            # Enable/disable events
+  last_executable_row: integer(),  # Track last broadcast row (prevent duplicates)
+  command_count: integer()         # Incremental command counter
 }
 ```
+
+**Key Features**:
+- **Incremental AST updates**: Uses tree-sitter's native change tracking
+- **Duplicate prevention**: Tracks `last_executable_row` to avoid re-broadcasting
+- **Command counting**: Sequential numbering for executable nodes
+- **Error guarantees**: Always broadcasts ONE event per fragment (success or error)
 
 **API**:
 ```elixir
@@ -424,10 +430,23 @@ PubSub.broadcast(session_id, :ast, {:ast_updated, ast})
 
 **Broadcasts**:
 ```elixir
-# AST update with typed structs
-PubSub.broadcast(session_id, :ast, {:ast_updated, ast})
+# Incremental AST update with change tracking
+PubSub.broadcast(session_id, :ast, {:ast_incremental, %{
+  full_ast: typed_ast,           # Complete accumulated AST
+  changed_nodes: [typed_node],   # Only nodes that changed/were added
+  changed_ranges: [%{            # Byte ranges that changed
+    start_byte: integer,
+    end_byte: integer,
+    start_point: %{row, col},
+    end_point: %{row, col}
+  }]
+}})
 
-# Executable nodes (typed structs)
+# Parse errors
+PubSub.broadcast(session_id, :ast, {:parsing_failed, error})
+PubSub.broadcast(session_id, :ast, {:parsing_crashed, error})
+
+# Executable nodes (typed structs with command count)
 PubSub.broadcast(session_id, :executable, {:executable_node, node, count})
 ```
 
@@ -546,14 +565,19 @@ ErrorClassifier.classify_parse_state(ast, resource)
 ```
 1. User Input → CLI.submit_fragment("export FOO=bar\n")
 2. Parser Receives → IncrementalParser.append_fragment(pid, fragment)
-3. Rust NIF parses → Returns typed AST structs
-4. Parser Broadcasts → PubSub.broadcast(:ast, {:ast_updated, typed_ast})
+3. Rust NIF parses → Returns typed AST with change tracking
+4. Parser Broadcasts → PubSub.broadcast(:ast, {:ast_incremental, %{
+     full_ast: typed_ast,
+     changed_nodes: [new_command_node],
+     changed_ranges: [{start_byte: 0, end_byte: 15, ...}]
+   }})
 5. Parser Detects Complete → PubSub.broadcast(:executable, {:executable_node, node, 1})
 6. Runtime Receives → handle_info({:executable_node, node, count})
 7. Runtime Executes → Uses pattern matching on typed struct
 8. Runtime Broadcasts → PubSub.broadcast(:context, {:variable_set, %{name: "FOO", value: "bar"}})
 9. Runtime Broadcasts → PubSub.broadcast(:runtime, {:execution_completed, %{exit_code: 0}})
-10. CLI Receives → Displays feedback to user
+10. CLI Maintains State → Parser not reset, accumulates for .ast command
+11. CLI Receives → Displays feedback to user
 ```
 
 ---
@@ -656,6 +680,13 @@ This architecture provides:
 ✅ **Performant**: Overhead is negligible (<1%)  
 ✅ **Extensible**: Easy to add new components  
 
-**Current Status**: All planned phases complete. 184 tests passing.
+**Current Status**: All planned phases complete. 368 tests passing.
+
+**Recent Updates (2025-11-13)**:
+- ✅ Implemented tree-sitter incremental change tracking
+- ✅ Replaced `{:ast_updated}` with `{:ast_incremental}` event
+- ✅ Removed redundant `{:parsing_complete}` event
+- ✅ Added command count to executable nodes
+- ✅ CLI no longer auto-resets parser (maintains accumulated state)
 
 The design is pragmatic, starting simple and allowing growth.

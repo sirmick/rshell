@@ -25,7 +25,7 @@ defmodule ParserRuntimeIntegrationTest do
     IncrementalParser.append_fragment(parser, "echo hello\n")
 
     # Should see events in order
-    assert_receive {:ast_updated, _}, 1000
+    assert_receive {:ast_incremental, _}, 1000
     assert_receive {:executable_node, _, _}, 1000
     assert_receive {:execution_started, _}, 1000
     assert_receive {:execution_completed, _}, 1000
@@ -50,7 +50,7 @@ defmodule ParserRuntimeIntegrationTest do
     IncrementalParser.append_fragment(parser, "echo third\n")
 
     # Should receive events for third command
-    assert_receive {:ast_updated, _}, 1000
+    assert_receive {:ast_incremental, _}, 1000
     assert_receive {:executable_node, _, _}, 1000
     assert_receive {:execution_started, _}, 1000
     assert_receive {:execution_completed, _}, 1000
@@ -66,8 +66,8 @@ defmodule ParserRuntimeIntegrationTest do
     # Submit incomplete if statement
     IncrementalParser.append_fragment(parser, "if true; then\n")
 
-    # Should get AST update but no executable node
-    assert_receive {:ast_updated, _}, 1000
+    # Should get incremental AST update but no executable node
+    assert_receive {:ast_incremental, _}, 1000
     refute_receive {:executable_node, _, _}, 500
     refute_receive {:execution_started, _}, 100
   end

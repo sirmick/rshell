@@ -142,12 +142,33 @@ fn parse_incremental<'env>(
             let has_error = new_tree.root_node().has_error();
             let ast = convert_node_to_map(&new_tree.root_node(), &input, env);
             
-            // Extract changed ranges if we have an old tree
-            let changed_ranges = if let Some(ref old_tree) = old_tree_option {
-                extract_changed_ranges(&new_tree, old_tree, env)
+            // Extract changed ranges and nodes if we have an old tree
+            let (changed_ranges, changed_nodes) = if let Some(ref old_tree) = old_tree_option {
+                let ranges = extract_changed_ranges(&new_tree, old_tree, env);
+                let nodes = extract_changed_nodes(&new_tree, old_tree, &input, env);
+                (ranges, nodes)
             } else {
                 // First parse - everything is new
-                vec![]
+                // Extract top-level child nodes from the tree directly
+                let root = new_tree.root_node();
+                let mut children_nodes = Vec::new();
+                
+                let mut cursor = root.walk();
+                if cursor.goto_first_child() {
+                    loop {
+                        let child = cursor.node();
+                        if child.is_named() {
+                            let child_map = convert_node_to_map(&child, &input, env);
+                            children_nodes.push(child_map);
+                        }
+                        
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                }
+                
+                (vec![], children_nodes)
             };
             
             // Store the new tree
@@ -161,7 +182,9 @@ fn parse_incremental<'env>(
             if has_error {
                 result.insert("has_errors".to_string(), true.encode(env));
             }
+            
             result.insert("changed_ranges".to_string(), changed_ranges.encode(env));
+            result.insert("changed_nodes".to_string(), changed_nodes.encode(env));
             
             Ok((atoms::ok(), result))
         }
@@ -381,6 +404,111 @@ fn extract_changed_ranges<'env>(
             map
         })
         .collect()
+}
+
+/// Extract changed AST nodes by finding nodes that overlap with changed ranges
+/// Returns the actual AST subtrees that were modified or added
+fn extract_changed_nodes<'env>(
+    new_tree: &Tree,
+    old_tree: &Tree,
+    source: &str,
+    env: Env<'env>,
+) -> Vec<HashMap<String, Term<'env>>> {
+    let ranges: Vec<Range> = new_tree.changed_ranges(old_tree).collect();
+    
+    // If we have changed ranges, use them to find changed nodes
+    if !ranges.is_empty() {
+        let mut changed_nodes = Vec::new();
+        let root = new_tree.root_node();
+        
+        // For each changed range, find the smallest AST node that contains it
+        for range in ranges {
+            if let Some(node) = find_smallest_node_containing_range(&root, &range) {
+                // Only include named nodes (skip punctuation/whitespace)
+                if node.is_named() {
+                    let node_map = convert_node_to_map(&node, source, env);
+                    changed_nodes.push(node_map);
+                }
+            }
+        }
+        
+        // Remove duplicates (multiple ranges might map to same node)
+        changed_nodes.dedup_by(|a, b| {
+            // Compare by position to detect duplicates
+            a.get("start_byte") == b.get("start_byte") &&
+            a.get("end_byte") == b.get("end_byte")
+        });
+        
+        return changed_nodes;
+    }
+    
+    // If no changed ranges, detect newly added nodes by comparing children counts
+    // This happens when we append new content (e.g., new commands)
+    let old_root = old_tree.root_node();
+    let new_root = new_tree.root_node();
+    let old_child_count = old_root.named_child_count();
+    let new_child_count = new_root.named_child_count();
+    
+    if new_child_count > old_child_count {
+        // Extract the new children that were added
+        let mut new_nodes = Vec::new();
+        let mut cursor = new_root.walk();
+        
+        if cursor.goto_first_child() {
+            let mut index = 0;
+            loop {
+                let child = cursor.node();
+                if child.is_named() {
+                    // Only include nodes beyond the old child count
+                    if index >= old_child_count {
+                        let node_map = convert_node_to_map(&child, source, env);
+                        new_nodes.push(node_map);
+                    }
+                    index += 1;
+                }
+                
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        
+        return new_nodes;
+    }
+    
+    // No changes detected
+    vec![]
+}
+
+/// Find the smallest named node that fully contains the given range
+fn find_smallest_node_containing_range<'a>(
+    node: &tree_sitter::Node<'a>,
+    range: &Range,
+) -> Option<tree_sitter::Node<'a>> {
+    // Check if current node contains the range
+    if node.start_byte() > range.start_byte || node.end_byte() < range.end_byte {
+        return None;
+    }
+    
+    // Try to find a smaller child that contains the range
+    let mut cursor = node.walk();
+    let mut best_match = if node.is_named() { Some(*node) } else { None };
+    
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            // Recursively search for smaller containing node
+            if let Some(smaller) = find_smallest_node_containing_range(&child, range) {
+                best_match = Some(smaller);
+            }
+            
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    
+    best_match
 }
 
 rustler::init!(
