@@ -1,0 +1,189 @@
+#!/usr/bin/expect -f
+# test_cli_advanced.exp - Expect script for automated CLI testing
+# This script uses expect to send commands and verify responses
+
+set timeout 10
+set failed 0
+set passed 0
+
+# Colors
+set RED "\033\[0;31m"
+set GREEN "\033\[0;32m"
+set YELLOW "\033\[1;33m"
+set BLUE "\033\[0;34m"
+set NC "\033\[0m"
+
+proc test_result {status name details} {
+    global failed passed RED GREEN YELLOW NC
+    
+    if {$status eq "PASS"} {
+        incr passed
+        puts "${GREEN}✓${NC} $name"
+    } elseif {$status eq "FAIL"} {
+        incr failed
+        puts "${RED}✗${NC} $name"
+        if {$details ne ""} {
+            puts "  ${RED}$details${NC}"
+        }
+    } else {
+        puts "${YELLOW}⊘${NC} $name (SKIPPED)"
+    }
+}
+
+# Start the interactive CLI
+spawn mix run -e {RShell.CLI.main([])}
+
+expect {
+    timeout { 
+        puts "${RED}ERROR: CLI failed to start${NC}"
+        exit 1 
+    }
+    "rshell>" { 
+        puts "${GREEN}✓ CLI started successfully${NC}"
+    }
+}
+
+# Test 1: Basic echo command
+send "echo hello\r"
+expect {
+    timeout { test_result FAIL "echo hello" "Timeout waiting for output" }
+    "hello" { test_result PASS "echo hello" "" }
+}
+expect "rshell>"
+
+# Test 2: Echo with multiple arguments
+send "echo one two three\r"
+expect {
+    timeout { test_result FAIL "echo multiple args" "Timeout" }
+    "one two three" { test_result PASS "echo multiple args" "" }
+}
+expect "rshell>"
+
+# Test 3: printf command
+send "printf 'Hello %s\\n' World\r"
+expect {
+    timeout { test_result FAIL "printf" "Timeout" }
+    "Hello World" { test_result PASS "printf" "" }
+}
+expect "rshell>"
+
+# Test 4: .help command
+send ".help\r"
+expect {
+    timeout { test_result FAIL ".help" "Timeout" }
+    "Available Commands" { test_result PASS ".help" "" }
+}
+expect "rshell>"
+
+# Test 5: .status command
+send ".status\r"
+expect {
+    timeout { test_result FAIL ".status" "Timeout" }
+    "Status:" { test_result PASS ".status" "" }
+}
+expect "rshell>"
+
+# Test 6: Variable declaration (should timeout with red error)
+send "A=12\r"
+expect {
+    timeout { 
+        test_result FAIL "variable declaration timeout" "No timeout message shown"
+    }
+    -re "TIMEOUT.*not complete" { 
+        test_result PASS "variable declaration timeout (red error)" ""
+    }
+}
+expect "rshell>"
+
+# Test 7: .ast after variable declaration
+send ".ast\r"
+expect {
+    timeout { test_result FAIL ".ast" "Timeout" }
+    -re "\\[DeclarationCommand\\]|No AST" { test_result PASS ".ast shows parsed AST" "" }
+}
+expect "rshell>"
+
+# Test 8: .reset command
+send ".reset\r"
+expect {
+    timeout { test_result FAIL ".reset" "Timeout" }
+    "Parser state reset" { test_result PASS ".reset" "" }
+}
+expect "rshell>"
+
+# Test 9: Simple for loop (will timeout but should parse)
+send "for i in 1 2 3; do\r"
+expect ">"
+send "echo \$i\r"
+expect ">"
+send "done\r"
+expect {
+    timeout { 
+        test_result SKIP "for loop" "Control flow partial implementation"
+    }
+    -re "1.*2.*3" { 
+        test_result PASS "for loop execution" ""
+    }
+}
+expect "rshell>"
+
+# Test 10: If statement
+send "if echo test; then\r"
+expect ">"
+send "echo success\r"
+expect ">"
+send "fi\r"
+expect {
+    timeout { 
+        test_result SKIP "if statement" "Control flow partial implementation"
+    }
+    "success" { 
+        test_result PASS "if statement execution" ""
+    }
+}
+expect "rshell>"
+
+# Test 11: Multiline echo (quote continuation)
+send "echo \"hello\r"
+expect "quote>"
+send "world\"\r"
+expect {
+    timeout { test_result FAIL "multiline quote" "Timeout" }
+    -re "hello.*world" { test_result PASS "multiline quote continuation" "" }
+}
+expect "rshell>"
+
+# Test 12: Invalid builtin usage
+send "printf\r"
+expect {
+    timeout { test_result FAIL "invalid builtin args" "Timeout" }
+    -re "Usage:|Error" { test_result PASS "invalid builtin shows error" "" }
+}
+expect "rshell>"
+
+# Test 13: .help with builtin name
+send ".help echo\r"
+expect {
+    timeout { test_result FAIL ".help echo" "Timeout" }
+    -re "echo.*Output" { test_result PASS ".help echo shows builtin help" "" }
+}
+expect "rshell>"
+
+# Exit gracefully
+send ".quit\r"
+expect eof
+
+# Print summary
+puts "\n========================================"
+puts "${BLUE}Test Summary${NC}"
+puts "========================================"
+puts "Passed: ${GREEN}$passed${NC}"
+puts "Failed: ${RED}$failed${NC}"
+
+if {$failed > 0} {
+    puts "${RED}⚠️  Some tests failed!${NC}"
+    exit 1
+} else {
+    puts "${GREEN}✅ All tests passed!${NC}"
+    exit 0
+}

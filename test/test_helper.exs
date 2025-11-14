@@ -124,6 +124,9 @@ defmodule TestHelperTypedAST do
   defp simplify_ast(_), do: nil
 end
 
+# Compile test helper modules
+Code.require_file("test_helpers/execution_helper.ex", __DIR__)
+
 # Suppress debug logs during tests
 Logger.configure(level: :warning)
 

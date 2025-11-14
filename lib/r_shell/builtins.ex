@@ -587,6 +587,119 @@ defmodule RShell.Builtins do
     end)
   end
 
+  @doc """
+  test - evaluate conditional expressions
+
+  Enhanced test builtin with native type support for RShell.
+
+  Usage: test EXPRESSION
+     or: test ARG1 OP ARG2
+
+  String Comparison:
+    =             Equal (strings)
+    !=            Not equal (strings)
+
+  Numeric Comparison:
+    -eq           Equal (numbers)
+    -ne           Not equal (numbers)
+    -gt           Greater than
+    -ge           Greater than or equal
+    -lt           Less than
+    -le           Less than or equal
+
+  Type Checking:
+    -n STRING     STRING has nonzero length
+    -z STRING     STRING has zero length
+
+  Rich Type Support:
+    - Map access: $CONFIG["key"]
+    - List access: $ARRAY[0]
+    - Nested access: $DATA["user"]["age"]
+    - Native type preservation
+
+  ## Examples
+      test 5 -gt 3
+      test $NAME = "alice"
+      test $USER["age"] -gt 25
+      test $SERVERS[0] = "web1"
+      test $CONFIG["db"]["port"] -eq 5432
+  """
+  @shell_test_opts :argv
+  def shell_test([], _stdin, context) do
+    # No arguments - return false
+    {context, stream(""), stream(""), 1}
+  end
+
+  def shell_test([arg], _stdin, context) do
+    # Single argument - check if truthy
+    result = is_truthy?(arg)
+    exit_code = if result, do: 0, else: 1
+    {context, stream(""), stream(""), exit_code}
+  end
+
+  def shell_test([left, op, right], _stdin, context) do
+    # Three arguments - binary comparison
+    result = evaluate_comparison(left, op, right, context)
+    exit_code = if result, do: 0, else: 1
+    {context, stream(""), stream(""), exit_code}
+  end
+
+  def shell_test(_argv, _stdin, context) do
+    # Other arities - not supported yet
+    {context, stream(""), stream("test: unsupported expression\n"), 1}
+  end
+
+  defp is_truthy?(nil), do: false
+  defp is_truthy?(""), do: false
+  defp is_truthy?(false), do: false
+  defp is_truthy?(0), do: false
+  defp is_truthy?([]), do: false
+  defp is_truthy?(%{} = map) when map_size(map) == 0, do: false
+  defp is_truthy?(_), do: true
+
+  defp evaluate_comparison(left_expr, op, right_expr, context) do
+    # For now, simple string/number comparison
+    # Note: Variable expansion already happened in runtime
+    left = left_expr
+    right = right_expr
+
+    case op do
+      # String equality
+      "=" -> to_string(left) == to_string(right)
+      "!=" -> to_string(left) != to_string(right)
+
+      # Numeric comparisons
+      "-eq" -> to_number(left) == to_number(right)
+      "-ne" -> to_number(left) != to_number(right)
+      "-gt" -> to_number(left) > to_number(right)
+      "-ge" -> to_number(left) >= to_number(right)
+      "-lt" -> to_number(left) < to_number(right)
+      "-le" -> to_number(left) <= to_number(right)
+
+      # Length checks
+      "-n" -> is_truthy?(left) && String.length(to_string(left)) > 0
+      "-z" -> !is_truthy?(left) || String.length(to_string(left)) == 0
+
+      _ -> false
+    end
+  end
+
+  defp to_number(value) when is_integer(value), do: value
+  defp to_number(value) when is_float(value), do: value
+  defp to_number(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} -> int
+      _ ->
+        case Float.parse(value) do
+          {float, ""} -> float
+          _ -> 0
+        end
+    end
+  end
+  defp to_number(true), do: 1
+  defp to_number(false), do: 0
+  defp to_number(_), do: 0
+
   defp list_all_builtins do
     __MODULE__.__info__(:functions)
     |> Enum.filter(fn {name, arity} ->
@@ -602,6 +715,8 @@ defmodule RShell.Builtins do
 
   # Helper: Convert text to Stream
   # Wraps text in a single-element list so Stream yields the text as one chunk
+  # Empty strings become empty streams (not streams with one empty string)
+  defp stream(""), do: Stream.concat([[]])
   defp stream(text) when is_binary(text), do: Stream.concat([[text]])
 
   # Process backslash escape sequences

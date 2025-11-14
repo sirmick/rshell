@@ -293,9 +293,12 @@ defmodule RShell.IncrementalParser do
     # Check if tree has errors - if so, nothing is executable yet
     has_errors = BashParser.has_errors(state.resource)
 
+    Logger.debug("check_and_broadcast_executable_nodes: has_errors=#{has_errors}")
+
     if has_errors do
       # Tree has errors (incomplete structures, syntax errors, etc.)
       # Don't broadcast anything as executable
+      Logger.debug("Tree has errors, skipping executable broadcast")
       state
     else
       # Tree is error-free, check for new executable nodes
@@ -332,7 +335,6 @@ defmodule RShell.IncrementalParser do
       {new_command_count, new_last_row} = Enum.reduce(executable_pairs, {state.command_count, state.last_executable_row}, fn {map, typed}, {count, _last_row} ->
         new_count = count + 1
         end_row = Map.get(map, "end_row", -1)
-        Logger.debug("Broadcasting executable node with count=#{new_count}, end_row=#{end_row}")
         PubSub.broadcast(state.session_id, :executable, {:executable_node, typed, new_count})
         {new_count, end_row}
       end)
@@ -385,6 +387,7 @@ defmodule RShell.IncrementalParser do
       %Types.CaseStatement{} -> true
       %Types.FunctionDefinition{} -> true
       %Types.DeclarationCommand{} -> true
+      %Types.VariableAssignment{} -> true  # Simple variable assignments like X=12
       %Types.UnsetCommand{} -> true
       %Types.TestCommand{} -> true
       %Types.CStyleForStatement{} -> true

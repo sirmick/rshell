@@ -29,12 +29,13 @@ for i in $DATA; do echo $i; done
 
 ## Overview
 
-RShell combines tree-sitter-bash parsing with an execution runtime to create a functional shell with **native type support**. It demonstrates real-time incremental parsing, automatic execution of complete commands, builtin command support, and observable execution through PubSub events.
+RShell combines tree-sitter-bash parsing with an execution runtime to create a functional shell with **native type support** and **bracket notation** for nested data access. It demonstrates real-time incremental parsing, automatic execution of complete commands, builtin command support, and observable execution through PubSub events.
 
 ## Features
 
 ### 🎯 Native Type System
 - **Type Preservation**: Variables store native Elixir types (maps, lists, numbers, booleans)
+- **Bracket Notation**: Access nested map keys and list indices with `$VAR["key"]` or `$VAR[0]` syntax
 - **Smart Boundaries**: Automatic conversion only at string boundaries (concatenation, external commands)
 - **JSON Support**: Parse and emit JSON directly in environment variables
 - **Structured Iteration**: For loops iterate over list elements, not split strings
@@ -158,6 +159,13 @@ done
 # Value: 10
 # Value: 20
 # Value: 30
+
+# Access by index with bracket notation
+echo $NUMS[0]
+# Output: 10
+
+echo $NUMS[2]
+# Output: 30
 ```
 
 **Maps/Objects**:
@@ -169,9 +177,41 @@ export CONFIG={"host":"localhost","port":8080}
 echo $CONFIG
 # Output: {"host":"localhost","port":8080}
 
+# Access nested keys with bracket notation
+echo $CONFIG["host"]
+# Output: localhost
+
+echo $CONFIG["port"]
+# Output: 8080
+
 # String concatenation converts to JSON
-echo "Config: "$CONFIG
-# Output: Config: {"host":"localhost","port":8080}
+echo "Server: "$CONFIG["host"]
+# Output: Server: localhost
+```
+
+**Nested Structures with Bracket Notation**:
+```bash
+# Store nested configuration
+export SETTINGS={"database":{"host":"localhost","port":5432},"cache":{"ttl":3600}}
+
+# Access deeply nested values
+echo $SETTINGS["database"]["host"]
+# Output: localhost
+
+echo $SETTINGS["database"]["port"]
+# Output: 5432
+
+echo $SETTINGS["cache"]["ttl"]
+# Output: 3600
+
+# Mix list and map access
+export APPS=[{"name":"frontend","port":3000},{"name":"backend","port":4000}]
+
+echo $APPS[0]["name"]
+# Output: frontend
+
+echo $APPS[1]["port"]
+# Output: 4000
 ```
 
 **Type Boundaries**:
@@ -179,6 +219,9 @@ echo "Config: "$CONFIG
 # Native types preserved in variable expansion
 export A=[1,2,3]
 echo $A              # [1, 2, 3] (native list formatted)
+
+# Bracket notation preserves types
+echo $A[0]           # 1 (native number)
 
 # Concatenation forces string conversion
 echo "Data: "$A      # Data: [1,2,3] (JSON string)

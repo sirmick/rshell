@@ -25,7 +25,8 @@
       {:rustler, "~> 0.30.0"},
       {:rustler_precompiled, "~> 0.7.0"},
       {:jason, "~> 1.4"},
-      {:phoenix_pubsub, "~> 2.1"}
+      {:phoenix_pubsub, "~> 2.1"},
+      {:warpath, "~> 0.6"}
     ]
   end
 end

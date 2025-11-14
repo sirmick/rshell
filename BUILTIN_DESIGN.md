@@ -13,11 +13,12 @@ Builtin commands are functions implemented in Elixir that execute within the run
 - ✅ Echo builtin with full flag support (-n, -e, -E)
 - ✅ AST traversal for command extraction
 - ✅ Unified signature for all builtins
-- ✅ 40 unit tests covering all echo functionality
+- ✅ Comprehensive test coverage across all builtins
 - ✅ Integration with Runtime execution flow
 - ✅ Docstring-based options parsing and help text generation
 - ✅ Compile-time option parser generation from @doc attributes
-- ✅ Stream-only I/O design with protocol-based conversion
+- ✅ Stream-only I/O design with JSON-based conversion
+- ✅ **9 implemented builtins**: echo, true, false, pwd, cd, export, printenv, man, env, test
 
 ---
 
@@ -509,7 +510,7 @@ Runtime handles both styles consistently.
 
 ## Implemented Builtins
 
-### Echo (`shell_echo`)
+### 1. Echo (`shell_echo`)
 
 **Status**: ✅ Fully implemented and tested
 
@@ -555,13 +556,114 @@ shell_echo(["-n", "-e", "test\\n"], "", %{})
 # => {%{}, "test\n", "", 0}
 ```
 
-**Testing**: 40 unit tests in `test/builtins_test.exs`
+**Testing**: Comprehensive unit tests in `test/builtins_test.exs`
 - Basic functionality (no args, single arg, multiple args)
 - Flag behavior (-n, -e, -E)
 - All escape sequences
 - Flag combinations
 - Edge cases (empty strings, spaces, special characters)
 - Context preservation
+
+### 2. True (`shell_true`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Return success exit code
+**Mode**: `:argv`
+**Exit Code**: Always 0
+
+### 3. False (`shell_false`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Return failure exit code
+**Mode**: `:argv`
+**Exit Code**: Always 1
+
+### 4. Pwd (`shell_pwd`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Print current working directory
+**Mode**: `:argv`
+**Returns**: `context.cwd` followed by newline
+
+### 5. Cd (`shell_cd`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Change working directory
+**Mode**: `:parsed`
+**Options**: `-L` (logical, default), `-P` (physical)
+**Modifies**: `context.cwd`
+
+### 6. Export (`shell_export`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Set environment variables
+**Mode**: `:parsed`
+**Options**: `-n` (unset)
+**Modifies**: `context.env`
+
+### 7. Printenv (`shell_printenv`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Print environment variables
+**Mode**: `:parsed`
+**Options**: `-0` (null separator)
+**Reads**: `context.env`
+
+### 8. Man (`shell_man`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Display help for builtins
+**Mode**: `:parsed`
+**Options**: `-a` (list all)
+**Uses**: Compile-time generated help text from docstrings
+
+### 9. Env (`shell_env`)
+
+**Status**: ✅ Fully implemented (2025-11-13)
+**Purpose**: Unified environment variable management with rich type support
+**Mode**: `:argv`
+**Features**:
+- List all env vars (no args)
+- Set variables with JSON parsing: `env A={"x":1}`
+- Get variables: `env PATH HOME`
+- Automatic JSON type detection
+- Pretty-printing for display
+
+**Implementation**:
+```elixir
+@shell_env_opts :argv
+def shell_env(argv, _stdin, context) do
+  # Parse JSON values using RShell.EnvJSON
+  case RShell.EnvJSON.parse(value_str) do
+    {:ok, parsed_value} -> Map.put(env, name, parsed_value)
+    {:error, _} -> Map.put(env, name, value_str)  # Fall back to string
+  end
+end
+```
+
+### 10. Test (`shell_test`)
+
+**Status**: ✅ Fully implemented (2025-11-13)
+**Purpose**: Evaluate conditional expressions
+**Mode**: `:argv`
+
+**Supported Operations**:
+- String comparison: `=`, `!=`
+- Numeric comparison: `-eq`, `-ne`, `-gt`, `-ge`, `-lt`, `-le`
+- Length checks: `-n`, `-z`
+- Truthy evaluation (single arg)
+
+**Rich Type Support**:
+- Works with native types from env vars
+- Automatic type conversion for comparisons
+- Bracket notation support (inherited from runtime)
+
+**Examples**:
+```bash
+test 5 -gt 3              # Numeric comparison
+test $NAME = "alice"      # String comparison
+test $CONFIG["port"] -eq 5432  # Map access
+```
 
 ---
 
@@ -847,22 +949,25 @@ end
 
 ✅ **Reflection-based discovery** - Add functions, they're automatically available
 ✅ **Unified signature** - `shell_*(args, stdin, context) → {new_context, stdout, stderr, exit_code}`
-✅ **Stream-only I/O** - Uniform type, no conversions between builtins
-✅ **Protocol-based conversion** - Automatic text conversion for terminal/external processes
-✅ **Structured data support** - Stream elements can be structs (PowerShell-like!)
+✅ **Stream-only I/O** - Uniform type, consistent output format
+✅ **JSON-based conversion** - Automatic type conversion via RShell.EnvJSON
+✅ **Rich type support** - Environment variables can be maps, lists, numbers, booleans
 ✅ **Lazy evaluation** - Streams stay lazy throughout pipelines
 ✅ **Immutable context** - Functional updates, no mutation
-✅ **Pure and stateful** - Same signature for both categories
+✅ **Two invocation modes** - `:parsed` (automatic option parsing) or `:argv` (raw arguments)
+✅ **Compile-time help generation** - Docstrings parsed for options and help text
 
 ### Adding New Builtins
 
 1. Define `shell_<name>/3` function in `RShell.Builtins`
-2. Accept `stdin` as `Stream.t()`, output as `Stream.t()`
-3. Use `stream(text)` helper for simple text output
-4. Implement `RShell.Streamable` protocol for custom structs
-5. Return `{new_context, stdout_stream, stderr_stream, exit_code}`
-6. Write tests
+2. Declare invocation mode: `@shell_<name>_opts :parsed` or `:argv`
+3. Add docstring with option specifications (for `:parsed` mode)
+4. Accept `stdin` as `Stream.t()`, output as `Stream.t()`
+5. Use `stream(text)` helper for simple text output
+6. Use `RShell.EnvJSON.format/1` for rich type display
+7. Return `{new_context, stdout_stream, stderr_stream, exit_code}`
+8. Write tests
 
 No registration needed - reflection handles discovery automatically!
 
-**For structured data output**: Define structs and implement `RShell.Streamable.to_text/1` protocol for terminal display.
+**For rich data types**: Use `RShell.EnvJSON` module for parsing and formatting. Protocol-based conversion is not currently used for builtins.

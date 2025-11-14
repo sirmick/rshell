@@ -28,6 +28,12 @@ defmodule RShell.Runtime do
   alias RShell.Builtins
   alias BashParser.AST.Types
 
+  # Default variable attributes
+  @default_attributes %{
+    readonly: false,
+    exported: false
+  }
+
   # Client API
 
   @doc """
@@ -81,6 +87,12 @@ defmodule RShell.Runtime do
     GenServer.call(server, {:set_cwd, path})
   end
 
+  @doc "Reset runtime context to initial state"
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server) do
+    GenServer.call(server, :reset)
+  end
+
 
   # Server Callbacks
 
@@ -96,11 +108,11 @@ defmodule RShell.Runtime do
 
     context = %{
       env: env,
+      env_meta: %{},  # Variable attributes metadata
       cwd: cwd,
       exit_code: 0,
       command_count: 0,
-      output: [],
-      errors: []
+      last_output: %{stdout: [], stderr: []}  # Only current command output (lists of native terms)
     }
 
     Logger.debug("Runtime started: session_id=#{session_id}")
@@ -108,14 +120,24 @@ defmodule RShell.Runtime do
     {:ok, %{
       session_id: session_id,
       context: context,
-      auto_execute: auto_execute
+      auto_execute: auto_execute,
+      initial_env: env,     # Store for reset
+      initial_cwd: cwd      # Store for reset
     }}
   end
 
   @impl true
   def handle_call({:execute_node, node}, _from, state) do
-    {result, new_context} = execute_node_internal(node, state.context, state.session_id)
-    {:reply, result, %{state | context: new_context}}
+    try do
+      {result, new_context} = execute_node_internal(node, state.context, state.session_id)
+      {:reply, result, %{state | context: new_context}}
+    rescue
+      e ->
+        # Broadcast failure publicly (same as handle_info)
+        broadcast_execution_failure(e, node, state.session_id)
+        # Return error to caller
+        {:reply, {:error, Exception.message(e)}, state}
+    end
   end
 
   @impl true
@@ -148,6 +170,29 @@ defmodule RShell.Runtime do
     {:reply, :ok, %{state | context: new_context}}
   end
 
+  @impl true
+  def handle_call(:reset, _from, state) do
+    old_context = state.context
+
+    # Create fresh context from initial values
+    new_context = %{
+      env: state.initial_env,
+      env_meta: %{},
+      cwd: state.initial_cwd,
+      exit_code: 0,
+      command_count: 0,
+      last_output: %{stdout: [], stderr: []}
+    }
+
+    # Broadcast reset event
+    PubSub.broadcast(state.session_id, :context, {:runtime_reset, %{
+      old_context: old_context,
+      new_context: new_context,
+      timestamp: DateTime.utc_now()
+    }})
+
+    {:reply, :ok, %{state | context: new_context}}
+  end
 
   # Handle executable nodes from parser (with command count)
   @impl true
@@ -157,21 +202,9 @@ defmodule RShell.Runtime do
         {_result, new_context} = execute_node_internal(node, state.context, state.session_id)
         {:noreply, %{state | context: new_context}}
       rescue
-        e in RuntimeError ->
-          # Broadcast execution failure
-          PubSub.broadcast(state.session_id, :runtime, {:execution_failed, %{
-            reason: "NotImplementedError",
-            message: Exception.message(e),
-            node_type: node.__struct__ |> Module.split() |> List.last()
-          }})
-          {:noreply, state}
-
         e ->
-          # Other errors
-          PubSub.broadcast(state.session_id, :runtime, {:execution_failed, %{
-            reason: e.__struct__ |> Module.split() |> List.last(),
-            message: Exception.message(e)
-          }})
+          # Broadcast failure publicly
+          broadcast_execution_failure(e, node, state.session_id)
           {:noreply, state}
       end
     else
@@ -182,47 +215,21 @@ defmodule RShell.Runtime do
   # Private Helpers
 
   defp execute_node_internal(node, context, session_id) do
-    # Broadcast execution start
-    PubSub.broadcast(session_id, :runtime, {:execution_started, %{
-      node: node,
-      timestamp: DateTime.utc_now()
-    }})
-
-    start_time = System.monotonic_time(:microsecond)
-
-    # Execute node (simple simulation for now)
-    new_context = simple_execute(node, context, session_id)
-
-    duration = System.monotonic_time(:microsecond) - start_time
-
-    # Broadcast execution complete
-    PubSub.broadcast(session_id, :runtime, {:execution_completed, %{
-      node: node,
-      exit_code: new_context.exit_code,
-      duration_us: duration,
-      timestamp: DateTime.utc_now()
-    }})
-
+    # Use ExecutionPipeline for clean execution and broadcasting
+    new_context = RShell.Runtime.ExecutionPipeline.execute(node, context, session_id)
     {{:ok, new_context}, new_context}
   end
 
-  # Execute AST nodes
-  defp simple_execute(node, context, session_id) do
+  # Execute AST nodes (exported for ExecutionPipeline)
+  def do_execute_node(node, context, session_id) do
     new_context = %{context | command_count: context.command_count + 1}
 
     case node do
       %Types.Command{} = cmd ->
         execute_command(cmd, new_context, session_id)
 
-      # Unimplemented node types
-      %Types.DeclarationCommand{} ->
-        raise "DeclarationCommand execution not yet implemented"
-
-      %Types.Pipeline{} ->
-        raise "Pipeline execution not yet implemented"
-
-      %Types.List{} ->
-        raise "List execution not yet implemented"
+      %Types.VariableAssignment{} = assignment ->
+        execute_variable_assignment(assignment, new_context, session_id)
 
       %Types.IfStatement{} = stmt ->
         execute_if_statement(stmt, new_context, session_id)
@@ -233,16 +240,15 @@ defmodule RShell.Runtime do
       %Types.WhileStatement{} = stmt ->
         execute_while_statement(stmt, new_context, session_id)
 
-      %Types.CaseStatement{} ->
-        raise "CaseStatement execution not yet implemented"
-
-      %Types.FunctionDefinition{} ->
-        raise "FunctionDefinition execution not yet implemented"
-
       other ->
         node_type = other.__struct__ |> Module.split() |> List.last()
         raise "Execution not implemented for #{node_type}"
     end
+  end
+
+  # Legacy name for internal use
+  defp simple_execute(node, context, session_id) do
+    do_execute_node(node, context, session_id)
   end
 
   defp execute_command(%Types.Command{source_info: source_info} = cmd, context, session_id) do
@@ -269,6 +275,40 @@ defmodule RShell.Runtime do
     end
   end
 
+  # Execute variable assignment: X=value
+  defp execute_variable_assignment(%Types.VariableAssignment{name: name_node, value: value_node}, context, _session_id) do
+    # Extract variable name
+    var_name = case name_node do
+      %Types.VariableName{source_info: %{text: text}} -> text
+      _ -> ""
+    end
+
+    # Extract value text with smart JSON/expansion detection
+    value_text = extract_value_text(value_node, context)
+
+    # Use EnvJSON.parse for all type detection (handles JSON, strings, native types)
+    parsed_value = case RShell.EnvJSON.parse(value_text) do
+      {:ok, parsed} -> parsed
+      {:error, _} -> value_text  # Not JSON, keep as string
+    end
+
+    # Update environment
+    new_env = Map.put(context.env, var_name, parsed_value)
+    %{context | env: new_env}
+  end
+
+  # Extract value text with smart JSON/expansion detection
+  defp extract_value_text(%{source_info: %{text: text}} = node, context) when is_binary(text) and text != "" do
+    # If it looks like JSON (starts with { or [), preserve raw text for parsing
+    if String.starts_with?(text, "{") or String.starts_with?(text, "[") do
+      text
+    else
+      # Otherwise, extract with context for variable expansion
+      extract_text_from_node(node, context)
+    end
+  end
+  defp extract_value_text(node, context), do: extract_text_from_node(node, context)
+
   # Convert native values to strings for external commands
   defp convert_to_string(value) when is_binary(value), do: value
   defp convert_to_string(value) when is_map(value), do: Jason.encode!(value)
@@ -291,24 +331,14 @@ defmodule RShell.Runtime do
   defp execute_builtin(name, args, stdin, context, session_id) do
     case Builtins.execute(name, args, stdin, context) do
       {new_context, stdout, stderr, exit_code} ->
-        # Materialize output if it's a stream
-        stdout_text = materialize_output(stdout)
-        stderr_text = materialize_output(stderr)
+        # Materialize output if it's a stream (preserves native types!)
+        stdout_list = materialize_output(stdout)
+        stderr_list = materialize_output(stderr)
 
-        # Broadcast output
-        if stdout_text != "" do
-          PubSub.broadcast(session_id, :output, {:stdout, stdout_text})
-        end
-
-        if stderr_text != "" do
-          PubSub.broadcast(session_id, :output, {:stderr, stderr_text})
-        end
-
-        # Update context with execution results
+        # Store ONLY in last_output (no accumulated output/errors)
         %{new_context |
-          output: [stdout_text | context.output],
-          errors: if(stderr_text != "", do: [stderr_text | context.errors], else: context.errors),
-          exit_code: exit_code
+          exit_code: exit_code,
+          last_output: %{stdout: stdout_list, stderr: stderr_list}
         }
 
       {:error, :not_a_builtin} ->
@@ -391,20 +421,22 @@ defmodule RShell.Runtime do
   defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}, _context), do: text
 
   defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context) when is_list(children) do
-    # Extract variable name
-    var_name = children
+    # Extract variable expression (may include bracket notation)
+    var_expr = children
       |> Enum.map(&extract_variable_name/1)
       |> Enum.join("")
 
-    # Look up in context.env
-    case Map.get(context.env || %{}, var_name) do
-      nil ->
-        # Undefined variable - return empty string (bash behavior)
-        ""
-
-      value ->
-        # Return the native value (for builtins) or will be converted to JSON (for external)
-        value
+    # Check if it has bracket notation: VAR["key"] or VAR[0]
+    if String.contains?(var_expr, "[") do
+      result = parse_bracket_access(var_expr, context)
+      # Convert result to string for use in commands
+      convert_to_string(result)
+    else
+      # Simple variable lookup
+      case Map.get(context.env || %{}, var_expr) do
+        nil -> ""
+        value -> convert_to_string(value)  # Convert to string for command arguments
+      end
     end
   end
 
@@ -468,23 +500,236 @@ defmodule RShell.Runtime do
   defp extract_variable_name(%Types.VariableName{source_info: %{text: text}}), do: text
   defp extract_variable_name(_), do: ""
 
-  # Materialize output - convert Stream to string
-  defp materialize_output(stream) when is_function(stream) do
-    stream
-    |> Enum.map(&to_string/1)
-    |> Enum.join("")
+  # =============================================================================
+  # Bracket Notation Support for Environment Variables (using Warpath JSONPath)
+  # =============================================================================
+
+  @doc """
+  Parse bracket notation for nested data access using JSONPath.
+
+  Examples:
+    - SERVER["port"] -> Access map key
+    - SERVERS[0] -> Access list index
+    - CONFIG["db"]["host"] -> Nested map access
+    - APPS[0]["name"] -> List then map access
+  """
+  defp parse_bracket_access(expr, context) do
+    # Split variable name from bracket chain: SERVER["port"] -> ["SERVER", "["port"]"]
+    case String.split(expr, "[", parts: 2) do
+      [var_name, bracket_rest] ->
+        # Get initial value from environment
+        initial_value = Map.get(context.env || %{}, var_name)
+
+        # Convert bracket notation to JSONPath and query
+        path = bracket_to_jsonpath("[" <> bracket_rest)
+
+        case Warpath.query(initial_value, path) do
+          {:ok, [result]} -> result
+          {:ok, []} -> nil
+          _ -> nil
+        end
+
+      [var_name] ->
+        # No brackets - simple variable
+        Map.get(context.env || %{}, var_name)
+    end
   end
-  defp materialize_output(string) when is_binary(string), do: string
-  defp materialize_output(_), do: ""
+
+  @doc """
+  Convert bracket notation to JSONPath query string.
+
+  Examples:
+    - ["port"] -> $.port
+    - [0] -> $[0]
+    - ["db"]["host"] -> $.db.host
+    - [0]["name"] -> $[0].name
+  """
+  defp bracket_to_jsonpath(bracket_str) do
+    # Extract all keys from: ["port"] or ["db"]["host"] or [0] or [0]["name"]
+    Regex.scan(~r/\[([^\]]+)\]/, bracket_str)
+    |> Enum.map(fn [_, key] ->
+      # Remove quotes if present: "port" -> port
+      clean_key = String.trim(key, "\"")
+
+      # Try parsing as integer for list/array access
+      case Integer.parse(clean_key) do
+        {int, ""} -> "[#{int}]"
+        _ -> ".#{clean_key}"
+      end
+    end)
+    |> Enum.join("")
+    |> then(&"$#{&1}")
+  end
+
+  # Broadcast successful execution result (for top-level commands only)
+  defp broadcast_execution_success(node, new_context, _old_context, duration_us, session_id) do
+    # Get stdout/stderr from context (no more process dictionary!)
+    result = %{
+      status: :success,
+      node: node,
+      node_type: get_node_type(node),
+      node_text: get_node_text(node),
+      node_line: get_node_line(node),
+      exit_code: new_context.exit_code,
+      stdout: new_context.last_output.stdout,
+      stderr: new_context.last_output.stderr,
+      context: %{
+        env: new_context.env,
+        cwd: new_context.cwd,
+        exit_code: new_context.exit_code
+      },
+      duration_us: duration_us,
+      timestamp: DateTime.utc_now()
+    }
+
+    PubSub.broadcast(session_id, :runtime, {:execution_result, result})
+  end
+
+  # Broadcast successful execution result with explicit output (for commands in loops)
+  defp broadcast_execution_success_with_output(node, new_context, _old_context, duration_us, stdout, stderr, session_id) do
+    result = %{
+      status: :success,
+      node: node,
+      node_type: get_node_type(node),
+      node_text: get_node_text(node),
+      node_line: get_node_line(node),
+      exit_code: new_context.exit_code,
+      stdout: stdout,
+      stderr: stderr,
+      context: %{
+        env: new_context.env,
+        cwd: new_context.cwd,
+        exit_code: new_context.exit_code
+      },
+      duration_us: duration_us,
+      timestamp: DateTime.utc_now()
+    }
+
+    PubSub.broadcast(session_id, :runtime, {:execution_result, result})
+  end
+
+  # Broadcast execution failure with rich context (for top-level commands)
+  defp broadcast_execution_failure(exception, node, session_id) do
+    node_type = get_node_type(node)
+
+    error_reason = case exception do
+      %RuntimeError{} -> "NotImplementedError"
+      _ -> exception.__struct__ |> Module.split() |> List.last()
+    end
+
+    result = %{
+      status: :error,
+      node: node,
+      node_type: node_type,
+      node_text: get_node_text(node),
+      node_line: get_node_line(node),
+      error: Exception.message(exception),
+      reason: error_reason,
+      stdout: "",           # Include empty output fields
+      stderr: "",
+      exit_code: nil,
+      timestamp: DateTime.utc_now()
+    }
+
+    PubSub.broadcast(session_id, :runtime, {:execution_result, result})
+    result
+  end
+
+  # Broadcast execution failure with explicit output (for commands in loops)
+  defp broadcast_execution_failure_with_output(exception, node, stdout, stderr, exit_code, session_id) do
+    node_type = get_node_type(node)
+
+    error_reason = case exception do
+      %RuntimeError{} -> "NotImplementedError"
+      _ -> exception.__struct__ |> Module.split() |> List.last()
+    end
+
+    result = %{
+      status: :error,
+      node: node,
+      node_type: node_type,
+      node_text: get_node_text(node),
+      node_line: get_node_line(node),
+      error: Exception.message(exception),
+      reason: error_reason,
+      stdout: stdout,       # Include any output produced before error
+      stderr: stderr,
+      exit_code: exit_code,
+      timestamp: DateTime.utc_now()
+    }
+
+    PubSub.broadcast(session_id, :runtime, {:execution_result, result})
+    result
+  end
+
+  # Extract node type safely
+  defp get_node_type(node) when is_struct(node) do
+    node.__struct__ |> Module.split() |> List.last()
+  end
+  defp get_node_type(_), do: "Unknown"
+
+  # Extract node text safely
+  defp get_node_text(%{source_info: %{text: text}}) when is_binary(text), do: text
+  defp get_node_text(_), do: nil
+
+  # Extract node line safely
+  defp get_node_line(%{source_info: %{start_line: line}}) when is_integer(line), do: line
+  defp get_node_line(_), do: nil
+
+  # Materialize output - convert Stream to list of native terms
+  defp materialize_output(stream) when is_function(stream) do
+    # Return list of native terms (NO string conversion!)
+    stream |> Enum.to_list()
+  end
+
+  defp materialize_output(string) when is_binary(string) do
+    # Single string becomes list with one element
+    if string == "", do: [], else: [string]
+  end
+
+  defp materialize_output([]), do: []
+  defp materialize_output(list) when is_list(list), do: list
+  defp materialize_output(term), do: [term]
 
   # =============================================================================
   # Control Flow Helper Functions
   # =============================================================================
 
   # Execute a list of commands sequentially, threading context through each
+  # Broadcasts execution results for each command
   defp execute_command_list(nodes, context, session_id) when is_list(nodes) do
     Enum.reduce(nodes, context, fn node, acc_context ->
-      simple_execute(node, acc_context, session_id)
+      start_time = System.monotonic_time(:microsecond)
+
+      # Execute the node
+      try do
+        new_context = simple_execute(node, acc_context, session_id)
+        duration = System.monotonic_time(:microsecond) - start_time
+
+        # Output is now in context.last_output (no process dictionary!)
+        broadcast_execution_success_with_output(
+          node,
+          new_context,
+          acc_context,
+          duration,
+          new_context.last_output.stdout,
+          new_context.last_output.stderr,
+          session_id
+        )
+
+        new_context
+      rescue
+        e ->
+          duration = System.monotonic_time(:microsecond) - start_time
+
+          # Get any output that was produced before error (from context)
+          stdout = acc_context.last_output.stdout
+          stderr = acc_context.last_output.stderr
+
+          broadcast_execution_failure_with_output(e, node, stdout, stderr, acc_context.exit_code, session_id)
+          # Continue with unchanged context
+          acc_context
+      end
     end)
   end
   defp execute_command_list(_, context, _session_id), do: context

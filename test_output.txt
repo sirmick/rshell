@@ -1,0 +1,579 @@
+    warning: using single-quoted strings to represent charlists is deprecated.
+    Use ~c"" if you indeed want a charlist or use "" instead.
+    You may run "mix format --migrate" to change all single-quoted
+    strings to use the ~c sigil and fix this warning.
+    │
+ 22 │         nif_file = 'priv/native/librshell_bash_parser'
+    │                    ~
+    │
+    └─ lib/bash_parser.ex:22:20
+
+    warning: incompatible types in binary construction:
+
+        <<nif_file::binary, ...>>
+
+    got type:
+
+        non_empty_list(integer())
+
+    but expected type:
+
+        binary()
+
+    where "nif_file" was given the type:
+
+        # type: non_empty_list(integer())
+        # from: lib/bash_parser.ex:22:18
+        nif_file = ~c"priv/native/librshell_bash_parser"
+
+    typing violation found at:
+    │
+ 24 │           File.exists?(nif_file <> ".so") -> :erlang.load_nif(nif_file, 0)
+    │           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ lib/bash_parser.ex:24: BashParser.load_nif/0
+
+    warning: unused alias Types
+    │
+ 31 │   alias BashParser.AST.Types
+    │   ~
+    │
+    └─ lib/bash_parser/ast/walker.ex:31:3
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   def parse(script, opts \\ []) do
+    │                     ~~~~
+    │
+    └─ lib/r_shell.ex:33:21: RShell.parse/2
+
+     warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 285 │   def format_node(node, opts \\ []) do
+     │                         ~~~~
+     │
+     └─ lib/r_shell.ex:285:25: RShell.format_node/2
+
+    warning: unused alias AST
+    │
+ 10 │   alias BashParser.AST
+    │   ~
+    │
+    └─ lib/r_shell.ex:10:3
+
+     warning: variable "context" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 660 │   defp evaluate_comparison(left_expr, op, right_expr, context) do
+     │                                                       ~~~~~~~
+     │
+     └─ lib/r_shell/builtins.ex:660:55: RShell.Builtins.evaluate_comparison/4
+
+    warning: defp parse_builtin_options/2 is private, @doc attribute is always discarded for private functions/macros/types
+    │
+  1 │ defmodule RShell.Builtins do
+    │ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ lib/r_shell/builtins.ex:1: RShell.Builtins.parse_builtin_options/2
+
+    warning: unused alias DocParser
+    │
+ 11 │   alias RShell.Builtins.{DocParser, OptionParser}
+    │   ~
+    │
+    └─ lib/r_shell/builtins/helpers.ex:11:3
+
+    warning: unused alias OptionParser
+    │
+ 11 │   alias RShell.Builtins.{DocParser, OptionParser}
+    │   ~
+    │
+    └─ lib/r_shell/builtins/helpers.ex:11:3
+
+warning: 1..-2 has a default step of -1, please write 1..-2//-1 instead
+  lib/r_shell/runtime.ex:392: RShell.Runtime.extract_text_from_node/2
+
+warning: 1..-2 has a default step of -1, please write 1..-2//-1 instead
+  lib/r_shell/runtime.ex:444: RShell.Runtime.extract_text_from_node/1
+
+     warning: defp parse_bracket_access/2 is private, @doc attribute is always discarded for private functions/macros/types
+     │
+ 482 │   @doc """
+     │   ~~~~~~~~
+     │
+     └─ lib/r_shell/runtime.ex:482: RShell.Runtime.parse_bracket_access/2
+
+     warning: defp parse_bracket_chain/1 is private, @doc attribute is always discarded for private functions/macros/types
+     │
+ 508 │   @doc """
+     │   ~~~~~~~~
+     │
+     └─ lib/r_shell/runtime.ex:508: RShell.Runtime.parse_bracket_chain/1
+
+     warning: defp navigate_nested/2 is private, @doc attribute is always discarded for private functions/macros/types
+     │
+ 532 │   @doc """
+     │   ~~~~~~~~
+     │
+     └─ lib/r_shell/runtime.ex:532: RShell.Runtime.navigate_nested/2
+
+    warning: module attribute @default_attributes was set but never used
+    │
+ 32 │   @default_attributes %{
+    │   ~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ lib/r_shell/runtime.ex:32: RShell.Runtime (module)
+
+    warning: variable "timeout" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 48 │     timeout = Keyword.get(opts, :timeout, @default_timeout)
+    │     ~
+    │
+    └─ lib/r_shell/stream_parser.ex:48:5: RShell.StreamParser.parse/2
+
+    warning: variable "timeout" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 78 │     timeout = Keyword.get(opts, :timeout, @default_timeout)
+    │     ~
+    │
+    └─ lib/r_shell/stream_parser.ex:78:5: RShell.StreamParser.parse_fragments/2
+
+
+17:04:24.011 [info] Starting RShell.Application with PubSub
+Running ExUnit with seed: 61778, max_cases: 8
+
+.....................................................    warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 64 │     test "executes else-branch when condition is false", %{parser: parser, runtime: runtime} do
+    │                                                                                     ~~~~~~~
+    │
+    └─ test/control_flow_test.exs:64:85: RShell.ControlFlowTest."test if statement execution executes else-branch when condition is false"/1
+
+    warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 80 │     test "handles if-elif-else chain", %{parser: parser, runtime: runtime} do
+    │                                                                   ~~~~~~~
+    │
+    └─ test/control_flow_test.exs:80:67: RShell.ControlFlowTest."test if statement execution handles if-elif-else chain"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 100 │     test "handles nested if statements", %{parser: parser, runtime: runtime} do
+     │                                                                     ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:100:69: RShell.ControlFlowTest."test if statement execution handles nested if statements"/1
+
+..     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 115 │     test "uses last command exit code in condition", %{parser: parser, runtime: runtime} do
+     │                                                                                 ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:115:81: RShell.ControlFlowTest."test if statement execution uses last command exit code in condition"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 133 │     test "iterates over explicit values", %{parser: parser, runtime: runtime} do
+     │                                                                      ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:133:70: RShell.ControlFlowTest."test for statement execution iterates over explicit values"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 153 │     test "handles empty iteration list", %{parser: parser, runtime: runtime} do
+     │                                                                     ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:153:69: RShell.ControlFlowTest."test for statement execution handles empty iteration list"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 166 │     test "expands variables in iteration values", %{parser: parser, runtime: runtime} do
+     │                                                                              ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:166:78: RShell.ControlFlowTest."test for statement execution expands variables in iteration values"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 188 │     test "loop variable persists after loop", %{parser: parser, runtime: runtime} do
+     │                                                                          ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:188:74: RShell.ControlFlowTest."test for statement execution loop variable persists after loop"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 205 │     test "nested for loops", %{parser: parser, runtime: runtime} do
+     │                                                         ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:205:57: RShell.ControlFlowTest."test for statement execution nested for loops"/1
+
+     warning: variable "output1" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 243 │       assert_receive {:stdout, output1}, 1000
+     │                                ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:243:32: RShell.ControlFlowTest."test while statement execution executes body while condition is true"/1
+
+     warning: variable "output2" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 244 │       assert_receive {:stdout, output2}, 1000
+     │                                ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:244:32: RShell.ControlFlowTest."test while statement execution executes body while condition is true"/1
+
+     warning: variable "output3" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 245 │       assert_receive {:stdout, output3}, 1000
+     │                                ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:245:32: RShell.ControlFlowTest."test while statement execution executes body while condition is true"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 230 │     test "executes body while condition is true", %{parser: parser, runtime: runtime} do
+     │                                                                              ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:230:78: RShell.ControlFlowTest."test while statement execution executes body while condition is true"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 251 │     test "does not execute body when condition is initially false", %{parser: parser, runtime: runtime} do
+     │                                                                                                ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:251:96: RShell.ControlFlowTest."test while statement execution does not execute body when condition is initially false"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 263 │     test "exits loop when condition becomes false", %{parser: parser, runtime: runtime} do
+     │                                                                                ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:263:80: RShell.ControlFlowTest."test while statement execution exits loop when condition becomes false"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 285 │     test "nested while loops", %{parser: parser, runtime: runtime} do
+     │                                                           ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:285:59: RShell.ControlFlowTest."test while statement execution nested while loops"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 314 │     test "if inside for loop", %{parser: parser, runtime: runtime} do
+     │                                                           ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:314:59: RShell.ControlFlowTest."test mixed control flow if inside for loop"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 332 │     test "for inside if statement", %{parser: parser, runtime: runtime} do
+     │                                                                ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:332:64: RShell.ControlFlowTest."test mixed control flow for inside if statement"/1
+
+     warning: variable "runtime" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 351 │     test "while inside if statement", %{parser: parser, runtime: runtime} do
+     │                                                                  ~~~~~~~
+     │
+     └─ test/control_flow_test.exs:351:66: RShell.ControlFlowTest."test mixed control flow while inside if statement"/1
+
+warning: 0..-2 has a default step of -1, please write 0..-2//-1 instead
+  test/incremental_parser_pubsub_test.exs:320: RShell.IncrementalParserPubSubTest."test complex command structures broadcasts case statement when complete"/1
+
+    warning: unused alias Types
+    │
+  5 │   alias BashParser.AST.Types
+    │   ~
+    │
+    └─ test/control_flow_test.exs:5:3
+
+...........................................................     warning: using single-quoted strings to represent charlists is deprecated.
+     Use ~c"" if you indeed want a charlist or use "" instead.
+     You may run "mix format --migrate" to change all single-quoted
+     strings to use the ~c sigil and fix this warning.
+     │
+ 117 │       assert "hello" = EnvJSON.encode('hello')
+     │                                       ~
+     │
+     └─ test/env_json_test.exs:117:39
+
+....     warning: using single-quoted strings to represent charlists is deprecated.
+     Use ~c"" if you indeed want a charlist or use "" instead.
+     You may run "mix format --migrate" to change all single-quoted
+     strings to use the ~c sigil and fix this warning.
+     │
+ 143 │       assert "hello" = EnvJSON.format('hello')
+     │                                       ~
+     │
+     └─ test/env_json_test.exs:143:39
+
+........................................................................................................................................................................
+
+  1) test mixed control flow while inside if statement (RShell.ControlFlowTest)
+     test/control_flow_test.exs:351
+     Assertion failed, no matching message after 1000ms
+     Showing 7 of 7 messages in the mailbox
+     code: assert_receive {:stdout, output1}
+     mailbox:
+       pattern: {:stdout, output1}
+       value:   {:ast_incremental,
+                 %{
+                   full_ast: %BashParser.AST.Types.Program{
+                     source_info: %BashParser.AST.Types.SourceInfo{
+                       start_line: 0,
+                       start_column: 0,
+                       end_line: 8,
+                       end_column: 0,
+                       text: "env CHECK=true\nif $CHECK; then\n  env COUNT=0\n  while test $COUNT -lt 2; do\n    echo $COUNT\n    env COUNT=$((COUNT + 1))\n  done\nfi\n",
+                       is_missing: false,
+                       is_extra: false,
+                       is_error: false
+                     },
+                     children: [
+                       %BashParser.AST.Types.Command{
+                         source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 14, text: "env CHECK=true", is_missing: false, is_extra: false, is_error: false},
+                         argument: [
+                           %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 4, end_line: 0, end_column: 14, text: "CHECK=true", is_missing: false, is_extra: false, is_error: false}}
+                         ],
+                         name: %BashParser.AST.Types.CommandName{
+                           source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false},
+                           children: [
+                             %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false}}
+                           ]
+                         },
+                         redirect: [],
+                         children: []
+                       },
+                       %BashParser.AST.Types.IfStatement{
+                         source_info: %BashParser.AST.Types.SourceInfo{
+                           start_line: 1,
+                           start_column: 0,
+                           end_line: 7,
+                           end_column: 2,
+                           text: "if $CHECK; then\n  env COUNT=0\n  while test $COUNT -lt 2; do\n    echo $COUNT\n    env COUNT=$((COUNT + 1))\n  done\nfi",
+                           is_missing: false,
+                           is_extra: false,
+                           is_error: false
+                         },
+                         condition: [
+                           %BashParser.AST.Types.Command{
+                             source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                             argument: [],
+                             name: %BashParser.AST.Types.CommandName{
+                               source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                               children: [
+                                 %BashParser.AST.Types.SimpleExpansion{
+                                   source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                                   ...
+                                 }
+                               ]
+                             },
+                             ...
+                           }
+                         ],
+                         ...
+                       }
+                     ]
+                   },
+                   ...
+                 }}
+
+       pattern: {:stdout, output1}
+       value:   {:executable_node,
+                 %BashParser.AST.Types.Command{
+                   source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 14, text: "env CHECK=true", is_missing: false, is_extra: false, is_error: false},
+                   argument: [
+                     %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 4, end_line: 0, end_column: 14, text: "CHECK=true", is_missing: false, is_extra: false, is_error: false}}
+                   ],
+                   name: %BashParser.AST.Types.CommandName{
+                     source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false},
+                     children: [%BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false}}]
+                   },
+                   redirect: [],
+                   children: []
+                 }, 1}
+
+       pattern: {:stdout, output1}
+       value:   {:executable_node,
+                 %BashParser.AST.Types.IfStatement{
+                   source_info: %BashParser.AST.Types.SourceInfo{
+                     start_line: 1,
+                     start_column: 0,
+                     end_line: 7,
+                     end_column: 2,
+                     text: "if $CHECK; then\n  env COUNT=0\n  while test $COUNT -lt 2; do\n    echo $COUNT\n    env COUNT=$((COUNT + 1))\n  done\nfi",
+                     is_missing: false,
+                     is_extra: false,
+                     is_error: false
+                   },
+                   condition: [
+                     %BashParser.AST.Types.Command{
+                       source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                       argument: [],
+                       name: %BashParser.AST.Types.CommandName{
+                         source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                         children: [
+                           %BashParser.AST.Types.SimpleExpansion{
+                             source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                             children: [
+                               %BashParser.AST.Types.VariableName{
+                                 source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 4, end_line: 1, end_column: 9, text: "CHECK", is_missing: false, is_extra: false, is_error: false}
+                               }
+                             ]
+                           }
+                         ]
+                       },
+                       redirect: [],
+                       children: []
+                     }
+                   ],
+                   children: [
+                     %BashParser.AST.Types.Command{
+                       source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 2, end_line: 2, end_column: 13, text: "env COUNT=0", is_missing: false, is_extra: false, is_error: false},
+                       argument: [
+                         %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 6, end_line: 2, end_column: 13, text: "COUNT=0", is_missing: false, is_extra: false, is_error: false}}
+                       ],
+                       name: %BashParser.AST.Types.CommandName{
+                         source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 2, end_line: 2, end_column: 5, text: "env", is_missing: false, is_extra: false, is_error: false},
+                         children: [%BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 2, end_line: 2, end_column: 5, text: "env", is_missing: false, is_extra: false, is_error: false}}]
+                       },
+                       ...
+                     },
+                     ...
+                   ]
+                 }, ...}
+
+       pattern: {:stdout, output1}
+       value:   {:execution_started,
+                 %{
+                   node: %BashParser.AST.Types.Command{
+                     source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 14, text: "env CHECK=true", is_missing: false, is_extra: false, is_error: false},
+                     argument: [
+                       %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 4, end_line: 0, end_column: 14, text: "CHECK=true", is_missing: false, is_extra: false, is_error: false}}
+                     ],
+                     name: %BashParser.AST.Types.CommandName{
+                       source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false},
+                       children: [%BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false}}]
+                     },
+                     redirect: [],
+                     children: []
+                   },
+                   timestamp: ~U[2025-11-14 01:04:26.284362Z]
+                 }}
+
+       pattern: {:stdout, output1}
+       value:   {:execution_completed,
+                 %{
+                   node: %BashParser.AST.Types.Command{
+                     source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 14, text: "env CHECK=true", is_missing: false, is_extra: false, is_error: false},
+                     argument: [
+                       %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 4, end_line: 0, end_column: 14, text: "CHECK=true", is_missing: false, is_extra: false, is_error: false}}
+                     ],
+                     name: %BashParser.AST.Types.CommandName{
+                       source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false},
+                       children: [%BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 0, start_column: 0, end_line: 0, end_column: 3, text: "env", is_missing: false, is_extra: false, is_error: false}}]
+                     },
+                     redirect: [],
+                     children: []
+                   },
+                   timestamp: ~U[2025-11-14 01:04:26.284387Z],
+                   exit_code: 0,
+                   duration_us: 18
+                 }}
+
+       pattern: {:stdout, output1}
+       value:   {:execution_started,
+                 %{
+                   node: %BashParser.AST.Types.IfStatement{
+                     source_info: %BashParser.AST.Types.SourceInfo{
+                       start_line: 1,
+                       start_column: 0,
+                       end_line: 7,
+                       end_column: 2,
+                       text: "if $CHECK; then\n  env COUNT=0\n  while test $COUNT -lt 2; do\n    echo $COUNT\n    env COUNT=$((COUNT + 1))\n  done\nfi",
+                       is_missing: false,
+                       is_extra: false,
+                       is_error: false
+                     },
+                     condition: [
+                       %BashParser.AST.Types.Command{
+                         source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                         argument: [],
+                         name: %BashParser.AST.Types.CommandName{
+                           source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                           children: [
+                             %BashParser.AST.Types.SimpleExpansion{
+                               source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 3, end_line: 1, end_column: 9, text: "$CHECK", is_missing: false, is_extra: false, is_error: false},
+                               children: [
+                                 %BashParser.AST.Types.VariableName{
+                                   source_info: %BashParser.AST.Types.SourceInfo{start_line: 1, start_column: 4, end_line: 1, end_column: 9, text: "CHECK", is_missing: false, is_extra: false, is_error: false}
+                                 }
+                               ]
+                             }
+                           ]
+                         },
+                         redirect: [],
+                         children: []
+                       }
+                     ],
+                     children: [
+                       %BashParser.AST.Types.Command{
+                         source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 2, end_line: 2, end_column: 13, text: "env COUNT=0", is_missing: false, is_extra: false, is_error: false},
+                         argument: [
+                           %BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 6, end_line: 2, end_column: 13, text: "COUNT=0", is_missing: false, is_extra: false, is_error: false}}
+                         ],
+                         name: %BashParser.AST.Types.CommandName{
+                           source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 2, end_line: 2, end_column: 5, text: "env", is_missing: false, is_extra: false, is_error: false},
+                           children: [%BashParser.AST.Types.Word{source_info: %BashParser.AST.Types.SourceInfo{start_line: 2, start_column: 2, end_line: 2, end_column: 5, text: "env", is_missing: false, is_extra: false, ...}}]
+                         },
+                         ...
+                       },
+                       ...
+                     ]
+                   },
+                   ...
+                 }}
+
+       pattern: {:stdout, output1}
+       value:   {:execution_failed, %{message: "External command execution not yet implemented", node_type: "IfStatement", reason: "NotImplementedError"}}
+     stacktrace:
+       test/control_flow_test.exs:365: (test)
+
+....
+
+  2) test while statement execution exits loop when condition becomes false (RShell.ControlFlowTest)
+     test/control_flow_test.exs:263
+     Assertion with =~ failed
+     code:  assert running =~ "running"
+     left:  "after loop\n"
+     right: "running"
+     stacktrace:
+       test/control_flow_test.exs:276: (test)
+
+.
+
+  3) test while statement execution executes body while condition is true (RShell.ControlFlowTest)
+     test/control_flow_test.exs:230
+     Unexpectedly received message {:stdout, "iteration $((COUNT + 1))\n"} (which matched {:stdout, _})
+     code: refute_receive {:stdout, _}, 500
+     stacktrace:
+       test/control_flow_test.exs:248: (test)
+
+...
+
+  4) test while statement execution nested while loops (RShell.ControlFlowTest)
+     test/control_flow_test.exs:285
+     Assertion with in failed
+     code:  assert "0-1" in outputs
+     left:  "0-1"
+     right: ["0-0", "0-$((INNER + 1))", "0-$((INNER + 1))", "0-$((INNER + 1))"]
+     stacktrace:
+       test/control_flow_test.exs:307: (test)
+
+...............................warning: negative steps are not supported in Enum.slice/2, pass 0..-2//1 instead
+  (elixir 1.19.3) lib/enum.ex:2999: Enum.slice/2
+  test/incremental_parser_pubsub_test.exs:320: RShell.IncrementalParserPubSubTest."test complex command structures broadcasts case statement when complete"/1
+  (ex_unit 1.19.3) lib/ex_unit/runner.ex:528: ExUnit.Runner.exec_test/2
+  (stdlib 7.1) timer.erl:599: :timer.tc/2
+  (ex_unit 1.19.3) lib/ex_unit/runner.ex:450: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+....................................**.........................................
+Finished in 8.2 seconds (0.7s async, 7.5s sync)
+22 doctests, 386 tests, 4 failures, 2 skipped

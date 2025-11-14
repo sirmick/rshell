@@ -1,7 +1,7 @@
 # Environment Variables Design: Rich Data Support
 
-**Last Updated**: 2025-11-13
-**Status**: Phase 1 Complete (JSON module), Variable expansion pending
+**Last Updated**: 2025-11-14
+**Status**: Phase 1 Complete ✅ (JSON module with 33 tests), Variable expansion and bracket notation ✅ Complete
 
 ---
 
@@ -218,6 +218,130 @@ end
 
 ---
 
+## Bracket Notation for Nested Data Access
+
+**Status**: ✅ Implemented (2025-11-13)
+
+RShell supports **bracket notation** for accessing nested map keys and list indices within environment variables, similar to PowerShell's object property access.
+
+### Syntax
+
+```bash
+# Map key access
+$VAR["key"]
+$VAR["nested"]["deep"]
+
+# List index access
+$VAR[0]
+$VAR[1]
+
+# Mixed access
+$CONFIG["servers"][0]
+$DATA[2]["name"]
+```
+
+### Implementation
+
+Bracket notation is implemented as a **universal runtime feature** in [`extract_text_from_node/2`](lib/r_shell/runtime.ex:400). When a variable expansion contains bracket syntax, the runtime:
+
+1. **Parses brackets** - Extracts the variable name and bracket chain
+2. **Navigates structure** - Traverses nested maps/lists using keys/indices
+3. **Returns value** - Retrieves the final nested value
+
+```elixir
+# lib/r_shell/runtime.ex:400-416
+defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context) do
+  var_name = extract_variable_name(children)
+  
+  # Check for bracket notation
+  if String.contains?(var_name, "[") do
+    {base_var, bracket_chain} = parse_bracket_access(var_name, context)
+    # Navigate nested structure
+    navigate_nested(base_var, bracket_chain)
+  else
+    # Simple variable lookup
+    Map.get(context.env, var_name)
+  end
+end
+```
+
+### Examples
+
+#### Map Access
+
+```bash
+# Set a nested map
+env CONFIG='{"database":{"host":"localhost","port":5432},"cache":{"ttl":3600}}'
+
+# Access nested keys
+echo $CONFIG["database"]
+# Output: {"host":"localhost","port":5432}
+
+echo $CONFIG["database"]["host"]
+# Output: localhost
+
+echo $CONFIG["database"]["port"]
+# Output: 5432
+```
+
+#### List Access
+
+```bash
+# Set a list
+env SERVERS='["web1","web2","db1"]'
+
+# Access by index
+echo $SERVERS[0]
+# Output: web1
+
+echo $SERVERS[2]
+# Output: db1
+```
+
+#### Mixed Structures
+
+```bash
+# Set a list of maps
+env APPS='[{"name":"frontend","port":3000},{"name":"backend","port":4000}]'
+
+# Access nested data
+echo $APPS[0]["name"]
+# Output: frontend
+
+echo $APPS[1]["port"]
+# Output: 4000
+```
+
+### Type Preservation
+
+Bracket notation preserves native types when used with builtins:
+
+```bash
+# Native map preserved in builtin arguments
+env -e DATABASE='{"host":"localhost","port":5432}'
+my_builtin --config $DATABASE["host"]
+# Builtin receives: ["my_builtin", "--config", "localhost"]
+```
+
+### Error Handling
+
+- **Undefined variable**: Returns empty string (bash behavior)
+- **Invalid key**: Returns empty string
+- **Out of bounds**: Returns empty string
+- **Type mismatch**: Returns empty string (e.g., index on map, key on list)
+
+### Universal Support
+
+Because bracket notation is implemented at the runtime level, it works **everywhere** variable expansion occurs:
+
+- ✅ Command arguments: `echo $CONFIG["key"]`
+- ✅ String interpolation: `echo "Host: $CONFIG["host"]"`
+- ✅ Builtin options: `my_cmd --port $CONFIG["port"]`
+- ✅ Control flow conditions: `if [ "$APP["status"]" = "active" ]`
+- ✅ For loop iteration: `for val in $DATA["items"]; do...`
+
+---
+
 ## Variable Expansion in Arguments
 
 ### AST Node Detection
@@ -225,14 +349,21 @@ end
 Tree-sitter parses `$VAR` as `SimpleExpansion` or `Expansion` nodes:
 
 ```elixir
-# Current implementation (lib/r_shell/runtime.ex:358-365)
-defp extract_text_from_node(%Types.SimpleExpansion{children: children}) do
-  # For now, return the expansion text as-is (e.g., "$VAR")
-  # Later we can expand variables from context
-  children
-  |> Enum.map(&extract_text_from_node/1)
-  |> Enum.join("")
-  |> then(&"$#{&1}")
+# Enhanced implementation with bracket notation (lib/r_shell/runtime.ex:400-416)
+defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context) do
+  var_name = extract_variable_name(children)
+  
+  # Check for bracket notation
+  if String.contains?(var_name, "[") do
+    {base_var, bracket_chain} = parse_bracket_access(var_name, context)
+    navigate_nested(base_var, bracket_chain)
+  else
+    # Simple variable lookup
+    case Map.get(context.env, var_name) do
+      nil -> ""
+      value -> value  # Native type preserved!
+    end
+  end
 end
 ```
 
@@ -643,13 +774,14 @@ context = %{
 
 ## Implementation Checklist
 
-### Phase 1: JSON & Core Support ✅ COMPLETE
+### Phase 1: JSON & Core Support ✅ COMPLETE (2025-11-13)
 - [x] Create `RShell.EnvJSON` module for JSON encoding/decoding
-- [x] Implement `parse/1` with JSON wrapping technique
-- [x] Implement `encode/1` for text conversion
-- [x] Implement `format/1` for pretty-printing
-- [x] Add Jason dependency to `mix.exs`
+- [x] Implement `parse/1` with JSON wrapping technique (lines 43-57)
+- [x] Implement `encode/1` for text conversion (lines 77-93)
+- [x] Implement `format/1` for pretty-printing (lines 107-117)
+- [x] Add Jason dependency to `mix.exs` (already present)
 - [x] Write comprehensive tests (33 tests in `test/env_json_test.exs`)
+- [x] Charlist detection to avoid treating `[1,2,3]` as charlist
 
 ### Phase 2: Variable Expansion ⏳ TODO
 - [ ] Update `extract_text_from_node/2` to accept context
@@ -703,11 +835,25 @@ end
 
 ## Summary
 
-### Completed (Phase 1)
-✅ **JSON Module** - `RShell.EnvJSON` with parse/encode/format functions
-✅ **Comprehensive tests** - 33 tests covering all JSON operations
-✅ **Wrapping technique** - Automatic type detection for maps, lists, numbers, booleans
-✅ **Round-trip support** - Parse → Encode → Parse preserves data
+### Completed
+✅ **Phase 1: JSON Module** (2025-11-13)
+  - `RShell.EnvJSON` with parse/encode/format functions
+  - 33 comprehensive tests covering all operations
+  - Wrapping technique for automatic type detection
+  - Round-trip support (Parse → Encode → Parse preserves data)
+  - Proper charlist handling
+
+✅ **Bracket Notation** (2025-11-13)
+  - Universal runtime feature in `extract_text_from_node/2`
+  - Syntax: `$VAR["key"]`, `$VAR[0]`, `$VAR["nested"]["deep"]`
+  - Works everywhere variable expansion occurs
+  - Documented in lines 221-343
+
+✅ **Enhanced `env` Builtin** (2025-11-13)
+  - Unified environment variable management
+  - Automatic JSON parsing with `RShell.EnvJSON.parse/1`
+  - Pretty-printing with `RShell.EnvJSON.format/1`
+  - Supports rich data types (maps, lists, numbers, booleans)
 
 ### Design Principles
 ✅ **Rich data support** - Maps, lists, nested structures in env vars
@@ -716,11 +862,10 @@ end
 ✅ **Backward compatible** - String env vars work as before
 ✅ **Flexible output** - Compact JSON for expansion, pretty JSON for display
 
-### Remaining Work
-⏳ **Variable expansion** - Integrate with runtime AST extraction
-⏳ **Export enhancement** - Use JSON parsing for assignments
-⏳ **Printenv builtin** - Create with JSON display support
-⏳ **Option parser** - Add rich type support for builtin arguments
+### Remaining Work (Lower Priority)
+⏳ **Export enhancement** - Currently basic, could add `-j` flag for explicit JSON mode
+⏳ **Option parser** - Add `:json`, `:map`, `:list` types to option specs
+⏳ **Variable attributes** - Implementation of readonly, exported, local flags (see lines 936-1304)
 
 **Key Innovation**: Environment variables can hold ANY Elixir term with automatic JSON serialization via the dedicated `RShell.EnvJSON` module. Unlike the pipeline system which uses the `Streamable` protocol for stream elements, env vars use JSON for text conversion.
 
@@ -739,104 +884,443 @@ end
 
 ---
 
-## TODO: DeclarationCommand Implementation
+## RShell Variable Design: Simplified & Enhanced
 
-**Status**: Not yet implemented  
-**Blocking**: Control flow tests that use `export` statements
+**Last Updated**: 2025-11-13
+**Status**: Design Complete, Implementation Pending
 
-### Overview
+---
 
-`DeclarationCommand` is the AST node for bash declaration statements:
-- `export VAR=value` - Export variable to environment
-- `declare VAR=value` - Declare variable with attributes
-- `local VAR=value` - Declare local variable (function scope)
-- `readonly VAR=value` - Make variable read-only
+### Core Philosophy: Always Global Assignment
 
-### AST Structure
+**RShell Enhancement**: Unlike bash, direct variable assignment (`X=value`) **always creates global variables**, even inside functions (when implemented).
+
+**Rationale**:
+- Simpler mental model than bash's confusing scoping
+- Global by default is more predictable
+- Explicit locality via `env -l` when needed
+- Avoids bash's implicit local creation
+
+---
+
+### Variable Assignment Syntax
+
+#### Direct Assignment (VariableAssignment AST Node)
+
+```bash
+# Always global, no attributes
+X=12
+Y="hello"
+CONFIG={"host":"localhost","port":5432}
+SERVERS=["web1","web2","db1"]
+```
+
+**Behavior**:
+- Parsed as `VariableAssignment` AST node
+- Always global (even inside functions)
+- Supports JSON value detection via `RShell.EnvJSON.parse/1`
+- No implicit attributes (not readonly, not exported)
+
+#### Attributed Assignment (via `env` Builtin)
+
+```bash
+# Readonly variable
+env -r API_KEY="secret123"
+
+# Exported variable
+env -e PATH=/usr/bin
+
+# Local variable (inside function only)
+env -l TEMP="value"
+
+# Combined attributes
+env -er DATABASE_URL="postgres://localhost"
+env -lr CONFIG="local readonly"
+
+# Modify existing variable attributes
+env -e -r X  # Make X exported + readonly
+```
+
+**Flags**:
+- `-e` / `--export` - Export to child processes
+- `-r` / `--readonly` - Make immutable
+- `-l` / `--local` - Function-local (error outside functions)
+
+---
+
+### Context Structure Enhancement
+
+#### Parallel Metadata Design (Recommended)
+
+**Backward compatible** - separates values from attributes:
 
 ```elixir
-%BashParser.AST.Types.DeclarationCommand{
-  children: [
-    %BashParser.AST.Types.VariableAssignment{
-      name: %BashParser.AST.Types.VariableName{source_info: %{text: "COUNT"}},
-      value: %BashParser.AST.Types.Number{source_info: %{text: "0"}}
-    }
-  ]
+%{
+  # Values (unchanged - existing code compatible!)
+  env: %{
+    "A" => 123,
+    "B" => "hello",
+    "CONFIG" => %{"host" => "localhost", "port" => 5432}
+  },
+  
+  # Metadata (NEW - only for vars with non-default attributes)
+  env_meta: %{
+    "B" => %{readonly: true, exported: false},
+    "CONFIG" => %{readonly: false, exported: true}
+    # "A" not present = default attributes (readonly: false, exported: false)
+  },
+  
+  # Existing fields (unchanged)
+  cwd: String.t(),
+  exit_code: integer(),
+  command_count: integer(),
+  output: [any()],
+  errors: [String.t()]
 }
 ```
 
-### Required Context Enhancements
-
-To properly implement declarations, the context structure needs to support:
-
-1. **Variable Attributes**:
-   ```elixir
-   %{
-     env: %{
-       "VAR" => %{
-         value: "actual_value",
-         readonly: true,
-         exported: true,
-         scope: :global  # or :local for function scope
-       }
-     }
-   }
-   ```
-
-2. **Scope Stack** (for local variables in functions):
-   ```elixir
-   %{
-     env_stack: [
-       %{"LOCAL_VAR" => %{value: "local", scope: :local}},  # Current function scope
-       %{"GLOBAL_VAR" => %{value: "global", scope: :global}}  # Global scope
-     ],
-     env: %{...}  # Flattened view for lookups
-   }
-   ```
-
-3. **Read-only Protection**:
-   - Check `readonly` attribute before modification
-   - Return error if attempting to modify readonly variable
-
-### Implementation Strategy
-
-#### Phase 1: Basic Export (Simple)
-For immediate use in control flow tests, implement simple version:
+**Default Attributes**:
 ```elixir
-defp execute_declaration_command(%Types.DeclarationCommand{children: assignments}, context, _session_id) do
-  # Extract variable assignments and set in env
-  new_env = Enum.reduce(assignments, context.env || %{}, fn assignment, env ->
-    case assignment do
-      %Types.VariableAssignment{name: name_node, value: value_node} ->
-        var_name = extract_variable_name(name_node)
-        var_value = extract_value(value_node, context)
-        Map.put(env, var_name, var_value)
-      _ ->
-        env
+@default_attributes %{
+  readonly: false,
+  exported: false
+}
+```
+
+**Benefits**:
+- ✅ Backward compatible (existing code unchanged)
+- ✅ Opt-in metadata (low memory overhead)
+- ✅ Clean separation (values vs attributes)
+- ✅ Fast default path (no metadata lookup for 99% of vars)
+
+---
+
+### Helper Functions
+
+```elixir
+# Get variable value (unchanged)
+def get_var(context, name), do: Map.get(context.env, name)
+
+# Get variable attributes (with defaults)
+def get_attributes(context, var_name) do
+  Map.get(context.env_meta || %{}, var_name, @default_attributes)
+end
+
+# Check if readonly
+def is_readonly?(context, var_name) do
+  get_in(context, [:env_meta, var_name, :readonly]) == true
+end
+
+# Set variable with attributes
+def set_var(context, name, value, attrs \\ @default_attributes) do
+  # Check readonly
+  if is_readonly?(context, name) do
+    {:error, "#{name}: readonly variable"}
+  else
+    # Update value
+    new_env = Map.put(context.env, name, value)
+    
+    # Update metadata (only if non-default)
+    new_meta = if has_attributes?(attrs) do
+      Map.put(context.env_meta || %{}, name, attrs)
+    else
+      context.env_meta || %{}
     end
-  end)
-  
-  %{context | env: new_env}
+    
+    {:ok, %{context | env: new_env, env_meta: new_meta}}
+  end
+end
+
+defp has_attributes?(attrs) do
+  attrs.readonly == true || attrs.exported == true
 end
 ```
 
-#### Phase 2: Full Declaration Support (Future)
-- Parse declaration command type (export, declare, local, readonly)
-- Implement variable attributes (readonly, exported, scope)
-- Add scope stack for local variables
-- Implement read-only protection
-- Support `declare -r`, `declare -x`, etc. flags
+---
 
-### Related Design Documents
-- See [`RUNTIME_DESIGN.md`](RUNTIME_DESIGN.md) for context structure
-- See [`CONTROL_FLOW_DESIGN.md`](CONTROL_FLOW_DESIGN.md) for function scope requirements
+### Reserved Keywords
 
-### Blocking Issues
-Currently 6 control flow tests fail because they use `export COUNT=0` statements which raise "DeclarationCommand execution not yet implemented".
+The following bash commands are **reserved but not implemented**:
 
-### Next Steps
-1. Implement Phase 1 (simple export) to unblock control flow tests
-2. Design enhanced context structure for Phase 2
-3. Update RUNTIME_DESIGN.md with new context fields
-4. Implement full declaration support with attributes and scoping
-This separation keeps concerns clean: pipelines use protocols for streaming data, env vars use JSON for serialization.
+- `export` → Use `env -e` instead
+- `readonly` → Use `env -r` instead
+- `local` → Use `env -l` instead (inside functions)
+- `declare` → Use `env` with appropriate flags
+
+**Implementation**: `DeclarationCommand` AST node handling with helpful errors:
+
+```elixir
+%Types.DeclarationCommand{source_info: info} ->
+  command_text = info.text || "declaration command"
+  
+  cond do
+    String.starts_with?(command_text, "export ") ->
+      {:error, "export is a reserved keyword. Use: env -e VAR=value"}
+    
+    String.starts_with?(command_text, "readonly ") ->
+      {:error, "readonly is a reserved keyword. Use: env -r VAR=value"}
+    
+    String.starts_with?(command_text, "local ") ->
+      {:error, "local is a reserved keyword. Use: env -l VAR=value"}
+    
+    String.starts_with?(command_text, "declare ") ->
+      {:error, "declare is a reserved keyword. Use: env with flags"}
+    
+    true ->
+      {:error, "Declaration command not supported: #{command_text}"}
+  end
+```
+
+---
+
+### Future: Function Scope Stack
+
+When implementing functions, add scope stack:
+
+```elixir
+%{
+  env: %{...},           # Global variables
+  env_meta: %{...},      # Global metadata
+  
+  env_stack: [           # NEW - function scope stack
+    %{
+      vars: %{"LOCAL" => "value"},
+      meta: %{"LOCAL" => %{readonly: false, local: true}}
+    }
+  ],
+  
+  function_depth: 1      # 0 = global, 1+ = inside function(s)
+}
+```
+
+**Lookup order**: stack (top to bottom) → env
+
+---
+
+## TODO: Variable Assignment & Attributes Implementation
+
+**Status**: Design Complete, Implementation Partially Done
+**Priority**: Medium (control flow tests mostly passing)
+
+**Note**: Basic variable assignment works via VariableAssignment AST nodes. The attribute system (readonly, exported, local) is designed but not yet implemented. Control flow tests use alternative syntax (`env` builtin instead of `export`).
+
+### Phase 1: Context Structure Enhancement
+
+**Files**: `lib/r_shell/runtime.ex`
+
+- [ ] Add `env_meta: %{}` field to context initialization in `init/1`
+- [ ] Define `@default_attributes` module attribute
+- [ ] Update context typespec to include `env_meta` field
+- [ ] Ensure backward compatibility (existing tests pass)
+
+**Tests**: `test/runtime_test.exs`
+- [ ] Test context initialization includes `env_meta`
+- [ ] Test default `env_meta` is empty map
+- [ ] Verify existing tests still pass (backward compatibility)
+
+---
+
+### Phase 2: Helper Functions
+
+**Files**: `lib/r_shell/runtime.ex`
+
+- [ ] Implement `get_var/2` - Get variable value (simple wrapper)
+- [ ] Implement `get_attributes/2` - Get attributes with defaults
+- [ ] Implement `is_readonly?/2` - Check readonly flag
+- [ ] Implement `is_exported?/2` - Check exported flag
+- [ ] Implement `set_var/3` - Set variable with readonly checking
+- [ ] Implement `set_var/4` - Set variable with attributes
+- [ ] Implement `has_attributes?/1` - Check if attributes differ from default
+
+**Tests**: `test/env_var_attributes_test.exs` (NEW)
+- [ ] Test `get_var/2` returns correct value
+- [ ] Test `get_attributes/2` returns defaults when no metadata
+- [ ] Test `get_attributes/2` returns stored metadata when present
+- [ ] Test `is_readonly?/2` returns false by default
+- [ ] Test `is_readonly?/2` returns true when set
+- [ ] Test `is_exported?/2` returns false by default
+- [ ] Test `is_exported?/2` returns true when set
+- [ ] Test `set_var/4` creates variable with attributes
+- [ ] Test `set_var/4` rejects modification of readonly variable
+- [ ] Test `set_var/4` allows modification of non-readonly variable
+- [ ] Test `has_attributes?/1` returns false for default attributes
+- [ ] Test `has_attributes?/1` returns true for non-default attributes
+
+---
+
+### Phase 3: VariableAssignment Execution
+
+**Files**: `lib/r_shell/runtime.ex`
+
+- [ ] Add pattern match for `%Types.VariableAssignment{}` in `simple_execute/3`
+- [ ] Implement `execute_variable_assignment/3` function
+- [ ] Extract variable name from VariableName node
+- [ ] Extract value text from value node
+- [ ] Parse value with `RShell.EnvJSON.parse/1` for JSON detection
+- [ ] Fall back to string if JSON parsing fails
+- [ ] Update context.env with parsed value (always global, no attributes)
+- [ ] Broadcast variable_set event via PubSub
+
+**Tests**: `test/variable_assignment_test.exs` (NEW)
+- [ ] Test simple string assignment: `X="hello"`
+- [ ] Test number assignment: `COUNT=0`
+- [ ] Test JSON map assignment: `CONFIG={"x":1}`
+- [ ] Test JSON list assignment: `SERVERS=["a","b"]`
+- [ ] Test nested structure assignment
+- [ ] Test assignment inside for loop (persistence)
+- [ ] Test assignment updates existing variable
+- [ ] Test variable persists across multiple commands
+- [ ] Test PubSub event is broadcast with correct data
+- [ ] Test assignment with variable expansion: `Y=$X`
+
+---
+
+### Phase 4: DeclarationCommand Handling (Reserved Keywords)
+
+**Files**: `lib/r_shell/runtime.ex`
+
+- [ ] Update `%Types.DeclarationCommand{}` pattern match in `simple_execute/3`
+- [ ] Implement detection of reserved keywords (export, readonly, local, declare)
+- [ ] Return helpful error messages with `env` command alternatives
+- [ ] Set exit_code to 1 on error
+- [ ] Broadcast error to PubSub stderr topic
+
+**Tests**: `test/declaration_command_test.exs` (NEW)
+- [ ] Test `export VAR=value` returns helpful error
+- [ ] Test `readonly VAR=value` returns helpful error
+- [ ] Test `local VAR=value` returns helpful error
+- [ ] Test `declare VAR=value` returns helpful error
+- [ ] Test error includes suggested `env` command syntax
+- [ ] Test exit_code is set to 1
+- [ ] Test stderr PubSub event is broadcast
+- [ ] Verify control flow tests can use alternative syntax
+
+---
+
+### Phase 5: Enhanced `env` Builtin
+
+**Files**: `lib/r_shell/builtins.ex`
+
+- [ ] Add `-e` / `--export` flag to option spec
+- [ ] Add `-r` / `--readonly` flag to option spec
+- [ ] Add `-l` / `--local` flag to option spec
+- [ ] Update `shell_env/3` to handle attribute flags
+- [ ] Parse attributes from flags into map
+- [ ] Use `set_var/4` helper for attribute support
+- [ ] Implement readonly checking before modification
+- [ ] Implement local flag validation (error outside functions)
+- [ ] Handle attribute modification mode (no value, just flags)
+- [ ] Support combined flags: `-er`, `-lr`, etc.
+- [ ] Update docstring with new flags and examples
+
+**Tests**: `test/env_builtin_attributes_test.exs` (NEW)
+- [ ] Test `env -r VAR=value` sets readonly
+- [ ] Test `env -r VAR=value` then `env VAR=new` fails
+- [ ] Test `env -e VAR=value` sets exported
+- [ ] Test `env -l VAR=value` outside function fails
+- [ ] Test `env -er VAR=value` sets both attributes
+- [ ] Test `env -lr VAR=value` sets both attributes
+- [ ] Test `env -e -r VAR` modifies existing variable
+- [ ] Test combined flags work: `-er`, `-re`
+- [ ] Test readonly error includes variable name
+- [ ] Test local error includes helpful message
+- [ ] Test attribute modification preserves value
+- [ ] Test listing variables shows attributes (future enhancement)
+
+---
+
+### Phase 6: Integration Testing
+
+**Tests**: `test/env_var_integration_test.exs` (NEW)
+
+- [ ] Test variable assignment + expansion: `X=123; echo $X`
+- [ ] Test readonly + assignment error: `env -r X=1; X=2` fails
+- [ ] Test readonly + `env` modification error: `env -r X=1; env X=2` fails
+- [ ] Test exported flag (mock child process check)
+- [ ] Test JSON round-trip: `env A={"x":1}; echo $A`
+- [ ] Test native type preservation in for loops
+- [ ] Test assignment in for loop body: `for i in 1 2 3; do X=$i; done`
+- [ ] Test loop variable overwrites previous value
+- [ ] Test readonly prevents loop variable modification
+- [ ] End-to-end: assignment + attributes + expansion + control flow
+
+---
+
+### Phase 7: Control Flow Test Migration
+
+**Files**: `test/control_flow_test.exs`
+
+- [ ] Replace `export COUNT=0` with `env COUNT=0` or `COUNT=0`
+- [ ] Replace other export statements with direct assignment
+- [ ] Verify all 6 blocked tests now pass
+- [ ] Add comments explaining RShell's always-global semantics
+- [ ] Update test documentation
+
+---
+
+### Phase 8: Documentation Updates
+
+**Files**: `ENV_VAR_DESIGN.md`, `README.md`, `BUILTIN_DESIGN.md`
+
+- [ ] Document always-global assignment semantics
+- [ ] Document `env` flag usage (-e, -r, -l)
+- [ ] Document reserved keywords (export, readonly, local, declare)
+- [ ] Add migration guide from bash syntax
+- [ ] Update examples to use new syntax
+- [ ] Document context structure changes
+- [ ] Document metadata opt-in design
+- [ ] Add troubleshooting section for readonly errors
+
+---
+
+### Summary Checklist
+
+**Context Structure**:
+- [ ] Add `env_meta` field to context
+- [ ] Define default attributes
+- [ ] Implement helper functions
+- [ ] Write helper function tests (12 tests)
+
+**Variable Assignment**:
+- [ ] Handle VariableAssignment AST node
+- [ ] JSON parsing for rich types
+- [ ] Always global, no attributes
+- [ ] Write assignment tests (10 tests)
+
+**Reserved Keywords**:
+- [ ] Handle DeclarationCommand with errors
+- [ ] Helpful error messages
+- [ ] Write reserved keyword tests (7 tests)
+
+**Enhanced `env` Builtin**:
+- [ ] Add -e, -r, -l flags
+- [ ] Readonly checking
+- [ ] Attribute modification
+- [ ] Write env attribute tests (12 tests)
+
+**Integration & Migration**:
+- [ ] End-to-end integration tests (10 tests)
+- [ ] Migrate control flow tests (6 tests)
+- [ ] Update documentation
+
+**Total Estimated Tests**: ~57 new tests (when attribute system is implemented)
+
+**Current Status**:
+- ✅ JSON module: 33 tests passing
+- ✅ Bracket notation: Works (inherited from runtime)
+- ✅ `env` builtin: Implemented with rich type support
+- ⏳ Variable attributes: Design complete, implementation pending
+
+---
+
+### Dependencies
+
+- ✅ `RShell.EnvJSON` module (already implemented)
+- ✅ JSON parsing support (Jason dependency)
+- ⏳ Context structure changes
+- ⏳ Helper function implementation
+- ⏳ AST node handling (VariableAssignment, DeclarationCommand)
+
+---
+
+### This separation keeps concerns clean: pipelines use protocols for streaming data, env vars use JSON for serialization.

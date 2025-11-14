@@ -4,8 +4,8 @@ This document provides complete instructions for building RShell from source.
 
 ## Prerequisites
 
-- **Elixir**: 1.14+ with Mix build tool
-- **Rust**: Latest stable version with cargo
+- **Elixir**: 1.14+ with Mix build tool (verified working with 1.19.3)
+- **Rust**: Latest stable version with cargo (tested with rustler 0.32.0)
 - **Git**: For cloning dependencies
 
 ## Quick Build (Recommended)
@@ -102,11 +102,19 @@ After building, verify everything works:
 mix test
 ```
 
-All tests should pass, including:
+The comprehensive test suite includes:
+- **432 tests** across all components
+- **22 doctests** for inline documentation
 - NIF unit tests
 - Typed AST conversion tests
 - Nested structure tests
 - AST walker tests
+- Parser event tests (24 tests)
+- Input buffer tests (51 tests)
+- Runtime execution tests
+- Builtins tests
+
+All tests should pass (some may be skipped for unimplemented features).
 
 ### CLI Test
 ```bash
@@ -115,17 +123,20 @@ mix parse_bash test_script.sh
 
 Expected output:
 ```
+Parsing Bash script: test_script.sh
 ✅ Parse successful!
 =
 program [1:1 - 24:18] '#!/bin/bash\n\n...'
-  - comment [1:1 - 1:12] '#!/bin/bash'
-  - command [4:1 - 4:20] 'echo "Hello World!"'
+  comment [1:1 - 1:12] '#!/bin/bash'
+  command [4:1 - 4:20] 'echo "Hello World!"'
 ...
-
+=
 AST Summary:
   Commands: 5
   Functions: 1
 ```
+
+Note: The task shows the filename being parsed before the success message.
 
 ### Interactive Test
 ```bash
@@ -133,7 +144,11 @@ iex -S mix
 
 # Try parsing in the REPL
 {:ok, ast} = RShell.parse("echo 'Hello'")
-ast.__struct__  # => BashParser.AST.Types.Program
+IO.inspect(ast.__struct__)  # Verify it's a typed struct
+
+# Try the interactive CLI
+RShell.CLI.main([])
+# Type commands interactively, use Ctrl+D to exit
 ```
 
 ## Development Workflow
@@ -163,6 +178,13 @@ rm -rf _build priv/native
 The `mix gen.ast_types` task reads `vendor/tree-sitter-bash/src/node-types.json` and generates:
 
 - **59 typed modules** in `lib/bash_parser/ast/types.ex`
+- Node types are categorized into:
+  - **11 literals** (string, number, variable, etc.)
+  - **6 commands** (command, pipeline, etc.)
+  - **18 statements** (if, for, while, case, etc.)
+  - **5 expressions** (binary, unary, etc.)
+  - **3 redirects** (file, heredoc, etc.)
+  - **16 others** (program, comment, etc.)
 - Each module includes:
   - Strongly-typed struct with `@enforce_keys`
   - Complete `@type` specifications
@@ -222,11 +244,16 @@ If you get NIF loading errors, verify:
 2. Platform-specific library extension is correct (.so/.dylib/.dll)
 3. Library file has appropriate permissions: `chmod 755 priv/native/librshell_bash_parser.*`
 
+**Known Warning**: You may see a deprecation warning about single-quoted strings and charlist usage in `lib/bash_parser.ex:22`. This is non-critical and can be fixed by running `mix format --migrate`.
+
 ### Rustler Version Issues
-If you get compatibility errors, update Rustler version in `native/RShell.BashParser/Cargo.toml`:
-```toml
-rustler = "0.32.0"
-```
+The project currently uses:
+- `rustler = "0.32.0"` in `Cargo.toml`
+- `{:rustler, "~> 0.30.0"}` in `mix.exs`
+
+These versions are compatible. If you encounter issues:
+1. Ensure your Rust toolchain is up to date: `rustup update`
+2. Clean and rebuild: `mix clean && ./build.sh`
 
 ### Missing NIF Library
 Ensure the NIF library is copied to `priv/native/` after building:
@@ -259,12 +286,16 @@ mix deps.get
 The [`build.sh`](build.sh) script includes:
 - ✅ Dependency checking for Elixir, Mix, and Cargo
 - ✅ Tree-sitter-bash setup (auto-clones if missing)
+- ✅ Elixir dependency installation (`mix deps.get`)
 - ✅ Rust NIF compilation with cargo
 - ✅ Platform-aware NIF library copying (.so, .dylib, .dll)
-- ✅ AST type generation from grammar
+- ✅ AST type generation from grammar (59 types)
+- ✅ Elixir project compilation
 - ✅ Colored output for better visibility
 - ✅ Error handling with meaningful messages
-- ✅ Complete build verification
+- ✅ Informative next steps after completion
+
+**Note**: The test verification steps in the script are currently commented out but can be enabled if needed.
 
 ## Cross-platform Support
 

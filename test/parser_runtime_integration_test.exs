@@ -2,6 +2,7 @@ defmodule ParserRuntimeIntegrationTest do
   use ExUnit.Case, async: false
 
   alias RShell.{IncrementalParser, Runtime, PubSub}
+  alias RShell.TestHelpers.ExecutionHelper
 
   setup do
     session_id = "test_#{:rand.uniform(1000000)}"
@@ -21,41 +22,27 @@ defmodule ParserRuntimeIntegrationTest do
   end
 
   test "end-to-end: parse and execute simple command", %{parser: parser} do
-    # Submit command
-    IncrementalParser.append_fragment(parser, "echo hello\n")
+    # Submit command and collect result
+    result = ExecutionHelper.execute_and_get_last(parser, "echo hello\n")
 
-    # Should see events in order
-    assert_receive {:ast_incremental, _}, 1000
-    assert_receive {:executable_node, _, _}, 1000
-    assert_receive {:execution_started, _}, 1000
-    assert_receive {:execution_completed, _}, 1000
-    assert_receive {:stdout, output}, 1000
-    assert output =~ "hello"
+    # Verify execution succeeded with expected output
+    ExecutionHelper.assert_execution_success(result)
+    stdout_str = ExecutionHelper.output_to_string(result.stdout)
+    assert stdout_str =~ "hello"
   end
 
   # DeclarationCommand execution not yet implemented
 
   test "multiple commands execute in sequence", %{parser: parser, runtime: runtime} do
-    # Submit multiple commands
-    IncrementalParser.append_fragment(parser, "echo first\n")
-    # Clear mailbox
-    :timer.sleep(100)
-    flush_mailbox()
+    # Execute three commands
+    ExecutionHelper.execute_and_get_last(parser, "echo first\n")
+    ExecutionHelper.execute_and_get_last(parser, "echo second\n")
+    result = ExecutionHelper.execute_and_get_last(parser, "echo third\n")
 
-    IncrementalParser.append_fragment(parser, "echo second\n")
-    # Clear mailbox
-    :timer.sleep(100)
-    flush_mailbox()
-
-    IncrementalParser.append_fragment(parser, "echo third\n")
-
-    # Should receive events for third command
-    assert_receive {:ast_incremental, _}, 1000
-    assert_receive {:executable_node, _, _}, 1000
-    assert_receive {:execution_started, _}, 1000
-    assert_receive {:execution_completed, _}, 1000
-    assert_receive {:stdout, output}, 1000
-    assert output =~ "third"
+    # Verify last command executed successfully
+    ExecutionHelper.assert_execution_success(result)
+    stdout_str = ExecutionHelper.output_to_string(result.stdout)
+    assert stdout_str =~ "third"
 
     # Check command count
     context = Runtime.get_context(runtime)
@@ -69,21 +56,6 @@ defmodule ParserRuntimeIntegrationTest do
     # Should get incremental AST update but no executable node
     assert_receive {:ast_incremental, _}, 1000
     refute_receive {:executable_node, _, _}, 500
-    refute_receive {:execution_started, _}, 100
-  end
-
-  # IfStatement execution not yet implemented
-
-  # DeclarationCommand execution not yet implemented
-
-  # Mode system removed - this test is no longer applicable
-
-  # Helper to flush mailbox
-  defp flush_mailbox do
-    receive do
-      _ -> flush_mailbox()
-    after
-      0 -> :ok
-    end
+    refute_receive {:execution_result, _}, 100
   end
 end
