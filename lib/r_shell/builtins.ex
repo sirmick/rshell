@@ -588,6 +588,82 @@ defmodule RShell.Builtins do
   end
 
   @doc """
+  inspect - inspect variable type and value
+
+  Display the Elixir type and IO.inspect representation of a variable.
+  Useful for debugging and verifying type preservation through control structures.
+
+  Usage: inspect [NAME]...
+
+  If no NAME is specified, returns an error.
+  For each variable, displays:
+    - Variable name
+    - Elixir type (e.g., :binary, :integer, :map, :list)
+    - IO.inspect output (pretty-printed Elixir representation)
+
+  ## Examples
+      inspect X                    # Show type and value of X
+      inspect CONFIG SERVERS       # Show multiple variables
+      env DATA='{"x":1,"y":2}'    # Set a JSON map
+      inspect DATA                 # Shows: :map, %{"x" => 1, "y" => 2}
+  """
+  @shell_inspect_opts :argv
+  def shell_inspect([], _stdin, context) do
+    stderr = "inspect: missing variable name\nUsage: inspect [NAME]...\n"
+    {context, stream(""), stream(stderr), 1}
+  end
+
+  def shell_inspect(argv, _stdin, context) do
+    env = context.env || %{}
+
+    output = argv
+      |> Enum.map(fn arg ->
+        # Handle both direct variable names (inspect X) and dereferenced values (inspect $X)
+        # If arg is a string, treat it as a variable name lookup
+        # If arg is a native value (list, map, etc.), inspect it directly
+        {display_name, value} = if is_binary(arg) do
+          # String argument - treat as variable name
+          {arg, Map.get(env, arg)}
+        else
+          # Native value from $X expansion - inspect directly
+          {inspect(arg, pretty: false, width: :infinity), arg}
+        end
+
+        case value do
+          nil ->
+            "#{display_name}: <not set>\n"
+
+          val ->
+            # Determine Elixir type
+            type = cond do
+              is_binary(val) -> :binary
+              is_integer(val) -> :integer
+              is_float(val) -> :float
+              is_boolean(val) -> :boolean
+              is_atom(val) -> :atom
+              is_list(val) -> :list
+              is_map(val) -> :map
+              is_tuple(val) -> :tuple
+              true -> :unknown
+            end
+
+            # Format value using IO.inspect with nice formatting
+            inspected = inspect(val, pretty: true, width: 80)
+
+            # For dereferenced values, don't show the variable name, just type and value
+            if is_binary(arg) do
+              "#{display_name}:\n  Type: #{type}\n  Value: #{inspected}\n"
+            else
+              "Type: #{type}\nValue: #{inspected}\n"
+            end
+        end
+      end)
+      |> Enum.join("\n")
+
+    {context, stream(output), stream(""), 0}
+  end
+
+  @doc """
   test - evaluate conditional expressions
 
   Enhanced test builtin with native type support for RShell.
@@ -657,7 +733,7 @@ defmodule RShell.Builtins do
   defp is_truthy?(%{} = map) when map_size(map) == 0, do: false
   defp is_truthy?(_), do: true
 
-  defp evaluate_comparison(left_expr, op, right_expr, context) do
+  defp evaluate_comparison(left_expr, op, right_expr, _context) do
     # For now, simple string/number comparison
     # Note: Variable expansion already happened in runtime
     left = left_expr

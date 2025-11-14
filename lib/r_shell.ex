@@ -7,7 +7,7 @@ defmodule RShell do
   """
 
   alias BashParser.AST.Types
-  alias BashParser.AST
+  # alias BashParser.AST  # Unused alias
 
   @doc """
   Parses a Bash script string and returns a strongly-typed AST.
@@ -30,7 +30,7 @@ defmodule RShell do
       {:error, "Script must be a string, got: 123"}
   """
   @spec parse(String.t(), keyword()) :: {:ok, Types.Program.t()} | {:error, String.t()}
-  def parse(script, opts \\ []) do
+  def parse(script, _opts \\ []) do
     if not is_binary(script) do
       {:error, "Script must be a string, got: #{inspect(script)}"}
     else
@@ -282,7 +282,7 @@ defmodule RShell do
   @doc """
   Format a node with source position for display.
   """
-  def format_node(node, opts \\ []) do
+  def format_node(node, _opts \\ []) do
     if is_struct(node) do
       format_typed_node(node)
     else

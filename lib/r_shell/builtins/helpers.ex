@@ -8,7 +8,8 @@ defmodule RShell.Builtins.Helpers do
   - `parse_builtin_options/2` - Helper to parse argv
   """
 
-  alias RShell.Builtins.{DocParser, OptionParser}
+  # DocParser and OptionParser used in generated code via full module names
+  # (no aliases to avoid unused alias warnings)
 
   defmacro __using__(_opts) do
     quote do
@@ -97,11 +98,8 @@ defmodule RShell.Builtins.Helpers do
       defp __builtin_help__(_unknown), do: "No help available"
       defp __builtin_mode__(_unknown), do: nil
 
-      @doc """
-      Parse builtin options using the generated option specs.
-
-      Returns `{:ok, options_map, remaining_args}` or `{:error, reason}`.
-      """
+      # Parse builtin options using the generated option specs.
+      # Returns `{:ok, options_map, remaining_args}` or `{:error, reason}`.
       defp parse_builtin_options(name, argv) do
         RShell.Builtins.OptionParser.parse(argv, __builtin_options__(name))
       end

@@ -28,11 +28,11 @@ defmodule RShell.Runtime do
   alias RShell.Builtins
   alias BashParser.AST.Types
 
-  # Default variable attributes
-  @default_attributes %{
-    readonly: false,
-    exported: false
-  }
+  # Default variable attributes (reserved for future use)
+  # @default_attributes %{
+  #   readonly: false,
+  #   exported: false
+  # }
 
   # Client API
 
@@ -41,7 +41,6 @@ defmodule RShell.Runtime do
 
   Options:
     - `:session_id` - Session identifier (required)
-    - `:auto_execute` - Execute nodes as they arrive (default: true)
     - `:env` - Initial environment variables
     - `:cwd` - Initial working directory
   """
@@ -99,12 +98,10 @@ defmodule RShell.Runtime do
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    auto_execute = Keyword.get(opts, :auto_execute, true)
     env = Keyword.get(opts, :env, System.get_env())
     cwd = Keyword.get(opts, :cwd, System.get_env("PWD") || "/")
 
-    # Subscribe to executable nodes from parser
-    PubSub.subscribe(session_id, [:executable])
+    # No longer subscribe to executable nodes - execution is synchronous via direct calls
 
     context = %{
       env: env,
@@ -120,7 +117,6 @@ defmodule RShell.Runtime do
     {:ok, %{
       session_id: session_id,
       context: context,
-      auto_execute: auto_execute,
       initial_env: env,     # Store for reset
       initial_cwd: cwd      # Store for reset
     }}
@@ -194,23 +190,7 @@ defmodule RShell.Runtime do
     {:reply, :ok, %{state | context: new_context}}
   end
 
-  # Handle executable nodes from parser (with command count)
-  @impl true
-  def handle_info({:executable_node, node, _count}, state) do
-    if state.auto_execute do
-      try do
-        {_result, new_context} = execute_node_internal(node, state.context, state.session_id)
-        {:noreply, %{state | context: new_context}}
-      rescue
-        e ->
-          # Broadcast failure publicly
-          broadcast_execution_failure(e, node, state.session_id)
-          {:noreply, state}
-      end
-    else
-      {:noreply, state}
-    end
-  end
+  # No longer handle executable nodes asynchronously - execution is now synchronous via execute_node/2
 
   # Private Helpers
 
@@ -283,13 +263,19 @@ defmodule RShell.Runtime do
       _ -> ""
     end
 
-    # Extract value text with smart JSON/expansion detection
-    value_text = extract_value_text(value_node, context)
+    # Extract value - may be string or native type from variable expansion
+    value_result = extract_value_text(value_node, context)
 
-    # Use EnvJSON.parse for all type detection (handles JSON, strings, native types)
-    parsed_value = case RShell.EnvJSON.parse(value_text) do
-      {:ok, parsed} -> parsed
-      {:error, _} -> value_text  # Not JSON, keep as string
+    # If already a native type (from $VAR expansion), use directly
+    # Otherwise parse as JSON/string
+    parsed_value = if is_binary(value_result) do
+      case RShell.EnvJSON.parse(value_result) do
+        {:ok, parsed} -> parsed
+        {:error, _} -> value_result  # Not JSON, keep as string
+      end
+    else
+      # Already a native type from variable expansion
+      value_result
     end
 
     # Update environment
@@ -412,7 +398,7 @@ defmodule RShell.Runtime do
     # RawString nodes (single quotes in bash) preserve everything literally
     # Strip the outer single quotes for JSON parsing: 'value' -> value
     if String.starts_with?(text, "'") and String.ends_with?(text, "'") and String.length(text) >= 2 do
-      String.slice(text, 1..-2)
+      String.slice(text, 1..-2//-1)
     else
       text
     end
@@ -429,13 +415,13 @@ defmodule RShell.Runtime do
     # Check if it has bracket notation: VAR["key"] or VAR[0]
     if String.contains?(var_expr, "[") do
       result = parse_bracket_access(var_expr, context)
-      # Convert result to string for use in commands
-      convert_to_string(result)
+      # Return native value directly (NO string conversion for builtins!)
+      result
     else
-      # Simple variable lookup
+      # Simple variable lookup - return native value
       case Map.get(context.env || %{}, var_expr) do
         nil -> ""
-        value -> convert_to_string(value)  # Convert to string for command arguments
+        value -> value  # Return native value (list, map, number, etc.)
       end
     end
   end
@@ -466,7 +452,7 @@ defmodule RShell.Runtime do
   defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}) when is_binary(text) do
     # RawString nodes (single quotes in bash) - strip outer quotes
     if String.starts_with?(text, "'") and String.ends_with?(text, "'") and String.length(text) >= 2 do
-      String.slice(text, 1..-2)
+      String.slice(text, 1..-2//-1)
     else
       text
     end
@@ -504,15 +490,13 @@ defmodule RShell.Runtime do
   # Bracket Notation Support for Environment Variables (using Warpath JSONPath)
   # =============================================================================
 
-  @doc """
-  Parse bracket notation for nested data access using JSONPath.
-
-  Examples:
-    - SERVER["port"] -> Access map key
-    - SERVERS[0] -> Access list index
-    - CONFIG["db"]["host"] -> Nested map access
-    - APPS[0]["name"] -> List then map access
-  """
+  # Parse bracket notation for nested data access using JSONPath.
+  #
+  # Examples:
+  #   - SERVER["port"] -> Access map key
+  #   - SERVERS[0] -> Access list index
+  #   - CONFIG["db"]["host"] -> Nested map access
+  #   - APPS[0]["name"] -> List then map access
   defp parse_bracket_access(expr, context) do
     # Split variable name from bracket chain: SERVER["port"] -> ["SERVER", "["port"]"]
     case String.split(expr, "[", parts: 2) do
@@ -535,15 +519,13 @@ defmodule RShell.Runtime do
     end
   end
 
-  @doc """
-  Convert bracket notation to JSONPath query string.
-
-  Examples:
-    - ["port"] -> $.port
-    - [0] -> $[0]
-    - ["db"]["host"] -> $.db.host
-    - [0]["name"] -> $[0].name
-  """
+  # Convert bracket notation to JSONPath query string.
+  #
+  # Examples:
+  #   - ["port"] -> $.port
+  #   - [0] -> $[0]
+  #   - ["db"]["host"] -> $.db.host
+  #   - [0]["name"] -> $[0].name
   defp bracket_to_jsonpath(bracket_str) do
     # Extract all keys from: ["port"] or ["db"]["host"] or [0] or [0]["name"]
     Regex.scan(~r/\[([^\]]+)\]/, bracket_str)
@@ -561,29 +543,7 @@ defmodule RShell.Runtime do
     |> then(&"$#{&1}")
   end
 
-  # Broadcast successful execution result (for top-level commands only)
-  defp broadcast_execution_success(node, new_context, _old_context, duration_us, session_id) do
-    # Get stdout/stderr from context (no more process dictionary!)
-    result = %{
-      status: :success,
-      node: node,
-      node_type: get_node_type(node),
-      node_text: get_node_text(node),
-      node_line: get_node_line(node),
-      exit_code: new_context.exit_code,
-      stdout: new_context.last_output.stdout,
-      stderr: new_context.last_output.stderr,
-      context: %{
-        env: new_context.env,
-        cwd: new_context.cwd,
-        exit_code: new_context.exit_code
-      },
-      duration_us: duration_us,
-      timestamp: DateTime.utc_now()
-    }
-
-    PubSub.broadcast(session_id, :runtime, {:execution_result, result})
-  end
+  # broadcast_execution_success/5 removed - no longer needed with synchronous execution
 
   # Broadcast successful execution result with explicit output (for commands in loops)
   defp broadcast_execution_success_with_output(node, new_context, _old_context, duration_us, stdout, stderr, session_id) do
@@ -720,7 +680,7 @@ defmodule RShell.Runtime do
         new_context
       rescue
         e ->
-          duration = System.monotonic_time(:microsecond) - start_time
+          _duration = System.monotonic_time(:microsecond) - start_time
 
           # Get any output that was produced before error (from context)
           stdout = acc_context.last_output.stdout

@@ -359,10 +359,9 @@ defmodule RShell.CLI do
       broadcast: true
     )
 
-    # Start the runtime GenServer
+    # Start the runtime GenServer (no auto-execute - now synchronous)
     {:ok, runtime_pid} = Runtime.start_link(
-      session_id: session_id,
-      auto_execute: true
+      session_id: session_id
     )
 
     IO.puts("✅ Parser started (PID: #{inspect(parser_pid)})")
@@ -390,13 +389,13 @@ defmodule RShell.CLI do
         session_id = "line_by_line_#{:erlang.phash2(file_path)}"
 
         {:ok, parser} = IncrementalParser.start_link(session_id: session_id, broadcast: true)
-        {:ok, _runtime} = Runtime.start_link(session_id: session_id, auto_execute: true)
+        {:ok, runtime} = Runtime.start_link(session_id: session_id)
 
         PubSub.subscribe(session_id, [:output, :runtime])
 
         # Process lines through InputBuffer
         lines = String.split(content, "\n", trim: false)
-        process_lines(lines, parser, session_id, "")
+        process_lines(lines, parser, runtime, session_id, "")
 
       {:error, reason} ->
         IO.puts(:stderr, "❌ Error reading #{file_path}: #{:file.format_error(reason)}")
@@ -404,56 +403,65 @@ defmodule RShell.CLI do
     end
   end
 
-  defp process_lines([], _parser, _session_id, _buffer) do
-    # Wait for any remaining output
-    collect_output(500)
+  defp process_lines([], _parser, _runtime, _session_id, _buffer) do
     :ok
   end
 
-  defp process_lines([line | rest], parser, session_id, buffer) do
+  defp process_lines([line | rest], parser, runtime, session_id, buffer) do
     new_buffer = buffer <> line <> "\n"
 
     if InputBuffer.ready_to_parse?(new_buffer) do
-      # Send to parser (will trigger auto-execution via Runtime)
-      # Only Command nodes will execute - others will be skipped/fail
+      # Parse the fragment
       case IncrementalParser.append_fragment(parser, new_buffer) do
-        {:ok, _} ->
-          wait_for_execution()
+        {:ok, ast} ->
+          # Synchronously execute any executable nodes
+          execute_ast_nodes(ast, runtime)
           IncrementalParser.reset(parser)
-          process_lines(rest, parser, session_id, "")
+          process_lines(rest, parser, runtime, session_id, "")
 
         {:error, reason} ->
           IO.puts(:stderr, "❌ Parse error: #{inspect(reason)}")
-          process_lines(rest, parser, session_id, "")
+          process_lines(rest, parser, runtime, session_id, "")
       end
     else
       # Continue accumulating
-      process_lines(rest, parser, session_id, new_buffer)
+      process_lines(rest, parser, runtime, session_id, new_buffer)
     end
   end
 
-  # Wait for execution_result event
-  defp wait_for_execution do
-    receive do
-      {:execution_result, %{status: :success, stdout: stdout, stderr: stderr}} ->
-        # Convert native term lists to strings for display
-        stdout_str = format_output(stdout)
-        stderr_str = format_output(stderr)
+  # Helper to execute AST nodes synchronously
+  defp execute_ast_nodes(%{children: children}, runtime) when is_list(children) do
+    Enum.each(children, fn node ->
+      if is_executable_node?(node) do
+        case Runtime.execute_node(runtime, node) do
+          {:ok, context} ->
+            # Display output
+            stdout = format_output(context.last_output.stdout)
+            stderr = format_output(context.last_output.stderr)
+            if stdout != "", do: IO.write(stdout)
+            if stderr != "", do: IO.write(:stderr, stderr)
 
-        if stdout_str != "", do: IO.write(stdout_str)
-        if stderr_str != "", do: IO.write(:stderr, stderr_str)
-        :ok
+          {:error, error} ->
+            IO.puts(:stderr, "Error: #{error}")
+        end
+      end
+    end)
+  end
+  defp execute_ast_nodes(_, _), do: :ok
 
-      {:execution_result, %{status: :error, error: error}} ->
-        # Runtime couldn't execute (e.g., not a Command node)
-        IO.puts(:stderr, "Error: #{error}")
-        :ok
-    after
-      1000 ->
-        # Timeout means nothing executable
-        :ok
+  # Check if node is executable (same logic as elsewhere)
+  defp is_executable_node?(node) do
+    case node do
+      %Types.Command{} -> true
+      %Types.VariableAssignment{} -> true
+      %Types.IfStatement{} -> true
+      %Types.ForStatement{} -> true
+      %Types.WhileStatement{} -> true
+      _ -> false
     end
   end
+
+  # wait_for_execution/0 removed - no longer needed with synchronous execution
 
   ## Mode 4: Parse-Only
 
@@ -746,16 +754,22 @@ defmodule RShell.CLI do
     end
   end
 
-  # Helper function to send complete fragment to parser
-  defp send_to_parser(parser_pid, runtime_pid, session_id, fragment, previous_children, last_incremental, last_result) do
+  # Helper function to send complete fragment to parser and execute synchronously
+  defp send_to_parser(parser_pid, runtime_pid, session_id, fragment, previous_children, last_incremental, _last_result) do
     # Submit complete fragment to parser (will trigger PubSub events)
     case IncrementalParser.append_fragment(parser_pid, fragment) do
-      {:ok, _ast} ->
-        # Wait for and handle PubSub events
-        # Use longer timeout to make problems visible
-        {new_children, new_incremental, new_result} = handle_pubsub_events(parser_pid, session_id, previous_children, 1000, _execution_pending = false, last_incremental, last_result)
+      {:ok, ast} ->
+        # Collect parser events (AST updates, etc.)
+        {new_children, new_incremental} = handle_parser_events(session_id, previous_children, 100, last_incremental)
+
+        # Execute nodes synchronously
+        execution_result = execute_interactive_nodes(ast, runtime_pid)
+
+        # Display output if any
+        display_execution_result(execution_result)
+
         # Clear input buffer after successful parse
-        loop(parser_pid, runtime_pid, session_id, new_children, new_incremental, "", new_result)
+        loop(parser_pid, runtime_pid, session_id, new_children, new_incremental, "", execution_result)
 
       {:error, %{"reason" => "buffer_overflow"} = error} ->
         IO.puts("\n❌ Buffer overflow!")
@@ -764,19 +778,18 @@ defmodule RShell.CLI do
         IO.puts("   Max: #{error["max_size"]} bytes")
         IO.puts("   Use .reset to clear buffer\n")
         # Keep input buffer on error
-        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, "", last_result)
+        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, "", nil)
 
       {:error, reason} ->
         IO.puts("\n❌ Parse error: #{inspect(reason)}\n")
         # Clear input buffer on error
-        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, "", last_result)
+        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, "", nil)
     end
   end
 
-  # Handle PubSub events from the parser and runtime
-  # execution_pending tracks if we've seen an executable_node and are waiting for execution result
-  # Returns {children, incremental_metadata, last_result} tuple
-  defp handle_pubsub_events(parser_pid, session_id, previous_children, timeout, execution_pending, last_incremental, last_result) do
+  # Handle PubSub events from the parser only (no execution events)
+  # Returns {children, incremental_metadata} tuple
+  defp handle_parser_events(session_id, previous_children, timeout, last_incremental) do
     receive do
       {:ast_incremental, metadata} ->
         # Get current children from typed struct
@@ -787,12 +800,12 @@ defmodule RShell.CLI do
 
         # Store incremental metadata for .last command
         # Continue collecting events
-        handle_pubsub_events(parser_pid, session_id, current_children, timeout, execution_pending, metadata, last_result)
+        handle_parser_events(session_id, current_children, timeout, metadata)
 
       {:parsing_failed, error} ->
         # Parser failed - display error and return
         IO.puts("\n❌ Parsing failed: #{inspect(error)}\n")
-        {previous_children, last_incremental, last_result}
+        {previous_children, last_incremental}
 
       {:parsing_crashed, error} ->
         # Parser crashed unexpectedly - display error and return
@@ -800,60 +813,77 @@ defmodule RShell.CLI do
         if error[:exception] do
           IO.puts("   #{error.exception}\n")
         end
-        {previous_children, last_incremental, last_result}
+        {previous_children, last_incremental}
 
       {:executable_node, _typed_node, _count} ->
-        # Executable node detected - runtime will handle execution
-        # Mark that we're now waiting for execution to complete
-        # Use longer timeout (5 seconds) for actual execution
-        handle_pubsub_events(parser_pid, session_id, previous_children, 5000, true, last_incremental, last_result)
-
-      {:execution_result, %{status: :success} = result} ->
-        # Command execution succeeded
-        # Display output (convert native term lists to strings)
-        stdout_str = format_output(result.stdout)
-        stderr_str = format_output(result.stderr)
-
-        if stdout_str != "", do: IO.write(stdout_str)
-        if stderr_str != "", do: IO.write(:stderr, stderr_str)
-
-        # Show exit code if non-zero
-        if result.exit_code != 0 do
-          IO.puts("⚠️  Exit code: #{result.exit_code}")
-        end
-
-        # DO NOT reset parser - keep accumulated AST for .ast command
-        # Store result for .result/.stdout/.stderr commands
-        # Execution is done - return with incremental metadata and result
-        {previous_children, last_incremental, result}
-
-      {:execution_result, %{status: :error} = result} ->
-        # Runtime execution failed
-        IO.puts("\n❌ Execution failed: #{result.reason}")
-        IO.puts("   #{result.error}")
-        if result[:node_text] do
-          IO.puts("   Line #{result.node_line}: #{result.node_text}")
-        end
-
-        # DO NOT reset parser - keep accumulated AST for .ast command
-        # Store error result for debugging
-        # Return with incremental metadata and result
-        {previous_children, last_incremental, result}
+        # Executable node detected - just note it and continue
+        # (execution happens synchronously now)
+        handle_parser_events(session_id, previous_children, timeout, last_incremental)
 
       {:variable_set, info} ->
         # Variable was set
         IO.puts("✓ #{info.name}=#{info.value}")
-        handle_pubsub_events(parser_pid, session_id, previous_children, timeout, execution_pending, last_incremental, last_result)
+        handle_parser_events(session_id, previous_children, timeout, last_incremental)
 
     after
       timeout ->
         # No more events, return current state
-        if execution_pending do
-          IO.puts(:stderr, "\n\e[31m❌ TIMEOUT: Execution did not complete within #{timeout}ms\e[0m")
-          IO.puts(:stderr, "\e[31m   Runtime may have crashed or encountered an unimplemented feature\e[0m")
-          IO.puts(:stderr, "\e[33m   Tip: Use .status to check parser/runtime state\e[0m\n")
+        {previous_children, last_incremental}
+    end
+  end
+
+  # Execute AST nodes synchronously in interactive mode
+  defp execute_interactive_nodes(%{children: children}, runtime_pid) when is_list(children) do
+    Enum.reduce(children, nil, fn node, _last_result ->
+      if is_executable_node?(node) do
+        case Runtime.execute_node(runtime_pid, node) do
+          {:ok, _context} = result ->
+            # Convert to result map format
+            build_result_from_context(result, node)
+          {:error, error} ->
+            %{status: :error, error: error, node: node}
         end
-        {previous_children, last_incremental, last_result}
+      else
+        nil
+      end
+    end)
+  end
+  defp execute_interactive_nodes(_, _), do: nil
+
+  # Build result map from Runtime.execute_node response
+  defp build_result_from_context({:ok, context}, node) do
+    %{
+      status: :success,
+      node: node,
+      node_type: node.__struct__ |> Module.split() |> List.last(),
+      stdout: context.last_output.stdout,
+      stderr: context.last_output.stderr,
+      exit_code: context.exit_code,
+      context: context
+    }
+  end
+
+  # Display execution result in interactive mode
+  defp display_execution_result(nil), do: :ok
+  defp display_execution_result(%{status: :success} = result) do
+    # Display output (convert native term lists to strings)
+    stdout_str = format_output(result.stdout)
+    stderr_str = format_output(result.stderr)
+
+    if stdout_str != "", do: IO.write(stdout_str)
+    if stderr_str != "", do: IO.write(:stderr, stderr_str)
+
+    # Show exit code if non-zero
+    if result.exit_code != 0 do
+      IO.puts("⚠️  Exit code: #{result.exit_code}")
+    end
+  end
+  defp display_execution_result(%{status: :error} = result) do
+    IO.puts("\n❌ Execution failed: #{inspect(result.error)}")
+    if result[:node] do
+      node_text = result.node.source_info.text
+      node_line = result.node.source_info.start_line
+      IO.puts("   Line #{node_line}: #{node_text}")
     end
   end
 

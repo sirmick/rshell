@@ -28,7 +28,7 @@ defmodule BashParser.AST.Walker do
       Walker.walk_with_visitors(ast, visitors, initial_context)
   """
 
-  alias BashParser.AST.Types
+  # alias BashParser.AST.Types  # Unused alias
 
   @type ast_node :: struct()
   @type visitor_result :: :continue | :skip_children | {:halt, any()}

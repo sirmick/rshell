@@ -51,7 +51,6 @@ defmodule RShell.CLI.State do
 
     {:ok, runtime} = RShell.Runtime.start_link(
       session_id: session_id,
-      auto_execute: true,
       env: env,
       cwd: cwd
     )

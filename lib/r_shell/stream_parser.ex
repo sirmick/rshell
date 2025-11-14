@@ -45,7 +45,7 @@ defmodule RShell.StreamParser do
   """
   @spec parse(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def parse(fragment, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    _timeout = Keyword.get(opts, :timeout, @default_timeout)
     should_reset = Keyword.get(opts, :reset, true)
 
     with {:ok, pid} <- ensure_parser_started(),
@@ -75,7 +75,7 @@ defmodule RShell.StreamParser do
   """
   @spec parse_fragments([String.t()], keyword()) :: {:ok, map()} | {:error, term()}
   def parse_fragments(fragments, opts \\ []) when is_list(fragments) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    _timeout = Keyword.get(opts, :timeout, @default_timeout)
 
     with {:ok, pid} <- ensure_parser_started(),
          :ok <- IncrementalParser.reset(pid),
