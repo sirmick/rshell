@@ -14,22 +14,28 @@ defmodule RShell.CLI.Metrics do
   """
 
   defstruct [
-    :start_time,      # System.monotonic_time(:microsecond)
-    :end_time,        # System.monotonic_time(:microsecond)
-    :duration_us,     # end_time - start_time
-    :memory_before,   # :erlang.memory(:total)
-    :memory_after,    # :erlang.memory(:total)
-    :memory_delta     # memory_after - memory_before
+    # System.monotonic_time(:microsecond)
+    :start_time,
+    # System.monotonic_time(:microsecond)
+    :end_time,
+    # end_time - start_time
+    :duration_us,
+    # :erlang.memory(:total)
+    :memory_before,
+    # :erlang.memory(:total)
+    :memory_after,
+    # memory_after - memory_before
+    :memory_delta
   ]
 
   @type t :: %__MODULE__{
-    start_time: integer() | nil,
-    end_time: integer() | nil,
-    duration_us: integer() | nil,
-    memory_before: integer() | nil,
-    memory_after: integer() | nil,
-    memory_delta: integer() | nil
-  }
+          start_time: integer() | nil,
+          end_time: integer() | nil,
+          duration_us: integer() | nil,
+          memory_before: integer() | nil,
+          memory_after: integer() | nil,
+          memory_delta: integer() | nil
+        }
 
   @doc "Start measuring"
   @spec start() :: t()
@@ -46,11 +52,12 @@ defmodule RShell.CLI.Metrics do
     end_time = System.monotonic_time(:microsecond)
     memory_after = :erlang.memory(:total)
 
-    %{metrics |
-      end_time: end_time,
-      duration_us: end_time - metrics.start_time,
-      memory_after: memory_after,
-      memory_delta: memory_after - metrics.memory_before
+    %{
+      metrics
+      | end_time: end_time,
+        duration_us: end_time - metrics.start_time,
+        memory_after: memory_after,
+        memory_delta: memory_after - metrics.memory_before
     }
   end
 end

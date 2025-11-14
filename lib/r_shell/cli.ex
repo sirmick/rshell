@@ -99,6 +99,7 @@ defmodule RShell.CLI do
           {:ok, state} -> Executor.execute_fragment(script, state)
           error -> error
         end
+
       existing_state when is_struct(existing_state, State) ->
         # Execute with existing state
         Executor.execute_fragment(script, existing_state)
@@ -176,20 +177,22 @@ defmodule RShell.CLI do
   """
   @spec execute_lines(String.t(), keyword()) :: {:ok, State.t()} | {:error, term()}
   def execute_lines(script, opts \\ []) do
-    state = Keyword.get_lazy(opts, :state, fn ->
-      {:ok, s} = State.new(opts)
-      s
-    end)
+    state =
+      Keyword.get_lazy(opts, :state, fn ->
+        {:ok, s} = State.new(opts)
+        s
+      end)
 
     # Split into lines, preserving empty lines
     lines = String.split(script, "\n", trim: false)
 
     # Remove the last line if it's empty (from trailing newline)
-    lines = if List.last(lines) == "" do
-      List.delete_at(lines, -1)
-    else
-      lines
-    end
+    lines =
+      if List.last(lines) == "" do
+        List.delete_at(lines, -1)
+      else
+        lines
+      end
 
     # Process lines through InputBuffer, accumulating until ready
     process_lines_with_buffer(lines, state, "")
@@ -217,6 +220,7 @@ defmodule RShell.CLI do
         {:ok, new_state} ->
           # Clear buffer and continue with remaining lines
           process_lines_with_buffer(rest, new_state, "")
+
         error ->
           error
       end
@@ -291,10 +295,12 @@ defmodule RShell.CLI do
 
             # Start runtime
             session_id = "file_#{:erlang.phash2(file_path)}"
-            {:ok, runtime} = Runtime.start_link(
-              session_id: session_id,
-              auto_execute: false
-            )
+
+            {:ok, runtime} =
+              Runtime.start_link(
+                session_id: session_id,
+                auto_execute: false
+              )
 
             # Subscribe to output
             PubSub.subscribe(session_id, [:output, :runtime])
@@ -315,7 +321,10 @@ defmodule RShell.CLI do
 
                     other ->
                       node_type = other.__struct__ |> Module.split() |> List.last()
-                      IO.puts("⊘ Skipping #{node_type}: #{String.slice(other.source_info.text || "", 0, 40)}")
+
+                      IO.puts(
+                        "⊘ Skipping #{node_type}: #{String.slice(other.source_info.text || "", 0, 40)}"
+                      )
                   end
                 end)
 
@@ -353,16 +362,15 @@ defmodule RShell.CLI do
     session_id = "cli_#{System.unique_integer([:positive, :monotonic])}"
 
     # Start the parser GenServer with session ID
-    {:ok, parser_pid} = IncrementalParser.start_link(
-      name: :rshell_cli_parser,
-      session_id: session_id,
-      broadcast: true
-    )
+    {:ok, parser_pid} =
+      IncrementalParser.start_link(
+        name: :rshell_cli_parser,
+        session_id: session_id,
+        broadcast: true
+      )
 
     # Start the runtime GenServer (no auto-execute - now synchronous)
-    {:ok, runtime_pid} = Runtime.start_link(
-      session_id: session_id
-    )
+    {:ok, runtime_pid} = Runtime.start_link(session_id: session_id)
 
     IO.puts("✅ Parser started (PID: #{inspect(parser_pid)})")
     IO.puts("✅ Runtime started (PID: #{inspect(runtime_pid)})")
@@ -374,7 +382,15 @@ defmodule RShell.CLI do
     # Start the input loop with state tracking
     # last_incremental tracks the incremental changes from the last parse
     # last_result tracks the last execution result for debugging
-    loop(parser_pid, runtime_pid, session_id, _previous_children = [], _last_incremental = nil, _input_buffer = "", _last_result = nil)
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      _previous_children = [],
+      _last_incremental = nil,
+      _input_buffer = "",
+      _last_result = nil
+    )
   end
 
   ## Mode 3: Line-by-Line File Processing
@@ -447,6 +463,7 @@ defmodule RShell.CLI do
       end
     end)
   end
+
   defp execute_ast_nodes(_, _), do: :ok
 
   # Check if node is executable (same logic as elsewhere)
@@ -506,7 +523,15 @@ defmodule RShell.CLI do
     end
   end
 
-  defp loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, input_buffer, last_result \\ nil) do
+  defp loop(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         previous_children,
+         last_incremental,
+         input_buffer,
+         last_result \\ nil
+       ) do
     # Determine prompt based on input buffer state
     prompt = get_prompt(input_buffer)
 
@@ -518,11 +543,29 @@ defmodule RShell.CLI do
 
       {:error, reason} ->
         IO.puts("❌ Error reading input: #{inspect(reason)}")
-        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, input_buffer)
+
+        loop(
+          parser_pid,
+          runtime_pid,
+          session_id,
+          previous_children,
+          last_incremental,
+          input_buffer
+        )
 
       line ->
         line = String.trim_trailing(line, "\n")
-        handle_input(parser_pid, runtime_pid, session_id, line, previous_children, last_incremental, input_buffer, last_result)
+
+        handle_input(
+          parser_pid,
+          runtime_pid,
+          session_id,
+          line,
+          previous_children,
+          last_incremental,
+          input_buffer,
+          last_result
+        )
     end
   end
 
@@ -545,10 +588,40 @@ defmodule RShell.CLI do
   defp continuation_prompt(:heredoc_continuation), do: "  doc> "
   defp continuation_prompt(:structure_continuation), do: "     > "
 
-  defp handle_input(_parser_pid, _runtime_pid, _session_id, ".quit", _prev_children, _last_incremental, _input_buffer, _last_result), do: IO.puts("\n👋 Goodbye!")
-  defp handle_input(_parser_pid, _runtime_pid, _session_id, ".exit", _prev_children, _last_incremental, _input_buffer, _last_result), do: IO.puts("\n👋 Goodbye!")
+  defp handle_input(
+         _parser_pid,
+         _runtime_pid,
+         _session_id,
+         ".quit",
+         _prev_children,
+         _last_incremental,
+         _input_buffer,
+         _last_result
+       ),
+       do: IO.puts("\n👋 Goodbye!")
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".help", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         _parser_pid,
+         _runtime_pid,
+         _session_id,
+         ".exit",
+         _prev_children,
+         _last_incremental,
+         _input_buffer,
+         _last_result
+       ),
+       do: IO.puts("\n👋 Goodbye!")
+
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".help",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     IO.puts("\n📖 Available Commands:\n")
 
     Enum.each(@commands, fn {cmd, desc} ->
@@ -558,10 +631,27 @@ defmodule RShell.CLI do
     IO.puts("\n💡 For help on builtins, use: .help <builtin>")
     IO.puts("   Example: .help echo\n")
 
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".help " <> builtin_name, prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".help " <> builtin_name,
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     builtin = String.trim(builtin_name)
 
     if RShell.Builtins.is_builtin?(builtin) do
@@ -572,17 +662,43 @@ defmodule RShell.CLI do
       IO.puts("💡 Use '.help' to see available commands\n")
     end
 
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".reset", _prev_children, _last_incremental, _input_buffer, _last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".reset",
+         _prev_children,
+         _last_incremental,
+         _input_buffer,
+         _last_result
+       ) do
     :ok = IncrementalParser.reset(parser_pid)
     IO.puts("🔄 Parser state reset\n")
     # Also clear input buffer, incremental state, and last result on reset
     loop(parser_pid, runtime_pid, session_id, [], nil, "", nil)
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".status", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".status",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     buffer_size = IncrementalParser.get_buffer_size(parser_pid)
     has_errors = IncrementalParser.has_errors?(parser_pid)
     input = IncrementalParser.get_accumulated_input(parser_pid)
@@ -614,10 +730,28 @@ defmodule RShell.CLI do
     end
 
     IO.puts("")
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".ast", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".ast",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     case IncrementalParser.get_current_ast(parser_pid) do
       {:ok, ast} ->
         IO.puts("\n🌳 Full Accumulated AST:")
@@ -633,10 +767,28 @@ defmodule RShell.CLI do
     end
 
     IO.puts("")
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".last", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".last",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     case last_incremental do
       nil ->
         IO.puts("\n⚠️  No incremental changes yet")
@@ -644,9 +796,11 @@ defmodule RShell.CLI do
       %{changed_nodes: changed_nodes} when changed_nodes != [] ->
         IO.puts("\n🔄 Last Incremental Changes:")
         IO.puts(String.duplicate("-", 50))
+
         Enum.each(changed_nodes, fn node ->
           print_typed_ast(node, 0)
         end)
+
         IO.puts(String.duplicate("-", 50))
 
       _ ->
@@ -654,14 +808,33 @@ defmodule RShell.CLI do
     end
 
     IO.puts("")
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
   # New commands for debugging execution results
-  defp handle_input(parser_pid, runtime_pid, session_id, ".result", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".result",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     case last_result do
       nil ->
         IO.puts("\n⚠️  No execution result yet")
+
       result ->
         IO.puts("\n📊 Last Execution Result:")
         IO.puts(String.duplicate("-", 50))
@@ -676,16 +849,37 @@ defmodule RShell.CLI do
         IO.puts("Stderr: #{inspect(result[:stderr] || "")}")
         IO.puts(String.duplicate("-", 50))
     end
+
     IO.puts("")
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".stdout", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".stdout",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     case last_result do
       nil ->
         IO.puts("\n⚠️  No execution result yet")
+
       result ->
         stdout = result[:stdout] || ""
+
         if stdout == "" do
           IO.puts("\n📭 No stdout from last execution")
         else
@@ -695,16 +889,37 @@ defmodule RShell.CLI do
           IO.puts(String.duplicate("-", 50))
         end
     end
+
     IO.puts("")
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
-  defp handle_input(parser_pid, runtime_pid, session_id, ".stderr", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         ".stderr",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     case last_result do
       nil ->
         IO.puts("\n⚠️  No execution result yet")
+
       result ->
         stderr = result[:stderr] || ""
+
         if stderr == "" do
           IO.puts("\n📭 No stderr from last execution")
         else
@@ -714,16 +929,43 @@ defmodule RShell.CLI do
           IO.puts(String.duplicate("-", 50))
         end
     end
+
     IO.puts("")
-    loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+
+    loop(
+      parser_pid,
+      runtime_pid,
+      session_id,
+      prev_children,
+      last_incremental,
+      input_buffer,
+      last_result
+    )
   end
 
   # Handle empty input - just continue accumulating if buffer is not empty
-  defp handle_input(parser_pid, runtime_pid, session_id, "", prev_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         "",
+         prev_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     # If buffer is empty, just loop with empty buffer
     # If buffer has content, add newline and check if ready
     if input_buffer == "" do
-      loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, input_buffer, last_result)
+      loop(
+        parser_pid,
+        runtime_pid,
+        session_id,
+        prev_children,
+        last_incremental,
+        input_buffer,
+        last_result
+      )
     else
       # Add newline to buffer
       new_buffer = input_buffer <> "\n"
@@ -731,36 +973,86 @@ defmodule RShell.CLI do
       # Check if ready to parse
       if InputBuffer.ready_to_parse?(new_buffer) do
         # Send complete fragment to parser
-        send_to_parser(parser_pid, runtime_pid, session_id, new_buffer, prev_children, last_incremental, last_result)
+        send_to_parser(
+          parser_pid,
+          runtime_pid,
+          session_id,
+          new_buffer,
+          prev_children,
+          last_incremental,
+          last_result
+        )
       else
         # Continue accumulating
-        loop(parser_pid, runtime_pid, session_id, prev_children, last_incremental, new_buffer, last_result)
+        loop(
+          parser_pid,
+          runtime_pid,
+          session_id,
+          prev_children,
+          last_incremental,
+          new_buffer,
+          last_result
+        )
       end
     end
   end
 
   # Handle regular input - accumulate and check if ready to parse
-  defp handle_input(parser_pid, runtime_pid, session_id, line, previous_children, last_incremental, input_buffer, last_result) do
+  defp handle_input(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         line,
+         previous_children,
+         last_incremental,
+         input_buffer,
+         last_result
+       ) do
     # Add line to buffer with newline
     new_buffer = input_buffer <> line <> "\n"
 
     # Check if buffer is ready to parse
     if InputBuffer.ready_to_parse?(new_buffer) do
       # Send complete fragment to parser
-      send_to_parser(parser_pid, runtime_pid, session_id, new_buffer, previous_children, last_incremental, last_result)
+      send_to_parser(
+        parser_pid,
+        runtime_pid,
+        session_id,
+        new_buffer,
+        previous_children,
+        last_incremental,
+        last_result
+      )
     else
       # Not ready yet - continue accumulating
-      loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, new_buffer, last_result)
+      loop(
+        parser_pid,
+        runtime_pid,
+        session_id,
+        previous_children,
+        last_incremental,
+        new_buffer,
+        last_result
+      )
     end
   end
 
   # Helper function to send complete fragment to parser and execute synchronously
-  defp send_to_parser(parser_pid, runtime_pid, session_id, fragment, previous_children, last_incremental, _last_result) do
+  defp send_to_parser(
+         parser_pid,
+         runtime_pid,
+         session_id,
+         fragment,
+         previous_children,
+         last_incremental,
+         _last_result
+       ) do
     # Submit complete fragment to parser (will trigger PubSub events)
     case IncrementalParser.append_fragment(parser_pid, fragment) do
       {:ok, ast} ->
         # Collect parser events (AST updates, etc.)
-        {new_children, new_incremental} = handle_parser_events(session_id, previous_children, 100, last_incremental)
+        {new_children, new_incremental} =
+          handle_parser_events(session_id, previous_children, 100, last_incremental)
 
         # Execute nodes synchronously
         execution_result = execute_interactive_nodes(ast, runtime_pid)
@@ -769,7 +1061,15 @@ defmodule RShell.CLI do
         display_execution_result(execution_result)
 
         # Clear input buffer after successful parse
-        loop(parser_pid, runtime_pid, session_id, new_children, new_incremental, "", execution_result)
+        loop(
+          parser_pid,
+          runtime_pid,
+          session_id,
+          new_children,
+          new_incremental,
+          "",
+          execution_result
+        )
 
       {:error, %{"reason" => "buffer_overflow"} = error} ->
         IO.puts("\n❌ Buffer overflow!")
@@ -793,10 +1093,11 @@ defmodule RShell.CLI do
     receive do
       {:ast_incremental, metadata} ->
         # Get current children from typed struct
-        current_children = case metadata.full_ast do
-          %{children: children} when is_list(children) -> children
-          _ -> []
-        end
+        current_children =
+          case metadata.full_ast do
+            %{children: children} when is_list(children) -> children
+            _ -> []
+          end
 
         # Store incremental metadata for .last command
         # Continue collecting events
@@ -810,9 +1111,11 @@ defmodule RShell.CLI do
       {:parsing_crashed, error} ->
         # Parser crashed unexpectedly - display error and return
         IO.puts("\n❌ Parser crashed: #{error.reason}")
+
         if error[:exception] do
           IO.puts("   #{error.exception}\n")
         end
+
         {previous_children, last_incremental}
 
       {:executable_node, _typed_node, _count} ->
@@ -824,7 +1127,6 @@ defmodule RShell.CLI do
         # Variable was set
         IO.puts("✓ #{info.name}=#{info.value}")
         handle_parser_events(session_id, previous_children, timeout, last_incremental)
-
     after
       timeout ->
         # No more events, return current state
@@ -840,6 +1142,7 @@ defmodule RShell.CLI do
           {:ok, _context} = result ->
             # Convert to result map format
             build_result_from_context(result, node)
+
           {:error, error} ->
             %{status: :error, error: error, node: node}
         end
@@ -848,6 +1151,7 @@ defmodule RShell.CLI do
       end
     end)
   end
+
   defp execute_interactive_nodes(_, _), do: nil
 
   # Build result map from Runtime.execute_node response
@@ -865,6 +1169,7 @@ defmodule RShell.CLI do
 
   # Display execution result in interactive mode
   defp display_execution_result(nil), do: :ok
+
   defp display_execution_result(%{status: :success} = result) do
     # Display output (convert native term lists to strings)
     stdout_str = format_output(result.stdout)
@@ -878,8 +1183,10 @@ defmodule RShell.CLI do
       IO.puts("⚠️  Exit code: #{result.exit_code}")
     end
   end
+
   defp display_execution_result(%{status: :error} = result) do
     IO.puts("\n❌ Execution failed: #{inspect(result.error)}")
+
     if result[:node] do
       node_text = result.node.source_info.text
       node_line = result.node.source_info.start_line
@@ -930,28 +1237,33 @@ defmodule RShell.CLI do
         # Check if it's a list of nodes
         if Enum.all?(values, &is_struct/1) && values != [] do
           IO.puts("#{prefix}  .#{key}: [#{length(values)} items]")
+
           Enum.each(values, fn item ->
             print_typed_ast(item, indent + 2)
           end)
         end
 
-      _ -> :skip
+      _ ->
+        :skip
     end)
   end
 
   # Format output for display - convert native term lists to strings
   defp format_output([]), do: ""
+
   defp format_output(output) when is_list(output) do
     output
     |> Enum.map(&term_to_string/1)
     |> Enum.join("")
   end
+
   defp format_output(output) when is_binary(output), do: output
   defp format_output(output), do: term_to_string(output)
 
   # Convert a single term to string for display
   defp term_to_string(term) when is_binary(term), do: term
   defp term_to_string(term) when is_map(term), do: Jason.encode!(term)
+
   defp term_to_string(term) when is_list(term) do
     # Check if it's a charlist
     if Enum.all?(term, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
@@ -960,6 +1272,7 @@ defmodule RShell.CLI do
       Jason.encode!(term)
     end
   end
+
   defp term_to_string(term) when is_integer(term), do: Integer.to_string(term)
   defp term_to_string(term) when is_float(term), do: Float.to_string(term)
   defp term_to_string(true), do: "true"

@@ -30,7 +30,8 @@ defmodule RShell.Builtins.Helpers do
       end)
       |> Enum.map(fn {name, arity} ->
         if arity == 3 do
-          builtin_name = name
+          builtin_name =
+            name
             |> Atom.to_string()
             |> String.trim_leading("shell_")
             |> String.to_atom()
@@ -50,71 +51,86 @@ defmodule RShell.Builtins.Helpers do
     builtin_docs = Enum.map(builtin_modes, fn {name, _mode} -> {name, nil} end)
 
     # Generate stub functions that will be populated at runtime
-    option_clauses = Enum.map(builtin_docs, fn {name, _doc} ->
-      quote do
-        defp __builtin_options__(unquote(name)) do
-          # Parse options from runtime docstring lookup
-          case Code.fetch_docs(__MODULE__) do
-            {:docs_v1, _, _, _, _, _, docs} ->
-              shell_func = unquote(String.to_atom("shell_#{name}"))
-              case Enum.find(docs, fn {{:function, fname, 3}, _, _, _, _} -> fname == shell_func; _ -> false end) do
-                {_, _, _, %{"en" => doc_string}, _} when is_binary(doc_string) ->
-                  RShell.Builtins.DocParser.parse_options(doc_string)
-                _ ->
-                  []
-              end
-            _ ->
-              []
-          end
-        end
+    option_clauses =
+      Enum.map(builtin_docs, fn {name, _doc} ->
+        quote do
+          defp __builtin_options__(unquote(name)) do
+            # Parse options from runtime docstring lookup
+            case Code.fetch_docs(__MODULE__) do
+              {:docs_v1, _, _, _, _, _, docs} ->
+                shell_func = unquote(String.to_atom("shell_#{name}"))
 
-        defp __builtin_help__(unquote(name)) do
-          case Code.fetch_docs(__MODULE__) do
-            {:docs_v1, _, _, _, _, _, docs} ->
-              shell_func = unquote(String.to_atom("shell_#{name}"))
-              case Enum.find(docs, fn {{:function, fname, 3}, _, _, _, _} -> fname == shell_func; _ -> false end) do
-                {_, _, _, %{"en" => doc_string}, _} when is_binary(doc_string) ->
-                  RShell.Builtins.DocParser.extract_help_text(doc_string)
-                _ ->
-                  "#{unquote(name)} - no documentation available"
-              end
-            _ ->
-              "#{unquote(name)} - no documentation available"
+                case Enum.find(docs, fn
+                       {{:function, fname, 3}, _, _, _, _} -> fname == shell_func
+                       _ -> false
+                     end) do
+                  {_, _, _, %{"en" => doc_string}, _} when is_binary(doc_string) ->
+                    RShell.Builtins.DocParser.parse_options(doc_string)
+
+                  _ ->
+                    []
+                end
+
+              _ ->
+                []
+            end
+          end
+
+          defp __builtin_help__(unquote(name)) do
+            case Code.fetch_docs(__MODULE__) do
+              {:docs_v1, _, _, _, _, _, docs} ->
+                shell_func = unquote(String.to_atom("shell_#{name}"))
+
+                case Enum.find(docs, fn
+                       {{:function, fname, 3}, _, _, _, _} -> fname == shell_func
+                       _ -> false
+                     end) do
+                  {_, _, _, %{"en" => doc_string}, _} when is_binary(doc_string) ->
+                    RShell.Builtins.DocParser.extract_help_text(doc_string)
+
+                  _ ->
+                    "#{unquote(name)} - no documentation available"
+                end
+
+              _ ->
+                "#{unquote(name)} - no documentation available"
+            end
           end
         end
-      end
-    end)
+      end)
 
     # Generate mode lookup function
-    mode_clauses = Enum.map(builtin_modes, fn {name, mode} ->
-      quote do
-        defp __builtin_mode__(unquote(name)), do: unquote(mode)
-      end
-    end)
+    mode_clauses =
+      Enum.map(builtin_modes, fn {name, mode} ->
+        quote do
+          defp __builtin_mode__(unquote(name)), do: unquote(mode)
+        end
+      end)
 
     # Generate fallback and helper functions
-    helper_functions = quote do
-      defp __builtin_options__(_unknown), do: []
-      defp __builtin_help__(_unknown), do: "No help available"
-      defp __builtin_mode__(_unknown), do: nil
+    helper_functions =
+      quote do
+        defp __builtin_options__(_unknown), do: []
+        defp __builtin_help__(_unknown), do: "No help available"
+        defp __builtin_mode__(_unknown), do: nil
 
-      # Parse builtin options using the generated option specs.
-      # Returns `{:ok, options_map, remaining_args}` or `{:error, reason}`.
-      defp parse_builtin_options(name, argv) do
-        RShell.Builtins.OptionParser.parse(argv, __builtin_options__(name))
-      end
+        # Parse builtin options using the generated option specs.
+        # Returns `{:ok, options_map, remaining_args}` or `{:error, reason}`.
+        defp parse_builtin_options(name, argv) do
+          RShell.Builtins.OptionParser.parse(argv, __builtin_options__(name))
+        end
 
-      @doc """
-      Get help text for a builtin command.
-      """
-      def get_builtin_help(name) when is_atom(name) do
-        __builtin_help__(name)
-      end
+        @doc """
+        Get help text for a builtin command.
+        """
+        def get_builtin_help(name) when is_atom(name) do
+          __builtin_help__(name)
+        end
 
-      def get_builtin_help(name) when is_binary(name) do
-        __builtin_help__(String.to_atom(name))
+        def get_builtin_help(name) when is_binary(name) do
+          __builtin_help__(String.to_atom(name))
+        end
       end
-    end
 
     [option_clauses, mode_clauses, helper_functions]
   end

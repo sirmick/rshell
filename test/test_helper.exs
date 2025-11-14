@@ -12,6 +12,7 @@ defmodule TestHelperTypedAST do
   def get_type(node) when is_struct(node) do
     node.__struct__ |> Module.split() |> List.last() |> Macro.underscore()
   end
+
   def get_type(%{type: type}), do: type
   def get_type(_), do: nil
 
@@ -48,6 +49,7 @@ defmodule TestHelperTypedAST do
   """
   def has_error_in_children?(%BashParser.AST.Types.ErrorNode{}), do: true
   def has_error_in_children?(%{"type" => "ERROR"}), do: true
+
   def has_error_in_children?(node) do
     children = get_children(node)
     Enum.any?(children, &has_error_in_children?/1)
@@ -99,7 +101,7 @@ defmodule TestHelperTypedAST do
   def assert_ast_structure(ast, expected_structure) do
     actual = simplify_ast(ast)
 
-    unless actual == expected_structure do
+    if actual != expected_structure do
       ExUnit.Assertions.flunk("""
       AST structure mismatch
 
@@ -121,13 +123,18 @@ defmodule TestHelperTypedAST do
     children = get_children(node) |> Enum.map(&simplify_ast/1)
     if children == [], do: type, else: {type, children}
   end
+
   defp simplify_ast(_), do: nil
 end
 
 # Compile test helper modules
 Code.require_file("test_helpers/execution_helper.ex", __DIR__)
+Code.require_file("support/cli_test_helper.ex", __DIR__)
 
 # Suppress debug logs during tests
 Logger.configure(level: :warning)
 
-ExUnit.start()
+# Set global test timeout to prevent any test from hanging
+# Individual tests can override with @tag timeout: <ms>
+# 2 seconds per test
+ExUnit.start(timeout: 2000)

@@ -90,6 +90,7 @@ defmodule RShell.Builtins do
         :parsed ->
           # Parsed mode - parse options from docstring
           option_specs = __builtin_options__(String.to_atom(name))
+
           case RShell.Builtins.OptionParser.parse(argv, option_specs) do
             {:ok, opts, args} ->
               parsed = %ParsedOptions{options: opts, arguments: args, argv: argv}
@@ -196,6 +197,7 @@ defmodule RShell.Builtins do
   # Convert rich types to strings for echo output
   defp convert_arg_to_string(arg) when is_binary(arg), do: arg
   defp convert_arg_to_string(arg) when is_map(arg), do: RShell.EnvJSON.format(arg)
+
   defp convert_arg_to_string(arg) when is_list(arg) do
     # Check if charlist
     if Enum.all?(arg, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
@@ -204,13 +206,13 @@ defmodule RShell.Builtins do
       RShell.EnvJSON.format(arg)
     end
   end
+
   defp convert_arg_to_string(arg) when is_integer(arg), do: Integer.to_string(arg)
   defp convert_arg_to_string(arg) when is_float(arg), do: Float.to_string(arg)
   defp convert_arg_to_string(true), do: "true"
   defp convert_arg_to_string(false), do: "false"
   defp convert_arg_to_string(nil), do: ""
   defp convert_arg_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
-
 
   @doc """
   true - do nothing, successfully
@@ -293,16 +295,18 @@ defmodule RShell.Builtins do
   def shell_cd(%ParsedOptions{} = opts, _stdin, context) do
     args = opts.arguments
 
-    target_dir = case args do
-      [] ->
-        # No argument - try to go to HOME
-        Map.get(context.env || %{}, "HOME", context.cwd)
-      [dir | _] ->
-        # Physical mode is a hint for future implementation
-        # Currently we always use Path.expand which resolves symlinks
-        _physical = opts.options.physical
-        resolve_path(dir, context.cwd)
-    end
+    target_dir =
+      case args do
+        [] ->
+          # No argument - try to go to HOME
+          Map.get(context.env || %{}, "HOME", context.cwd)
+
+        [dir | _] ->
+          # Physical mode is a hint for future implementation
+          # Currently we always use Path.expand which resolves symlinks
+          _physical = opts.options.physical
+          resolve_path(dir, context.cwd)
+      end
 
     # Always update context (no mode check - just execute)
     new_context = %{context | cwd: target_dir}
@@ -315,9 +319,11 @@ defmodule RShell.Builtins do
       "/" <> _ ->
         # Absolute path
         Path.expand(path)
+
       "~" <> rest ->
         # Home directory expansion (simplified)
         Path.expand("~" <> rest)
+
       _ ->
         # Relative path
         Path.expand(Path.join(cwd, path))
@@ -355,30 +361,37 @@ defmodule RShell.Builtins do
     cond do
       opts.options.unset && length(args) > 0 ->
         # Remove variables
-        new_env = Enum.reduce(args, context.env || %{}, fn var_name, env ->
-          Map.delete(env, var_name)
-        end)
+        new_env =
+          Enum.reduce(args, context.env || %{}, fn var_name, env ->
+            Map.delete(env, var_name)
+          end)
+
         new_context = %{context | env: new_env}
         {new_context, stream(""), stream(""), 0}
 
       length(args) == 0 ->
         # No arguments - print all environment variables
         env = context.env || %{}
-        output = env
+
+        output =
+          env
           |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
           |> Enum.sort()
           |> Enum.join("\n")
+
         output = if output == "", do: "", else: output <> "\n"
         {context, stream(output), stream(""), 0}
 
       true ->
         # Set variables
-        new_env = Enum.reduce(args, context.env || %{}, fn assignment, env ->
-          case String.split(assignment, "=", parts: 2) do
-            [name, value] -> Map.put(env, name, value)
-            [name] -> Map.put(env, name, "")
-          end
-        end)
+        new_env =
+          Enum.reduce(args, context.env || %{}, fn assignment, env ->
+            case String.split(assignment, "=", parts: 2) do
+              [name, value] -> Map.put(env, name, value)
+              [name] -> Map.put(env, name, "")
+            end
+          end)
+
         new_context = %{context | env: new_env}
         {new_context, stream(""), stream(""), 0}
     end
@@ -418,18 +431,19 @@ defmodule RShell.Builtins do
     use_null = opts.options.null
     separator = if use_null, do: <<0>>, else: "\n"
 
-    output = if length(args) == 0 do
-      # Print all variables
-      env
-      |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
-      |> Enum.sort()
-      |> Enum.join(separator)
-    else
-      # Print specific variables
-      args
-      |> Enum.map(fn name -> Map.get(env, name, "") end)
-      |> Enum.join(separator)
-    end
+    output =
+      if length(args) == 0 do
+        # Print all variables
+        env
+        |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
+        |> Enum.sort()
+        |> Enum.join(separator)
+      else
+        # Print specific variables
+        args
+        |> Enum.map(fn name -> Map.get(env, name, "") end)
+        |> Enum.join(separator)
+      end
 
     output = if output == "", do: "", else: output <> separator
     {context, stream(output), stream(""), 0}
@@ -514,13 +528,16 @@ defmodule RShell.Builtins do
       # No arguments - list all
       length(argv) == 0 ->
         env = context.env || %{}
-        output = env
+
+        output =
+          env
           |> Enum.map(fn {k, v} ->
             formatted_value = RShell.EnvJSON.format(v)
             "#{k}=#{formatted_value}"
           end)
           |> Enum.sort()
           |> Enum.join("\n")
+
         output = if output == "", do: "", else: output <> "\n"
         {context, stream(output), stream(""), 0}
 
@@ -529,27 +546,33 @@ defmodule RShell.Builtins do
         {assignments, lookups} = split_assignments_and_lookups(argv)
 
         # Process assignments first
-        new_context = if length(assignments) > 0 do
-          new_env = Enum.reduce(assignments, context.env || %{}, fn {name, value_str}, env ->
-            case RShell.EnvJSON.parse(value_str) do
-              {:ok, parsed_value} ->
-                # Successfully parsed as JSON
-                Map.put(env, name, parsed_value)
-              {:error, _reason} ->
-                # If parse fails, treat as plain string (common case)
-                # No warning - plain strings are expected
-                Map.put(env, name, value_str)
-            end
-          end)
-          %{context | env: new_env}
-        else
-          context
-        end
+        new_context =
+          if length(assignments) > 0 do
+            new_env =
+              Enum.reduce(assignments, context.env || %{}, fn {name, value_str}, env ->
+                case RShell.EnvJSON.parse(value_str) do
+                  {:ok, parsed_value} ->
+                    # Successfully parsed as JSON
+                    Map.put(env, name, parsed_value)
+
+                  {:error, _reason} ->
+                    # If parse fails, treat as plain string (common case)
+                    # No warning - plain strings are expected
+                    Map.put(env, name, value_str)
+                end
+              end)
+
+            %{context | env: new_env}
+          else
+            context
+          end
 
         # Process lookups
         if length(lookups) > 0 do
           env = new_context.env || %{}
-          values = lookups
+
+          values =
+            lookups
             |> Enum.map(fn name ->
               case Map.get(env, name) do
                 nil -> nil
@@ -558,11 +581,12 @@ defmodule RShell.Builtins do
             end)
             |> Enum.reject(&is_nil/1)
 
-          output = if length(values) > 0 do
-            Enum.join(values, "\n") <> "\n"
-          else
-            ""
-          end
+          output =
+            if length(values) > 0 do
+              Enum.join(values, "\n") <> "\n"
+            else
+              ""
+            end
 
           {new_context, stream(output), stream(""), 0}
         else
@@ -578,6 +602,7 @@ defmodule RShell.Builtins do
       case String.split(arg, "=", parts: 2) do
         [name, value] ->
           {[{name, value} | assignments], lookups}
+
         [name] ->
           {assignments, [name | lookups]}
       end
@@ -616,18 +641,20 @@ defmodule RShell.Builtins do
   def shell_inspect(argv, _stdin, context) do
     env = context.env || %{}
 
-    output = argv
+    output =
+      argv
       |> Enum.map(fn arg ->
         # Handle both direct variable names (inspect X) and dereferenced values (inspect $X)
         # If arg is a string, treat it as a variable name lookup
         # If arg is a native value (list, map, etc.), inspect it directly
-        {display_name, value} = if is_binary(arg) do
-          # String argument - treat as variable name
-          {arg, Map.get(env, arg)}
-        else
-          # Native value from $X expansion - inspect directly
-          {inspect(arg, pretty: false, width: :infinity), arg}
-        end
+        {display_name, value} =
+          if is_binary(arg) do
+            # String argument - treat as variable name
+            {arg, Map.get(env, arg)}
+          else
+            # Native value from $X expansion - inspect directly
+            {inspect(arg, pretty: false, width: :infinity), arg}
+          end
 
         case value do
           nil ->
@@ -635,17 +662,18 @@ defmodule RShell.Builtins do
 
           val ->
             # Determine Elixir type
-            type = cond do
-              is_binary(val) -> :binary
-              is_integer(val) -> :integer
-              is_float(val) -> :float
-              is_boolean(val) -> :boolean
-              is_atom(val) -> :atom
-              is_list(val) -> :list
-              is_map(val) -> :map
-              is_tuple(val) -> :tuple
-              true -> :unknown
-            end
+            type =
+              cond do
+                is_binary(val) -> :binary
+                is_integer(val) -> :integer
+                is_float(val) -> :float
+                is_boolean(val) -> :boolean
+                is_atom(val) -> :atom
+                is_list(val) -> :list
+                is_map(val) -> :map
+                is_tuple(val) -> :tuple
+                true -> :unknown
+              end
 
             # Format value using IO.inspect with nice formatting
             inspected = inspect(val, pretty: true, width: 80)
@@ -743,7 +771,6 @@ defmodule RShell.Builtins do
       # String equality
       "=" -> to_string(left) == to_string(right)
       "!=" -> to_string(left) != to_string(right)
-
       # Numeric comparisons
       "-eq" -> to_number(left) == to_number(right)
       "-ne" -> to_number(left) != to_number(right)
@@ -751,20 +778,21 @@ defmodule RShell.Builtins do
       "-ge" -> to_number(left) >= to_number(right)
       "-lt" -> to_number(left) < to_number(right)
       "-le" -> to_number(left) <= to_number(right)
-
       # Length checks
       "-n" -> is_truthy?(left) && String.length(to_string(left)) > 0
       "-z" -> !is_truthy?(left) || String.length(to_string(left)) == 0
-
       _ -> false
     end
   end
 
   defp to_number(value) when is_integer(value), do: value
   defp to_number(value) when is_float(value), do: value
+
   defp to_number(value) when is_binary(value) do
     case Integer.parse(value) do
-      {int, ""} -> int
+      {int, ""} ->
+        int
+
       _ ->
         case Float.parse(value) do
           {float, ""} -> float
@@ -772,6 +800,7 @@ defmodule RShell.Builtins do
         end
     end
   end
+
   defp to_number(true), do: 1
   defp to_number(false), do: 0
   defp to_number(_), do: 0

@@ -11,16 +11,19 @@ defmodule RShell.TestHelpers.ExecutionHelper do
   Handles the new format where stdout/stderr are lists of native terms.
   """
   def output_to_string([]), do: ""
+
   def output_to_string(output) when is_list(output) do
     output
     |> Enum.map(&term_to_string/1)
     |> Enum.join("")
   end
+
   def output_to_string(output) when is_binary(output), do: output
   def output_to_string(output), do: term_to_string(output)
 
   defp term_to_string(term) when is_binary(term), do: term
   defp term_to_string(term) when is_map(term), do: Jason.encode!(term)
+
   defp term_to_string(term) when is_list(term) do
     if Enum.all?(term, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
       List.to_string(term)
@@ -28,6 +31,7 @@ defmodule RShell.TestHelpers.ExecutionHelper do
       Jason.encode!(term)
     end
   end
+
   defp term_to_string(term) when is_integer(term), do: Integer.to_string(term)
   defp term_to_string(term) when is_float(term), do: Float.to_string(term)
   defp term_to_string(true), do: "true"
@@ -86,20 +90,22 @@ defmodule RShell.TestHelpers.ExecutionHelper do
     if stdout = opts[:stdout] do
       # Convert native term list to string for comparison
       stdout_str = output_to_string(result.stdout)
+
       assert stdout_str == stdout,
-        "Expected stdout #{inspect(stdout)} but got #{inspect(stdout_str)}"
+             "Expected stdout #{inspect(stdout)} but got #{inspect(stdout_str)}"
     end
 
     if stderr = opts[:stderr] do
       # Convert native term list to string for comparison
       stderr_str = output_to_string(result.stderr)
+
       assert stderr_str == stderr,
-        "Expected stderr #{inspect(stderr)} but got #{inspect(stderr_str)}"
+             "Expected stderr #{inspect(stderr)} but got #{inspect(stderr_str)}"
     end
 
     if exit_code = opts[:exit_code] do
       assert result.exit_code == exit_code,
-        "Expected exit code #{exit_code} but got #{result.exit_code}"
+             "Expected exit code #{exit_code} but got #{result.exit_code}"
     end
 
     result
@@ -120,12 +126,12 @@ defmodule RShell.TestHelpers.ExecutionHelper do
 
     if reason = opts[:reason] do
       assert result.reason == reason,
-        "Expected reason #{reason} but got #{result.reason}"
+             "Expected reason #{reason} but got #{result.reason}"
     end
 
     if error = opts[:error] do
       assert result.error =~ error,
-        "Expected error to contain #{inspect(error)} but got #{inspect(result.error)}"
+             "Expected error to contain #{inspect(error)} but got #{inspect(result.error)}"
     end
 
     result

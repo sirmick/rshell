@@ -41,10 +41,11 @@ defmodule RShell.CLI.Executor do
         exec_metrics = Metrics.stop(exec_metrics)
 
         # Extract output and context from execution result
-        {exit_code, stdout, stderr, context} = extract_execution_data(
-          execution_result,
-          state.runtime_pid
-        )
+        {exit_code, stdout, stderr, context} =
+          extract_execution_data(
+            execution_result,
+            state.runtime_pid
+          )
 
         # Build execution record
         record = %ExecutionRecord{
@@ -113,7 +114,8 @@ defmodule RShell.CLI.Executor do
             stdout: context.last_output.stdout,
             stderr: context.last_output.stderr,
             context: context,
-            duration_us: 0,  # Already tracked in exec_metrics
+            # Already tracked in exec_metrics
+            duration_us: 0,
             timestamp: DateTime.utc_now()
           }
 
@@ -140,6 +142,7 @@ defmodule RShell.CLI.Executor do
   defp find_executable_nodes(%{children: children}) when is_list(children) do
     Enum.filter(children, &is_executable_node?/1)
   end
+
   defp find_executable_nodes(_), do: []
 
   # Check if node is executable (same as IncrementalParser.is_executable_node?)
@@ -168,6 +171,7 @@ defmodule RShell.CLI.Executor do
   defp get_node_type(node) when is_struct(node) do
     node.__struct__ |> Module.split() |> List.last()
   end
+
   defp get_node_type(_), do: "Unknown"
 
   # Extract node text safely

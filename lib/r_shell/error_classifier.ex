@@ -139,11 +139,20 @@ defmodule RShell.ErrorClassifier do
   - FunctionDefinition (needs closing brace)
   """
   @spec count_structure_nodes(term()) :: non_neg_integer()
-  def count_structure_nodes(%BashParser.AST.Types.IfStatement{} = node), do: 1 + count_children_structures(node)
-  def count_structure_nodes(%BashParser.AST.Types.ForStatement{} = node), do: 1 + count_children_structures(node)
-  def count_structure_nodes(%BashParser.AST.Types.WhileStatement{} = node), do: 1 + count_children_structures(node)
-  def count_structure_nodes(%BashParser.AST.Types.CaseStatement{} = node), do: 1 + count_children_structures(node)
-  def count_structure_nodes(%BashParser.AST.Types.FunctionDefinition{} = node), do: 1 + count_children_structures(node)
+  def count_structure_nodes(%BashParser.AST.Types.IfStatement{} = node),
+    do: 1 + count_children_structures(node)
+
+  def count_structure_nodes(%BashParser.AST.Types.ForStatement{} = node),
+    do: 1 + count_children_structures(node)
+
+  def count_structure_nodes(%BashParser.AST.Types.WhileStatement{} = node),
+    do: 1 + count_children_structures(node)
+
+  def count_structure_nodes(%BashParser.AST.Types.CaseStatement{} = node),
+    do: 1 + count_children_structures(node)
+
+  def count_structure_nodes(%BashParser.AST.Types.FunctionDefinition{} = node),
+    do: 1 + count_children_structures(node)
 
   def count_structure_nodes(node) when is_struct(node), do: count_children_structures(node)
   def count_structure_nodes(_), do: 0
@@ -216,12 +225,21 @@ defmodule RShell.ErrorClassifier do
     end
   end
 
-  def identify_incomplete_structure(%BashParser.AST.Types.WhileStatement{}), do: %{type: :while_statement, expecting: "done"}
-  def identify_incomplete_structure(%BashParser.AST.Types.CaseStatement{}), do: %{type: :case_statement, expecting: "esac"}
-  def identify_incomplete_structure(%BashParser.AST.Types.FunctionDefinition{}), do: %{type: :function_definition, expecting: "}"}
+  def identify_incomplete_structure(%BashParser.AST.Types.WhileStatement{}),
+    do: %{type: :while_statement, expecting: "done"}
 
-  def identify_incomplete_structure(%BashParser.AST.Types.Program{} = node), do: check_children_for_incomplete(node)
-  def identify_incomplete_structure(node) when is_struct(node), do: check_children_for_incomplete(node)
+  def identify_incomplete_structure(%BashParser.AST.Types.CaseStatement{}),
+    do: %{type: :case_statement, expecting: "esac"}
+
+  def identify_incomplete_structure(%BashParser.AST.Types.FunctionDefinition{}),
+    do: %{type: :function_definition, expecting: "}"}
+
+  def identify_incomplete_structure(%BashParser.AST.Types.Program{} = node),
+    do: check_children_for_incomplete(node)
+
+  def identify_incomplete_structure(node) when is_struct(node),
+    do: check_children_for_incomplete(node)
+
   def identify_incomplete_structure(_), do: nil
 
   # Check if an IfStatement is incomplete

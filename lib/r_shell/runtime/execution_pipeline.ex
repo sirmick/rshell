@@ -103,10 +103,11 @@ defmodule RShell.Runtime.ExecutionPipeline do
 
   # Broadcast execution failure
   defp broadcast_failure(pipeline, exception) do
-    error_reason = case exception do
-      %RuntimeError{} -> "NotImplementedError"
-      _ -> exception.__struct__ |> Module.split() |> List.last()
-    end
+    error_reason =
+      case exception do
+        %RuntimeError{} -> "NotImplementedError"
+        _ -> exception.__struct__ |> Module.split() |> List.last()
+      end
 
     result = %{
       status: :error,
@@ -129,6 +130,7 @@ defmodule RShell.Runtime.ExecutionPipeline do
   defp get_node_type(node) when is_struct(node) do
     node.__struct__ |> Module.split() |> List.last()
   end
+
   defp get_node_type(_), do: "Unknown"
 
   # Helper: Extract node text safely

@@ -43,7 +43,8 @@ defmodule RShell.IncrementalParser do
   alias RShell.PubSub
   alias BashParser.AST.Types
 
-  @default_buffer_size 10 * 1024 * 1024  # 10MB
+  # 10MB
+  @default_buffer_size 10 * 1024 * 1024
 
   ## Client API
 
@@ -83,7 +84,7 @@ defmodule RShell.IncrementalParser do
   Returns `{:ok, ast}` with the parsed AST, or `{:error, reason}` on failure.
   """
   @spec append_fragment(GenServer.server(), String.t()) ::
-    {:ok, map()} | {:error, map()}
+          {:ok, map()} | {:error, map()}
   def append_fragment(server, fragment) do
     GenServer.call(server, {:append_fragment, fragment})
   end
@@ -157,15 +158,19 @@ defmodule RShell.IncrementalParser do
   def init(%{session_id: session_id, buffer_size: buffer_size, broadcast: broadcast}) do
     case BashParser.new_parser_with_size(buffer_size) do
       {:ok, resource} ->
-        Logger.debug("IncrementalParser started for session=#{inspect(session_id)} buffer_size=#{buffer_size}")
-        {:ok, %{
-          resource: resource,
-          buffer_size: buffer_size,
-          session_id: session_id,
-          broadcast: broadcast,
-          command_count: 0,
-          last_executable_row: -1
-        }}
+        Logger.debug(
+          "IncrementalParser started for session=#{inspect(session_id)} buffer_size=#{buffer_size}"
+        )
+
+        {:ok,
+         %{
+           resource: resource,
+           buffer_size: buffer_size,
+           session_id: session_id,
+           broadcast: broadcast,
+           command_count: 0,
+           last_executable_row: -1
+         }}
 
       error ->
         Logger.error("Failed to create parser resource: #{inspect(error)}")
@@ -191,15 +196,21 @@ defmodule RShell.IncrementalParser do
 
           # Broadcast incremental AST update with metadata
           if state.broadcast && state.session_id do
-            broadcast_incremental_ast_update(state.session_id, typed_ast, changed_nodes_typed, changed_ranges)
+            broadcast_incremental_ast_update(
+              state.session_id,
+              typed_ast,
+              changed_nodes_typed,
+              changed_ranges
+            )
           end
 
           # Check for executable nodes and broadcast
-          new_state = if state.broadcast && state.session_id do
-            check_and_broadcast_executable_nodes(typed_ast, ast_map, state)
-          else
-            state
-          end
+          new_state =
+            if state.broadcast && state.session_id do
+              check_and_broadcast_executable_nodes(typed_ast, ast_map, state)
+            else
+              state
+            end
 
           {:reply, {:ok, typed_ast}, new_state}
 
@@ -208,6 +219,7 @@ defmodule RShell.IncrementalParser do
           if state.broadcast && state.session_id do
             PubSub.broadcast(state.session_id, :ast, {:parsing_failed, error})
           end
+
           {:reply, error, state}
       end
     rescue
@@ -250,6 +262,7 @@ defmodule RShell.IncrementalParser do
       {:ok, ast_map} ->
         typed_ast = Types.from_map(ast_map)
         {:reply, {:ok, typed_ast}, state}
+
       error ->
         {:reply, error, state}
     end
@@ -286,6 +299,7 @@ defmodule RShell.IncrementalParser do
       changed_nodes: changed_nodes,
       changed_ranges: changed_ranges
     }
+
     PubSub.broadcast(session_id, :ast, {:ast_incremental, metadata})
   end
 
@@ -304,10 +318,12 @@ defmodule RShell.IncrementalParser do
       # Tree is error-free, check for new executable nodes
       # Use ast_map for position info, typed structs for type checking
       children_maps = Map.get(ast_map, "children", [])
-      children_typed = case typed_ast do
-        %{children: children} when is_list(children) -> children
-        _ -> []
-      end
+
+      children_typed =
+        case typed_ast do
+          %{children: children} when is_list(children) -> children
+          _ -> []
+        end
 
       accumulated_input = BashParser.get_accumulated_input(state.resource)
 
@@ -332,12 +348,16 @@ defmodule RShell.IncrementalParser do
         |> Enum.sort_by(fn {map, _typed} -> Map.get(map, "end_row", 0) end)
 
       # Broadcast each new executable node (typed struct) with incremented count
-      {new_command_count, new_last_row} = Enum.reduce(executable_pairs, {state.command_count, state.last_executable_row}, fn {map, typed}, {count, _last_row} ->
-        new_count = count + 1
-        end_row = Map.get(map, "end_row", -1)
-        PubSub.broadcast(state.session_id, :executable, {:executable_node, typed, new_count})
-        {new_count, end_row}
-      end)
+      {new_command_count, new_last_row} =
+        Enum.reduce(executable_pairs, {state.command_count, state.last_executable_row}, fn {map,
+                                                                                            typed},
+                                                                                           {count,
+                                                                                            _last_row} ->
+          new_count = count + 1
+          end_row = Map.get(map, "end_row", -1)
+          PubSub.broadcast(state.session_id, :executable, {:executable_node, typed, new_count})
+          {new_count, end_row}
+        end)
 
       %{state | command_count: new_command_count, last_executable_row: new_last_row}
     end
@@ -387,7 +407,8 @@ defmodule RShell.IncrementalParser do
       %Types.CaseStatement{} -> true
       %Types.FunctionDefinition{} -> true
       %Types.DeclarationCommand{} -> true
-      %Types.VariableAssignment{} -> true  # Simple variable assignments like X=12
+      # Simple variable assignments like X=12
+      %Types.VariableAssignment{} -> true
       %Types.UnsetCommand{} -> true
       %Types.TestCommand{} -> true
       %Types.CStyleForStatement{} -> true

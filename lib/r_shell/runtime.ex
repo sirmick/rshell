@@ -92,7 +92,6 @@ defmodule RShell.Runtime do
     GenServer.call(server, :reset)
   end
 
-
   # Server Callbacks
 
   @impl true
@@ -105,21 +104,26 @@ defmodule RShell.Runtime do
 
     context = %{
       env: env,
-      env_meta: %{},  # Variable attributes metadata
+      # Variable attributes metadata
+      env_meta: %{},
       cwd: cwd,
       exit_code: 0,
       command_count: 0,
-      last_output: %{stdout: [], stderr: []}  # Only current command output (lists of native terms)
+      # Only current command output (lists of native terms)
+      last_output: %{stdout: [], stderr: []}
     }
 
     Logger.debug("Runtime started: session_id=#{session_id}")
 
-    {:ok, %{
-      session_id: session_id,
-      context: context,
-      initial_env: env,     # Store for reset
-      initial_cwd: cwd      # Store for reset
-    }}
+    {:ok,
+     %{
+       session_id: session_id,
+       context: context,
+       # Store for reset
+       initial_env: env,
+       # Store for reset
+       initial_cwd: cwd
+     }}
   end
 
   @impl true
@@ -158,10 +162,15 @@ defmodule RShell.Runtime do
     new_context = %{state.context | cwd: path}
 
     # Broadcast context change
-    PubSub.broadcast(state.session_id, :context, {:cwd_changed, %{
-      old: old_cwd,
-      new: path
-    }})
+    PubSub.broadcast(
+      state.session_id,
+      :context,
+      {:cwd_changed,
+       %{
+         old: old_cwd,
+         new: path
+       }}
+    )
 
     {:reply, :ok, %{state | context: new_context}}
   end
@@ -181,11 +190,16 @@ defmodule RShell.Runtime do
     }
 
     # Broadcast reset event
-    PubSub.broadcast(state.session_id, :context, {:runtime_reset, %{
-      old_context: old_context,
-      new_context: new_context,
-      timestamp: DateTime.utc_now()
-    }})
+    PubSub.broadcast(
+      state.session_id,
+      :context,
+      {:runtime_reset,
+       %{
+         old_context: old_context,
+         new_context: new_context,
+         timestamp: DateTime.utc_now()
+       }}
+    )
 
     {:reply, :ok, %{state | context: new_context}}
   end
@@ -256,27 +270,34 @@ defmodule RShell.Runtime do
   end
 
   # Execute variable assignment: X=value
-  defp execute_variable_assignment(%Types.VariableAssignment{name: name_node, value: value_node}, context, _session_id) do
+  defp execute_variable_assignment(
+         %Types.VariableAssignment{name: name_node, value: value_node},
+         context,
+         _session_id
+       ) do
     # Extract variable name
-    var_name = case name_node do
-      %Types.VariableName{source_info: %{text: text}} -> text
-      _ -> ""
-    end
+    var_name =
+      case name_node do
+        %Types.VariableName{source_info: %{text: text}} -> text
+        _ -> ""
+      end
 
     # Extract value - may be string or native type from variable expansion
     value_result = extract_value_text(value_node, context)
 
     # If already a native type (from $VAR expansion), use directly
     # Otherwise parse as JSON/string
-    parsed_value = if is_binary(value_result) do
-      case RShell.EnvJSON.parse(value_result) do
-        {:ok, parsed} -> parsed
-        {:error, _} -> value_result  # Not JSON, keep as string
+    parsed_value =
+      if is_binary(value_result) do
+        case RShell.EnvJSON.parse(value_result) do
+          {:ok, parsed} -> parsed
+          # Not JSON, keep as string
+          {:error, _} -> value_result
+        end
+      else
+        # Already a native type from variable expansion
+        value_result
       end
-    else
-      # Already a native type from variable expansion
-      value_result
-    end
 
     # Update environment
     new_env = Map.put(context.env, var_name, parsed_value)
@@ -284,7 +305,8 @@ defmodule RShell.Runtime do
   end
 
   # Extract value text with smart JSON/expansion detection
-  defp extract_value_text(%{source_info: %{text: text}} = node, context) when is_binary(text) and text != "" do
+  defp extract_value_text(%{source_info: %{text: text}} = node, context)
+       when is_binary(text) and text != "" do
     # If it looks like JSON (starts with { or [), preserve raw text for parsing
     if String.starts_with?(text, "{") or String.starts_with?(text, "[") do
       text
@@ -293,11 +315,13 @@ defmodule RShell.Runtime do
       extract_text_from_node(node, context)
     end
   end
+
   defp extract_value_text(node, context), do: extract_text_from_node(node, context)
 
   # Convert native values to strings for external commands
   defp convert_to_string(value) when is_binary(value), do: value
   defp convert_to_string(value) when is_map(value), do: Jason.encode!(value)
+
   defp convert_to_string(value) when is_list(value) do
     # Check if charlist
     if Enum.all?(value, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
@@ -306,6 +330,7 @@ defmodule RShell.Runtime do
       Jason.encode!(value)
     end
   end
+
   defp convert_to_string(value) when is_integer(value), do: Integer.to_string(value)
   defp convert_to_string(value) when is_float(value), do: Float.to_string(value)
   defp convert_to_string(true), do: "true"
@@ -322,9 +347,10 @@ defmodule RShell.Runtime do
         stderr_list = materialize_output(stderr)
 
         # Store ONLY in last_output (no accumulated output/errors)
-        %{new_context |
-          exit_code: exit_code,
-          last_output: %{stdout: stdout_list, stderr: stderr_list}
+        %{
+          new_context
+          | exit_code: exit_code,
+            last_output: %{stdout: stdout_list, stderr: stderr_list}
         }
 
       {:error, :not_a_builtin} ->
@@ -385,7 +411,8 @@ defmodule RShell.Runtime do
 
   # Extract text from any node by traversing the typed structure
   # All 2-arity versions (with context) grouped together
-  defp extract_text_from_node(%Types.String{children: children}, context) when is_list(children) do
+  defp extract_text_from_node(%Types.String{children: children}, context)
+       when is_list(children) do
     # For String nodes, extract the content inside the quotes
     # This allows JSON values like '{"x":1}' to be parsed correctly
     children
@@ -394,21 +421,26 @@ defmodule RShell.Runtime do
     |> Enum.join("")
   end
 
-  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}, _context) when is_binary(text) do
+  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}, _context)
+       when is_binary(text) do
     # RawString nodes (single quotes in bash) preserve everything literally
     # Strip the outer single quotes for JSON parsing: 'value' -> value
-    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and String.length(text) >= 2 do
+    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and
+         String.length(text) >= 2 do
       String.slice(text, 1..-2//-1)
     else
       text
     end
   end
 
-  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}, _context), do: text
+  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}, _context),
+    do: text
 
-  defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context) when is_list(children) do
+  defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context)
+       when is_list(children) do
     # Extract variable expression (may include bracket notation)
-    var_expr = children
+    var_expr =
+      children
       |> Enum.map(&extract_variable_name/1)
       |> Enum.join("")
 
@@ -421,7 +453,8 @@ defmodule RShell.Runtime do
       # Simple variable lookup - return native value
       case Map.get(context.env || %{}, var_expr) do
         nil -> ""
-        value -> value  # Return native value (list, map, number, etc.)
+        # Return native value (list, map, number, etc.)
+        value -> value
       end
     end
   end
@@ -430,14 +463,17 @@ defmodule RShell.Runtime do
 
   defp extract_text_from_node(%Types.Word{source_info: %{text: text}}, _context), do: text
 
-  defp extract_text_from_node(%Types.Concatenation{children: children}, context) when is_list(children) do
+  defp extract_text_from_node(%Types.Concatenation{children: children}, context)
+       when is_list(children) do
     children
     |> Enum.map(&extract_text_from_node(&1, context))
-    |> Enum.map(&convert_to_string/1)  # Convert native values to strings for concatenation
+    # Convert native values to strings for concatenation
+    |> Enum.map(&convert_to_string/1)
     |> Enum.join("")
   end
 
-  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
+  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text),
+    do: text
 
   defp extract_text_from_node(_, _context), do: ""
 
@@ -449,9 +485,11 @@ defmodule RShell.Runtime do
     |> Enum.join("")
   end
 
-  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}) when is_binary(text) do
+  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}})
+       when is_binary(text) do
     # RawString nodes (single quotes in bash) - strip outer quotes
-    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and String.length(text) >= 2 do
+    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and
+         String.length(text) >= 2 do
       String.slice(text, 1..-2//-1)
     else
       text
@@ -460,7 +498,8 @@ defmodule RShell.Runtime do
 
   defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}), do: text
 
-  defp extract_text_from_node(%Types.SimpleExpansion{children: children}) when is_list(children) do
+  defp extract_text_from_node(%Types.SimpleExpansion{children: children})
+       when is_list(children) do
     # Return the expansion text as-is (e.g., "$VAR")
     children
     |> Enum.map(&extract_text_from_node/1)
@@ -546,7 +585,15 @@ defmodule RShell.Runtime do
   # broadcast_execution_success/5 removed - no longer needed with synchronous execution
 
   # Broadcast successful execution result with explicit output (for commands in loops)
-  defp broadcast_execution_success_with_output(node, new_context, _old_context, duration_us, stdout, stderr, session_id) do
+  defp broadcast_execution_success_with_output(
+         node,
+         new_context,
+         _old_context,
+         duration_us,
+         stdout,
+         stderr,
+         session_id
+       ) do
     result = %{
       status: :success,
       node: node,
@@ -572,10 +619,11 @@ defmodule RShell.Runtime do
   defp broadcast_execution_failure(exception, node, session_id) do
     node_type = get_node_type(node)
 
-    error_reason = case exception do
-      %RuntimeError{} -> "NotImplementedError"
-      _ -> exception.__struct__ |> Module.split() |> List.last()
-    end
+    error_reason =
+      case exception do
+        %RuntimeError{} -> "NotImplementedError"
+        _ -> exception.__struct__ |> Module.split() |> List.last()
+      end
 
     result = %{
       status: :error,
@@ -585,7 +633,8 @@ defmodule RShell.Runtime do
       node_line: get_node_line(node),
       error: Exception.message(exception),
       reason: error_reason,
-      stdout: "",           # Include empty output fields
+      # Include empty output fields
+      stdout: "",
       stderr: "",
       exit_code: nil,
       timestamp: DateTime.utc_now()
@@ -596,13 +645,21 @@ defmodule RShell.Runtime do
   end
 
   # Broadcast execution failure with explicit output (for commands in loops)
-  defp broadcast_execution_failure_with_output(exception, node, stdout, stderr, exit_code, session_id) do
+  defp broadcast_execution_failure_with_output(
+         exception,
+         node,
+         stdout,
+         stderr,
+         exit_code,
+         session_id
+       ) do
     node_type = get_node_type(node)
 
-    error_reason = case exception do
-      %RuntimeError{} -> "NotImplementedError"
-      _ -> exception.__struct__ |> Module.split() |> List.last()
-    end
+    error_reason =
+      case exception do
+        %RuntimeError{} -> "NotImplementedError"
+        _ -> exception.__struct__ |> Module.split() |> List.last()
+      end
 
     result = %{
       status: :error,
@@ -612,7 +669,8 @@ defmodule RShell.Runtime do
       node_line: get_node_line(node),
       error: Exception.message(exception),
       reason: error_reason,
-      stdout: stdout,       # Include any output produced before error
+      # Include any output produced before error
+      stdout: stdout,
       stderr: stderr,
       exit_code: exit_code,
       timestamp: DateTime.utc_now()
@@ -626,6 +684,7 @@ defmodule RShell.Runtime do
   defp get_node_type(node) when is_struct(node) do
     node.__struct__ |> Module.split() |> List.last()
   end
+
   defp get_node_type(_), do: "Unknown"
 
   # Extract node text safely
@@ -686,12 +745,21 @@ defmodule RShell.Runtime do
           stdout = acc_context.last_output.stdout
           stderr = acc_context.last_output.stderr
 
-          broadcast_execution_failure_with_output(e, node, stdout, stderr, acc_context.exit_code, session_id)
+          broadcast_execution_failure_with_output(
+            e,
+            node,
+            stdout,
+            stderr,
+            acc_context.exit_code,
+            session_id
+          )
+
           # Continue with unchanged context
           acc_context
       end
     end)
   end
+
   defp execute_command_list(_, context, _session_id), do: context
 
   # Execute DoGroup, CompoundStatement, or single node
@@ -712,6 +780,7 @@ defmodule RShell.Runtime do
   # Extract iteration values from for statement value nodes with native type support
   defp extract_loop_values(nil, _context), do: []
   defp extract_loop_values([], _context), do: []
+
   defp extract_loop_values(value_nodes, context) when is_list(value_nodes) do
     value_nodes
     |> Enum.flat_map(fn node ->
@@ -744,15 +813,21 @@ defmodule RShell.Runtime do
   # =============================================================================
 
   # Execute if statement with elif/else support
-  defp execute_if_statement(%Types.IfStatement{condition: condition_nodes, children: children}, context, session_id) do
+  defp execute_if_statement(
+         %Types.IfStatement{condition: condition_nodes, children: children},
+         context,
+         session_id
+       ) do
     # Execute condition commands
     condition_context = execute_command_list(condition_nodes, context, session_id)
 
     if condition_context.exit_code == 0 do
       # Condition succeeded - execute then-body (first non-elif/else child)
-      then_body = Enum.reject(children, fn child ->
-        match?(%Types.ElifClause{}, child) or match?(%Types.ElseClause{}, child)
-      end)
+      then_body =
+        Enum.reject(children, fn child ->
+          match?(%Types.ElifClause{}, child) or match?(%Types.ElseClause{}, child)
+        end)
+
       execute_command_list(then_body, condition_context, session_id)
     else
       # Condition failed - try elif clauses, then else clause
@@ -785,6 +860,7 @@ defmodule RShell.Runtime do
 
   # Try elif clauses until one matches
   defp try_elif_clauses([], _context, _session_id), do: :no_match
+
   defp try_elif_clauses([%Types.ElifClause{children: elif_children} | rest], context, session_id) do
     # ElifClause.children contains both condition and body commands
     # Need to separate them (similar to IfStatement structure)
@@ -804,7 +880,11 @@ defmodule RShell.Runtime do
   end
 
   # Execute for statement with native type support
-  defp execute_for_statement(%Types.ForStatement{variable: var_node, value: value_nodes, body: body}, context, session_id) do
+  defp execute_for_statement(
+         %Types.ForStatement{variable: var_node, value: value_nodes, body: body},
+         context,
+         session_id
+       ) do
     # Extract variable name
     var_name = extract_variable_name(var_node)
 
@@ -821,7 +901,11 @@ defmodule RShell.Runtime do
   end
 
   # Execute while statement
-  defp execute_while_statement(%Types.WhileStatement{condition: condition_nodes, body: body}, context, session_id) do
+  defp execute_while_statement(
+         %Types.WhileStatement{condition: condition_nodes, body: body},
+         context,
+         session_id
+       ) do
     execute_while_loop(condition_nodes, body, context, session_id)
   end
 

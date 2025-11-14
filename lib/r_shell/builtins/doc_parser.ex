@@ -35,6 +35,7 @@ defmodule RShell.Builtins.DocParser do
          description: "Do not output trailing newline"}]
   """
   def parse_options(nil), do: []
+
   def parse_options(docstring) when is_binary(docstring) do
     case extract_options_section(docstring) do
       nil -> []
@@ -72,7 +73,8 @@ defmodule RShell.Builtins.DocParser do
   """
   def parse_option_entries(text) do
     text
-    |> String.split(~r/\n(?=\s{2}-)/m)  # Split on lines starting with "  -"
+    # Split on lines starting with "  -"
+    |> String.split(~r/\n(?=\s{2}-)/m)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(&parse_single_option/1)
@@ -112,21 +114,22 @@ defmodule RShell.Builtins.DocParser do
       end)
 
     # Generate key from long flag or short flag
-    key = cond do
-      long != nil ->
-        long
-        |> String.trim_leading("--")
-        |> String.replace("-", "_")
-        |> String.to_atom()
+    key =
+      cond do
+        long != nil ->
+          long
+          |> String.trim_leading("--")
+          |> String.replace("-", "_")
+          |> String.to_atom()
 
-      short != nil ->
-        short
-        |> String.trim_leading("-")
-        |> String.to_atom()
+        short != nil ->
+          short
+          |> String.trim_leading("-")
+          |> String.to_atom()
 
-      true ->
-        nil
-    end
+        true ->
+          nil
+      end
 
     if key do
       flags = %{key: key}
@@ -146,18 +149,20 @@ defmodule RShell.Builtins.DocParser do
       |> Map.new()
 
     # Convert type string to atom
-    metadata = if metadata[:type] do
-      %{metadata | type: String.to_atom(metadata.type)}
-    else
-      metadata
-    end
+    metadata =
+      if metadata[:type] do
+        %{metadata | type: String.to_atom(metadata.type)}
+      else
+        metadata
+      end
 
     # Convert default string to appropriate type
-    metadata = if Map.has_key?(metadata, :default) do
-      %{metadata | default: parse_default_value(metadata.default, metadata[:type])}
-    else
-      metadata
-    end
+    metadata =
+      if Map.has_key?(metadata, :default) do
+        %{metadata | default: parse_default_value(metadata.default, metadata[:type])}
+      else
+        metadata
+      end
 
     # Ensure required fields are present
     if Map.has_key?(metadata, :type) && Map.has_key?(metadata, :default) do
@@ -208,6 +213,7 @@ defmodule RShell.Builtins.DocParser do
   Returns the docstring formatted for display in help output.
   """
   def extract_help_text(nil), do: ""
+
   def extract_help_text(docstring) when is_binary(docstring) do
     docstring
     |> String.trim()
@@ -223,6 +229,7 @@ defmodule RShell.Builtins.DocParser do
       "echo - output text"
   """
   def extract_summary(nil), do: ""
+
   def extract_summary(docstring) when is_binary(docstring) do
     docstring
     |> String.split("\n", parts: 2)

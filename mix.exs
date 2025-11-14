@@ -1,4 +1,4 @@
- defmodule RShell.MixProject do
+defmodule RShell.MixProject do
   use Mix.Project
 
   def project do

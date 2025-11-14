@@ -13,13 +13,17 @@ defmodule BashParser do
     cond do
       File.exists?(nif_file <> ".so") ->
         :erlang.load_nif(String.to_charlist(nif_file), 0)
+
       File.exists?(nif_file <> ".dylib") ->
         :erlang.load_nif(String.to_charlist(nif_file), 0)
+
       File.exists?(nif_file <> ".dll") ->
         :erlang.load_nif(String.to_charlist(nif_file), 0)
+
       true ->
         # For development, try relative path
         nif_file = ~c"priv/native/librshell_bash_parser"
+
         cond do
           File.exists?(to_string(nif_file) <> ".so") -> :erlang.load_nif(nif_file, 0)
           File.exists?(to_string(nif_file) <> ".dylib") -> :erlang.load_nif(nif_file, 0)

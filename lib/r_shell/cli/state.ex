@@ -20,21 +20,25 @@ defmodule RShell.CLI.State do
     :session_id,
     :parser_pid,
     :runtime_pid,
-    :history,          # [ExecutionRecord.t()]
-    :options,          # Keyword list
-    :initial_env,      # For reset
-    :initial_cwd       # For reset
+    # [ExecutionRecord.t()]
+    :history,
+    # Keyword list
+    :options,
+    # For reset
+    :initial_env,
+    # For reset
+    :initial_cwd
   ]
 
   @type t :: %__MODULE__{
-    session_id: String.t(),
-    parser_pid: pid(),
-    runtime_pid: pid(),
-    history: [ExecutionRecord.t()],
-    options: keyword(),
-    initial_env: map(),
-    initial_cwd: String.t()
-  }
+          session_id: String.t(),
+          parser_pid: pid(),
+          runtime_pid: pid(),
+          history: [ExecutionRecord.t()],
+          options: keyword(),
+          initial_env: map(),
+          initial_cwd: String.t()
+        }
 
   @doc "Create new CLI state"
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
@@ -44,29 +48,32 @@ defmodule RShell.CLI.State do
     cwd = Keyword.get(opts, :cwd, System.get_env("PWD") || File.cwd!())
 
     # Start parser and runtime
-    {:ok, parser} = RShell.IncrementalParser.start_link(
-      session_id: session_id,
-      broadcast: true
-    )
+    {:ok, parser} =
+      RShell.IncrementalParser.start_link(
+        session_id: session_id,
+        broadcast: true
+      )
 
-    {:ok, runtime} = RShell.Runtime.start_link(
-      session_id: session_id,
-      env: env,
-      cwd: cwd
-    )
+    {:ok, runtime} =
+      RShell.Runtime.start_link(
+        session_id: session_id,
+        env: env,
+        cwd: cwd
+      )
 
     # Subscribe to events
     RShell.PubSub.subscribe(session_id, :all)
 
-    {:ok, %__MODULE__{
-      session_id: session_id,
-      parser_pid: parser,
-      runtime_pid: runtime,
-      history: [],
-      options: opts,
-      initial_env: env,
-      initial_cwd: cwd
-    }}
+    {:ok,
+     %__MODULE__{
+       session_id: session_id,
+       parser_pid: parser,
+       runtime_pid: runtime,
+       history: [],
+       options: opts,
+       initial_env: env,
+       initial_cwd: cwd
+     }}
   end
 
   # Generate a unique session ID

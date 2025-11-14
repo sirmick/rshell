@@ -77,6 +77,7 @@ defmodule RShell.EnvJSON do
   @spec encode(term()) :: String.t()
   def encode(value) when is_binary(value), do: value
   def encode(value) when is_map(value), do: Jason.encode!(value)
+
   def encode(value) when is_list(value) do
     # Check if charlist
     if is_charlist?(value) do
@@ -85,6 +86,7 @@ defmodule RShell.EnvJSON do
       Jason.encode!(value)
     end
   end
+
   def encode(value) when is_integer(value), do: Integer.to_string(value)
   def encode(value) when is_float(value), do: Float.to_string(value)
   def encode(true), do: "true"
@@ -107,6 +109,7 @@ defmodule RShell.EnvJSON do
   @spec format(term()) :: String.t()
   def format(value) when is_binary(value), do: value
   def format(value) when is_map(value), do: Jason.encode!(value, pretty: true)
+
   def format(value) when is_list(value) do
     if is_charlist?(value) do
       List.to_string(value)
@@ -114,21 +117,25 @@ defmodule RShell.EnvJSON do
       Jason.encode!(value, pretty: true)
     end
   end
+
   def format(value), do: encode(value)
 
   # Check if list is a charlist (all integers in valid codepoint range)
   # Must be non-empty and all elements integers in valid range
   defp is_charlist?([]), do: false
+
   defp is_charlist?(list) when is_list(list) do
     # Only treat as charlist if it looks like printable ASCII or valid UTF-8
     # This prevents [1,2,3] from being treated as charlist
     case list do
       [c | _] when is_integer(c) and c >= 32 and c <= 126 ->
         # Starts with printable ASCII, check all
-        Enum.all?(list, &(is_integer(&1) and &1 >= 0 and &1 <= 1114111))
+        Enum.all?(list, &(is_integer(&1) and &1 >= 0 and &1 <= 1_114_111))
+
       _ ->
         false
     end
   end
+
   defp is_charlist?(_), do: false
 end

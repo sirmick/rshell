@@ -39,10 +39,13 @@ defmodule RShell do
           # Convert the generic map AST to strongly-typed structs
           typed_ast = convert_to_typed(ast_data)
           {:ok, typed_ast}
+
         {:error, reason} when is_binary(reason) ->
           {:error, "Parse failed: #{reason}"}
+
         {:error, reason} ->
           {:error, "Parse failed: #{inspect(reason)}"}
+
         other ->
           {:error, "Unexpected parser response: #{inspect(other, limit: :infinity)}"}
       end
@@ -54,6 +57,7 @@ defmodule RShell do
     # Use the generated from_map function
     Types.from_map(node)
   end
+
   defp convert_to_typed(value), do: value
 
   @doc """
@@ -73,6 +77,7 @@ defmodule RShell do
       is_struct(ast) ->
         # Typed structs - use generic traversal
         find_typed_nodes(ast, node_type, [])
+
       true ->
         []
     end
@@ -89,16 +94,19 @@ defmodule RShell do
       traverse_value_for_nodes(value, target_type, acc)
     end)
   end
+
   defp find_typed_nodes(_node, _target_type, acc), do: acc
 
   defp traverse_value_for_nodes(value, target_type, acc) when is_struct(value) do
     find_typed_nodes(value, target_type, acc)
   end
+
   defp traverse_value_for_nodes(values, target_type, acc) when is_list(values) do
     Enum.reduce(values, acc, fn value, acc ->
       traverse_value_for_nodes(value, target_type, acc)
     end)
   end
+
   defp traverse_value_for_nodes(_value, _target_type, acc), do: acc
 
   defp get_node_type(node) when is_struct(node) do
@@ -110,6 +118,7 @@ defmodule RShell do
     |> List.last()
     |> Macro.underscore()
   end
+
   defp get_node_type(_), do: nil
 
   @doc """
@@ -125,10 +134,12 @@ defmodule RShell do
   """
   def traverse(ast, fun, opts \\ []) do
     order = Keyword.get(opts, :order, :pre)
+
     cond do
       is_struct(ast) ->
         traverse_typed(ast, fun, order)
         :ok
+
       true ->
         {:error, "Invalid AST for traversal"}
     end
@@ -138,10 +149,12 @@ defmodule RShell do
     fun.(node)
     traverse_typed_children(node, fun, :pre)
   end
+
   defp traverse_typed(node, fun, :post) when is_struct(node) do
     traverse_typed_children(node, fun, :post)
     fun.(node)
   end
+
   defp traverse_typed(_node, _fun, _order), do: :ok
 
   defp traverse_typed_children(node, fun, order) when is_struct(node) do
@@ -155,9 +168,11 @@ defmodule RShell do
   defp traverse_typed_value(value, fun, order) when is_struct(value) do
     traverse_typed(value, fun, order)
   end
+
   defp traverse_typed_value(values, fun, order) when is_list(values) do
     Enum.each(values, fn value -> traverse_typed_value(value, fun, order) end)
   end
+
   defp traverse_typed_value(_value, _fun, _order), do: :ok
 
   @doc """
@@ -211,7 +226,12 @@ defmodule RShell do
   Gets all arithmetic expressions.
   """
   def arithmetic_expressions(ast) do
-    ["binary_expression", "unary_expression", "arithmetic_expansion", "arithmetic_parenthesized_expression"]
+    [
+      "binary_expression",
+      "unary_expression",
+      "arithmetic_expansion",
+      "arithmetic_parenthesized_expression"
+    ]
     |> Enum.flat_map(fn type -> find_nodes(ast, type) end)
   end
 
@@ -235,7 +255,6 @@ defmodule RShell do
     end
   end
 
-
   @doc """
   Extracts all unique node types from the AST.
   Returns a map of node type => field names present.
@@ -250,6 +269,7 @@ defmodule RShell do
 
   defp analyze_typed_ast(ast) do
     types = collect_typed_types(ast, %{})
+
     %{
       node_types: Map.keys(types),
       type_summary: types,
@@ -267,16 +287,19 @@ defmodule RShell do
       collect_typed_types_value(value, acc)
     end)
   end
+
   defp collect_typed_types(_node, acc), do: acc
 
   defp collect_typed_types_value(value, acc) when is_struct(value) do
     collect_typed_types(value, acc)
   end
+
   defp collect_typed_types_value(values, acc) when is_list(values) do
     Enum.reduce(values, acc, fn value, acc ->
       collect_typed_types_value(value, acc)
     end)
   end
+
   defp collect_typed_types_value(_value, acc), do: acc
 
   @doc """

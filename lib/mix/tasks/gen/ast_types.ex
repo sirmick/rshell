@@ -23,10 +23,11 @@ defmodule Mix.Tasks.Gen.AstTypes do
 
   @impl Mix.Task
   def run(args) do
-    {opts, _args, _invalid} = OptionParser.parse(args,
-      strict: [schema: :string, output: :string],
-      aliases: [s: :schema, o: :output]
-    )
+    {opts, _args, _invalid} =
+      OptionParser.parse(args,
+        strict: [schema: :string, output: :string],
+        aliases: [s: :schema, o: :output]
+      )
 
     schema_path = opts[:schema] || @default_schema_path
     output_path = opts[:output] || @default_output_path
@@ -36,7 +37,7 @@ defmodule Mix.Tasks.Gen.AstTypes do
     Mix.shell().info("Schema: #{schema_path}")
     Mix.shell().info("Output: #{output_path}")
 
-    unless File.exists?(schema_path) do
+    if !File.exists?(schema_path) do
       Mix.raise("Schema file not found: #{schema_path}")
     end
 
@@ -75,43 +76,83 @@ defmodule Mix.Tasks.Gen.AstTypes do
 
   # Categorize nodes into type families
   defp categorize_nodes(schema) do
-    Enum.reduce(schema, %{
-      statements: [],
-      expressions: [],
-      literals: [],
-      redirects: [],
-      commands: [],
-      others: []
-    }, fn node, acc ->
-      category = determine_category(node)
-      Map.update!(acc, category, &[node | &1])
-    end)
+    Enum.reduce(
+      schema,
+      %{
+        statements: [],
+        expressions: [],
+        literals: [],
+        redirects: [],
+        commands: [],
+        others: []
+      },
+      fn node, acc ->
+        category = determine_category(node)
+        Map.update!(acc, category, &[node | &1])
+      end
+    )
     |> Map.new(fn {k, v} -> {k, Enum.reverse(v)} end)
   end
 
   defp determine_category(%{"type" => type}) do
     cond do
-      type in ["if_statement", "while_statement", "for_statement", "c_style_for_statement",
-               "case_statement", "function_definition", "pipeline", "list", "subshell",
-               "compound_statement", "redirected_statement", "negated_command",
-               "variable_assignment", "variable_assignments", "do_group",
-               "elif_clause", "else_clause", "case_item"] ->
+      type in [
+        "if_statement",
+        "while_statement",
+        "for_statement",
+        "c_style_for_statement",
+        "case_statement",
+        "function_definition",
+        "pipeline",
+        "list",
+        "subshell",
+        "compound_statement",
+        "redirected_statement",
+        "negated_command",
+        "variable_assignment",
+        "variable_assignments",
+        "do_group",
+        "elif_clause",
+        "else_clause",
+        "case_item"
+      ] ->
         :statements
 
-      type in ["binary_expression", "unary_expression", "ternary_expression",
-               "parenthesized_expression", "postfix_expression"] ->
+      type in [
+        "binary_expression",
+        "unary_expression",
+        "ternary_expression",
+        "parenthesized_expression",
+        "postfix_expression"
+      ] ->
         :expressions
 
-      type in ["word", "string", "number", "raw_string", "ansi_c_string",
-               "translated_string", "string_content", "concatenation",
-               "variable_name", "special_variable_name", "array"] ->
+      type in [
+        "word",
+        "string",
+        "number",
+        "raw_string",
+        "ansi_c_string",
+        "translated_string",
+        "string_content",
+        "concatenation",
+        "variable_name",
+        "special_variable_name",
+        "array"
+      ] ->
         :literals
 
       type in ["file_redirect", "heredoc_redirect", "herestring_redirect"] ->
         :redirects
 
-      type in ["command", "command_name", "command_substitution", "declaration_command",
-               "unset_command", "test_command"] ->
+      type in [
+        "command",
+        "command_name",
+        "command_substitution",
+        "declaration_command",
+        "unset_command",
+        "test_command"
+      ] ->
         :commands
 
       true ->
@@ -121,10 +162,14 @@ defmodule Mix.Tasks.Gen.AstTypes do
 
   defp print_statistics(categorized) do
     Mix.shell().info("\nNode Type Distribution:")
+
     Enum.each(categorized, fn {category, nodes} ->
       count = length(nodes)
+
       if count > 0 do
-        Mix.shell().info("  #{category |> to_string() |> String.pad_trailing(12)}: #{count} types")
+        Mix.shell().info(
+          "  #{category |> to_string() |> String.pad_trailing(12)}: #{count} types"
+        )
       end
     end)
 
@@ -133,7 +178,8 @@ defmodule Mix.Tasks.Gen.AstTypes do
   end
 
   defp generate_types_file(categorized, output_path) do
-    all_nodes = categorized
+    all_nodes =
+      categorized
       |> Enum.flat_map(fn {_category, nodes} -> nodes end)
       |> Enum.sort_by(& &1["type"])
 
@@ -218,23 +264,25 @@ defmodule Mix.Tasks.Gen.AstTypes do
 
   defp generate_all_node_modules(categorized) do
     # Generate modules for all categories
-    category_modules = categorized
-    |> Enum.sort()
-    |> Enum.map(fn {category, nodes} ->
-      nodes_sorted = Enum.sort_by(nodes, & &1["type"])
+    category_modules =
+      categorized
+      |> Enum.sort()
+      |> Enum.map(fn {category, nodes} ->
+        nodes_sorted = Enum.sort_by(nodes, & &1["type"])
 
-      category_comment = """
-        # #{category |> to_string() |> String.upcase()}
-        # #{String.duplicate("=", 78)}
-      """
+        category_comment = """
+          # #{category |> to_string() |> String.upcase()}
+          # #{String.duplicate("=", 78)}
+        """
 
-      modules = nodes_sorted
-        |> Enum.map(&generate_node_module/1)
-        |> Enum.join("\n\n")
+        modules =
+          nodes_sorted
+          |> Enum.map(&generate_node_module/1)
+          |> Enum.join("\n\n")
 
-      category_comment <> "\n" <> modules
-    end)
-    |> Enum.join("\n\n")
+        category_comment <> "\n" <> modules
+      end)
+      |> Enum.join("\n\n")
 
     # Add special ErrorNode module (not in grammar but generated by tree-sitter)
     error_node_module = """
@@ -280,17 +328,19 @@ defmodule Mix.Tasks.Gen.AstTypes do
     fields = extract_fields(node)
     has_unnamed_children = has_unnamed_children?(node)
 
-    required_field_names = fields
-      |> Enum.filter(&(&1.required))
-      |> Enum.map(&(&1.name))
+    required_field_names =
+      fields
+      |> Enum.filter(& &1.required)
+      |> Enum.map(& &1.name)
 
     required_keys = [:source_info | required_field_names]
     # Add :children field if node has unnamed children
-    struct_fields = if has_unnamed_children do
-      [:source_info | Enum.map(fields, &(&1.name))] ++ [:children] |> Enum.uniq()
-    else
-      [:source_info | Enum.map(fields, &(&1.name))] |> Enum.uniq()
-    end
+    struct_fields =
+      if has_unnamed_children do
+        ([:source_info | Enum.map(fields, & &1.name)] ++ [:children]) |> Enum.uniq()
+      else
+        [:source_info | Enum.map(fields, & &1.name)] |> Enum.uniq()
+      end
 
     """
       defmodule #{module_name} do
@@ -339,11 +389,13 @@ defmodule Mix.Tasks.Gen.AstTypes do
   defp generate_field_type_specs(fields) do
     fields
     |> Enum.map(fn field ->
-      type = cond do
-        field.multiple -> "list(any())"
-        field.required -> "any()"
-        true -> "any() | nil"
-      end
+      type =
+        cond do
+          field.multiple -> "list(any())"
+          field.required -> "any()"
+          true -> "any() | nil"
+        end
+
       "          #{field.name}: #{type}"
     end)
     |> Enum.join(",\n")
@@ -352,18 +404,21 @@ defmodule Mix.Tasks.Gen.AstTypes do
   defp generate_field_from_map(fields) do
     fields
     |> Enum.map(fn field ->
-      value = if field.multiple do
-        "BashParser.AST.Types.extract_children(data, \"#{field.name}\")"
-      else
-        "BashParser.AST.Types.extract_field(data, \"#{field.name}\")"
-      end
+      value =
+        if field.multiple do
+          "BashParser.AST.Types.extract_children(data, \"#{field.name}\")"
+        else
+          "BashParser.AST.Types.extract_field(data, \"#{field.name}\")"
+        end
+
       "          #{field.name}: #{value}"
     end)
     |> Enum.join(",\n")
   end
 
   defp generate_type_union(nodes) do
-    type_refs = nodes
+    type_refs =
+      nodes
       |> Enum.map(fn node ->
         "        #{type_to_module_name(node["type"])}.t()"
       end)
@@ -377,7 +432,8 @@ defmodule Mix.Tasks.Gen.AstTypes do
   end
 
   defp generate_from_map_function(nodes) do
-    cases = nodes
+    cases =
+      nodes
       |> Enum.map(fn node ->
         type_name = node["type"]
         module_name = type_to_module_name(type_name)

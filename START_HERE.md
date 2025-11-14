@@ -94,14 +94,31 @@ AST manipulation and types:
 - `walker.ex` - AST traversal utilities
 
 ### `/test/`
-Comprehensive test suite (184+ tests):
+Comprehensive test suite (243 active tests, 21 skipped):
+- **Organization**: `unit/`, `integration/`, `support/`, `.deprecated/`
+- **Performance**: 4 seconds execution time (10x faster)
+- **Pattern**: Silent success, verbose failure with full diagnostics
+- **Protection**: Global 2-second timeout + CLI helper 5-second timeout
+
+**Unit Tests** (`test/unit/`):
 - `input_buffer_test.exs` (51 tests) - Continuation detection
-- `incremental_parser_pubsub_test.exs` (24 tests) - Parser events
-- `pubsub_test.exs` (26 tests) - Event bus
-- `builtins_test.exs` - Builtin command tests
-- `runtime_test.exs` - Execution engine tests
 - `error_classifier_test.exs` (14 tests) - Error classification
-- Helper: `test/test_helper.exs` - Shared test utilities
+- `pubsub_test.exs` (26 tests) - Event bus
+- `env_json_test.exs` - Environment JSON handling
+- `builtins/` - Builtin subsystem tests (doc_parser, helpers, option_parser)
+
+**Integration Tests** (`test/integration/`):
+- `cli_test.exs` (17 tests) - CLI execution with helper pattern
+- `incremental_parser_pubsub_test.exs` (24 tests) - Parser events
+- `pubsub_guarantees_test.exs` - PubSub reliability
+- `control_flow_test.exs` (18 tests, skipped) - If/for/while execution
+- `parser_runtime_integration_test.exs` (3 tests, skipped) - Parser + Runtime
+
+**Test Helpers** (`test/support/`):
+- `cli_test_helper.ex` - Silent success/verbose failure pattern
+- `execution_helper.ex` - AST test utilities
+
+**Global Config**: `test/test_helper.exs` - 2-second timeout protection
 
 ### `/native/RShell.BashParser/`
 Rust NIF implementation:
@@ -255,34 +272,77 @@ end
 
 ## Testing Strategy
 
+### Test Suite Organization
+
+**New Consolidated Structure** (12 active files):
+- **Unit Tests**: 7 files in `test/unit/` - One test per module
+- **Integration Tests**: 5 files in `test/integration/` - Cross-module tests
+- **Test Helpers**: 2 files in `test/support/` - Reusable utilities
+- **Archived Tests**: 12 files in `test/.deprecated/` - Reference only
+
 ### Test Coverage by Layer
 
-| Layer | Files | Tests | Purpose |
-|-------|-------|-------|---------|
-| **Input Buffer** | `input_buffer_test.exs` | 51 | Continuation detection |
-| **Parser NIF** | `incremental_parser_nif_test.exs` | 21 | Low-level parsing |
-| **Parser Events** | `incremental_parser_pubsub_test.exs` | 24 | Event broadcasting |
-| **PubSub** | `pubsub_test.exs` | 26 | Event bus |
-| **Error Classification** | `error_classifier_test.exs` | 14 | Error vs incomplete |
-| **Runtime** | `runtime_test.exs` | 10 | Execution engine |
-| **Builtins** | `builtins_test.exs` | many | Builtin commands |
-| **Total** | 6+ main files | **184+** | All layers |
+| Layer | Location | Tests | Purpose |
+|-------|----------|-------|---------|
+| **CLI Integration** | `integration/cli_test.exs` | 17 | CLI execution patterns |
+| **Input Buffer** | `unit/input_buffer_test.exs` | 51 | Continuation detection |
+| **Parser Events** | `integration/incremental_parser_pubsub_test.exs` | 24 | Event broadcasting |
+| **PubSub** | `unit/pubsub_test.exs` | 26 | Event bus |
+| **Error Classification** | `unit/error_classifier_test.exs` | 14 | Error vs incomplete |
+| **Builtins** | `unit/builtins/*` | many | Builtin subsystems |
+| **Total Active** | 12 files | **243** | All layers |
+| **Skipped** | 2 files | 21 | Old async model |
+
+### Test Patterns
+
+**Silent Success Pattern**:
+```elixir
+test "basic command execution" do
+  state = assert_cli_success("echo hello")
+  assert length(state.history) == 1
+end
+```
+✅ No output when passing
+
+**Verbose Failure Pattern**:
+```elixir
+# On failure, shows:
+# - Full AST structure
+# - Execution context
+# - Command history
+# - Metrics (parse time, exec time)
+# - Stdout/stderr
+```
+⚠️ Detailed diagnostics when failing
 
 ### Running Tests
 
 ```bash
-# All tests
+# All tests (243 active, completes in ~4 seconds)
 mix test
 
+# Specific test directory
+mix test test/unit/
+mix test test/integration/
+
 # Specific test file
-mix test test/input_buffer_test.exs
+mix test test/unit/input_buffer_test.exs
 
 # With verbose output
 mix test --trace
 
+# Include skipped tests
+mix test --include skip
+
 # Run only specific tests
 mix test --only tag_name
 ```
+
+### Test Performance
+
+- **Before consolidation**: 462 tests, ~40 seconds
+- **After consolidation**: 243 active tests, ~4 seconds
+- **Improvement**: 10x faster execution, 0 failures
 
 ---
 
@@ -343,7 +403,8 @@ See [`BUILD.md`](BUILD.md) for detailed instructions.
 - InputBuffer continuation detection
 - Interactive CLI with multi-line input
 - 8 builtin commands (echo, cd, export, etc.)
-- Comprehensive test suite (184+ tests)
+- **Comprehensive test suite** (243 active tests, 10x faster, 0 failures)
+- **Test infrastructure** (timeout protection, silent success/verbose failure)
 
 ### Stubbed (Not Yet Implemented) ⚠️
 

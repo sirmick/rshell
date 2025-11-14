@@ -34,6 +34,7 @@ defmodule Mix.Tasks.ParseBash do
   defp parse_args([]), do: {:error, "No script file provided"}
   defp parse_args(["-h" | _]), do: :help
   defp parse_args(["--help" | _]), do: :help
+
   defp parse_args([script_path]) do
     if File.exists?(script_path) do
       {:ok, script_path}
@@ -85,7 +86,9 @@ defmodule Mix.Tasks.ParseBash do
 
     case ast_node do
       %{type: type} = node when is_map(node) ->
-        source_info = Map.get(node, :source_info, %{start_row: 0, start_col: 0, end_row: 0, end_col: 0})
+        source_info =
+          Map.get(node, :source_info, %{start_row: 0, start_col: 0, end_row: 0, end_col: 0})
+
         %{
           start_row: start_row,
           start_col: start_col,
@@ -101,7 +104,20 @@ defmodule Mix.Tasks.ParseBash do
         Mix.shell().info(node_info)
 
         # Extract child nodes from various field types
-        field_names = [:left, :right, :operand, :body, :condition, :values, :name, :arguments, :value, :variable, :content, :variable_name]
+        field_names = [
+          :left,
+          :right,
+          :operand,
+          :body,
+          :condition,
+          :values,
+          :name,
+          :arguments,
+          :value,
+          :variable,
+          :content,
+          :variable_name
+        ]
 
         Enum.each(field_names, fn field ->
           if Map.has_key?(node, field) do
@@ -110,11 +126,20 @@ defmodule Mix.Tasks.ParseBash do
           end
         end)
 
-      %{kind: kind, text: text, start_row: start_row, start_col: start_col, end_row: end_row, end_col: end_col, children: children} ->
+      %{
+        kind: kind,
+        text: text,
+        start_row: start_row,
+        start_col: start_col,
+        end_row: end_row,
+        end_col: end_col,
+        children: children
+      } ->
         # Backwards compatibility for legacy format
         node_info = """
         #{indent_str}#{kind} [#{start_row + 1}:#{start_col + 1} - #{end_row + 1}:#{end_col + 1}] '#{String.replace(text || "", "\n", "\\n")}'
         """
+
         Mix.shell().info(node_info)
         Enum.each(children, &display_ast(&1, indent + 1))
 

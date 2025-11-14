@@ -48,7 +48,12 @@ defmodule RShell.InputBuffer do
   - `:heredoc_continuation` - Unclosed heredoc
   - `:structure_continuation` - Open control structure
   """
-  @spec continuation_type(String.t()) :: :complete | :line_continuation | :quote_continuation | :heredoc_continuation | :structure_continuation
+  @spec continuation_type(String.t()) ::
+          :complete
+          | :line_continuation
+          | :quote_continuation
+          | :heredoc_continuation
+          | :structure_continuation
   def continuation_type(input) when is_binary(input) do
     cond do
       has_line_continuation?(input) -> :line_continuation
@@ -63,9 +68,9 @@ defmodule RShell.InputBuffer do
 
   defp incomplete?(input) do
     has_line_continuation?(input) or
-    has_unclosed_quote?(input) or
-    has_unclosed_heredoc?(input) or
-    has_open_control_structure?(input)
+      has_unclosed_quote?(input) or
+      has_unclosed_heredoc?(input) or
+      has_open_control_structure?(input)
   end
 
   defp has_line_continuation?(input) do
@@ -135,12 +140,13 @@ defmodule RShell.InputBuffer do
     lines = String.split(input, "\n")
 
     # Find heredoc starts (<<MARKER or <<-MARKER)
-    heredoc_markers = Enum.flat_map(lines, fn line ->
-      case Regex.scan(~r/<<-?\s*(\w+)/, line) do
-        [] -> []
-        matches -> Enum.map(matches, fn [_, marker] -> marker end)
-      end
-    end)
+    heredoc_markers =
+      Enum.flat_map(lines, fn line ->
+        case Regex.scan(~r/<<-?\s*(\w+)/, line) do
+          [] -> []
+          matches -> Enum.map(matches, fn [_, marker] -> marker end)
+        end
+      end)
 
     # Check if all markers have matching end lines
     Enum.any?(heredoc_markers, fn marker ->
@@ -156,46 +162,58 @@ defmodule RShell.InputBuffer do
 
     # Tokenize input into words (simple split on whitespace)
     # Strip trailing semicolons/punctuation from keywords
-    words = input
-    |> String.split(~r/\s+/)
-    |> Enum.map(&String.trim/1)
-    |> Enum.map(&String.trim_trailing(&1, ";"))
-    |> Enum.reject(&(&1 == ""))
+    words =
+      input
+      |> String.split(~r/\s+/)
+      |> Enum.map(&String.trim/1)
+      |> Enum.map(&String.trim_trailing(&1, ";"))
+      |> Enum.reject(&(&1 == ""))
 
-    final_stack = Enum.reduce(words, [], fn word, stack ->
-      case word do
-        "for" -> [:for | stack]
-        "while" -> [:while | stack]
-        "until" -> [:until | stack]
-        "if" -> [:if | stack]
-        "case" -> [:case | stack]
+    final_stack =
+      Enum.reduce(words, [], fn word, stack ->
+        case word do
+          "for" ->
+            [:for | stack]
 
-        "done" ->
-          # done closes for/while/until - pop first matching one
-          case stack do
-            [:for | rest] -> rest
-            [:while | rest] -> rest
-            [:until | rest] -> rest
-            _ -> stack
-          end
+          "while" ->
+            [:while | stack]
 
-        "fi" ->
-          # fi closes if
-          case stack do
-            [:if | rest] -> rest
-            _ -> stack
-          end
+          "until" ->
+            [:until | stack]
 
-        "esac" ->
-          # esac closes case
-          case stack do
-            [:case | rest] -> rest
-            _ -> stack
-          end
+          "if" ->
+            [:if | stack]
 
-        _ -> stack
-      end
-    end)
+          "case" ->
+            [:case | stack]
+
+          "done" ->
+            # done closes for/while/until - pop first matching one
+            case stack do
+              [:for | rest] -> rest
+              [:while | rest] -> rest
+              [:until | rest] -> rest
+              _ -> stack
+            end
+
+          "fi" ->
+            # fi closes if
+            case stack do
+              [:if | rest] -> rest
+              _ -> stack
+            end
+
+          "esac" ->
+            # esac closes case
+            case stack do
+              [:case | rest] -> rest
+              _ -> stack
+            end
+
+          _ ->
+            stack
+        end
+      end)
 
     # If stack is not empty, we have open structures
     length(final_stack) > 0

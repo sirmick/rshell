@@ -39,13 +39,13 @@ defmodule RShell.Builtins.OptionParser do
   """
 
   @type option_spec :: %{
-    optional(:short) => String.t(),
-    optional(:long) => String.t(),
-    type: :boolean | :string | :integer,
-    default: any(),
-    key: atom(),
-    description: String.t()
-  }
+          optional(:short) => String.t(),
+          optional(:long) => String.t(),
+          type: :boolean | :string | :integer,
+          default: any(),
+          key: atom(),
+          description: String.t()
+        }
 
   @type parsed_result :: {:ok, %{atom() => any()}, [String.t()]} | {:error, String.t()}
 
@@ -232,20 +232,24 @@ defmodule RShell.Builtins.OptionParser do
   end
 
   defp parse_value(value, :string), do: value
+
   defp parse_value(value, :integer) do
     case Integer.parse(value) do
       {int_value, ""} -> int_value
-      _ -> value  # Fallback to string if not a valid integer
+      # Fallback to string if not a valid integer
+      _ -> value
     end
   end
+
   defp parse_value(value, :boolean), do: value in ["true", "1", "yes"]
 
   defp format_options(specs) do
     # Calculate max width for alignment
-    max_width = specs
-    |> Enum.map(&option_flags/1)
-    |> Enum.map(&String.length/1)
-    |> Enum.max(fn -> 0 end)
+    max_width =
+      specs
+      |> Enum.map(&option_flags/1)
+      |> Enum.map(&String.length/1)
+      |> Enum.max(fn -> 0 end)
 
     Enum.map(specs, fn spec ->
       flags = option_flags(spec)

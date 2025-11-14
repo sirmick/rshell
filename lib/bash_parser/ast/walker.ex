@@ -52,8 +52,10 @@ defmodule BashParser.AST.Walker do
       :continue ->
         walk_children(node, callback, :pre)
         :ok
+
       :skip_children ->
         :ok
+
       {:halt, value} ->
         {:halted, value}
     end
@@ -61,7 +63,9 @@ defmodule BashParser.AST.Walker do
 
   def walk(node, callback, :post) when is_struct(node) do
     case walk_children(node, callback, :post) do
-      {:halted, _} = halted -> halted
+      {:halted, _} = halted ->
+        halted
+
       :ok ->
         case callback.(node) do
           {:halt, value} -> {:halted, value}
@@ -81,15 +85,18 @@ defmodule BashParser.AST.Walker do
 
   The callback receives each node and accumulator, returns {new_acc, action}.
   """
-  @spec reduce(ast_node(), acc, (ast_node(), acc -> {acc, visitor_result()})) :: acc when acc: any()
+  @spec reduce(ast_node(), acc, (ast_node(), acc -> {acc, visitor_result()})) :: acc
+        when acc: any()
   def reduce(node, acc, callback, order \\ :pre)
 
   def reduce(node, acc, callback, :pre) when is_struct(node) do
     case callback.(node, acc) do
       {new_acc, :continue} ->
         reduce_children(node, new_acc, callback, :pre)
+
       {new_acc, :skip_children} ->
         new_acc
+
       {new_acc, {:halt, _}} ->
         new_acc
     end
@@ -97,6 +104,7 @@ defmodule BashParser.AST.Walker do
 
   def reduce(node, acc, callback, :post) when is_struct(node) do
     new_acc = reduce_children(node, acc, callback, :post)
+
     case callback.(node, new_acc) do
       {final_acc, _} -> final_acc
     end
@@ -124,14 +132,19 @@ defmodule BashParser.AST.Walker do
   """
   @spec walk_with_visitors(ast_node(), visitor_map(), any(), traversal_order()) :: any()
   def walk_with_visitors(node, visitors, context, order \\ :pre) do
-    reduce(node, context, fn node, ctx ->
-      node_type = get_node_type(node)
+    reduce(
+      node,
+      context,
+      fn node, ctx ->
+        node_type = get_node_type(node)
 
-      case Map.get(visitors, node_type) do
-        nil -> {ctx, :continue}
-        visitor_fn -> visitor_fn.(node, ctx)
-      end
-    end, order)
+        case Map.get(visitors, node_type) do
+          nil -> {ctx, :continue}
+          visitor_fn -> visitor_fn.(node, ctx)
+        end
+      end,
+      order
+    )
   end
 
   @doc """
@@ -155,8 +168,8 @@ defmodule BashParser.AST.Walker do
   @spec find(ast_node(), (ast_node() -> boolean())) :: ast_node() | nil
   def find(node, predicate) do
     case walk(node, fn n ->
-      if predicate.(n), do: {:halt, n}, else: :continue
-    end) do
+           if predicate.(n), do: {:halt, n}, else: :continue
+         end) do
       {:halted, found} -> found
       :ok -> nil
     end
@@ -168,6 +181,7 @@ defmodule BashParser.AST.Walker do
   @spec collect_by_type(ast_node(), String.t() | [String.t()]) :: [ast_node()]
   def collect_by_type(node, types) when is_list(types) do
     type_set = MapSet.new(types)
+
     collect(node, fn n ->
       MapSet.member?(type_set, get_node_type(n))
     end)
@@ -196,14 +210,15 @@ defmodule BashParser.AST.Walker do
   Get statistics about the AST structure.
   """
   @spec statistics(ast_node()) :: %{
-    total_nodes: non_neg_integer(),
-    node_types: %{String.t() => non_neg_integer()},
-    max_depth: non_neg_integer()
-  }
+          total_nodes: non_neg_integer(),
+          node_types: %{String.t() => non_neg_integer()},
+          max_depth: non_neg_integer()
+        }
   def statistics(node) do
-    stats = reduce(node, %{total_nodes: 0, node_types: %{}, depth: 0, max_depth: 0},
-      fn n, acc ->
+    stats =
+      reduce(node, %{total_nodes: 0, node_types: %{}, depth: 0, max_depth: 0}, fn n, acc ->
         node_type = get_node_type(n)
+
         {
           acc
           |> Map.update!(:total_nodes, &(&1 + 1))
@@ -212,8 +227,7 @@ defmodule BashParser.AST.Walker do
           end),
           :continue
         }
-      end
-    )
+      end)
 
     Map.delete(stats, :depth)
   end
@@ -279,11 +293,14 @@ defmodule BashParser.AST.Walker do
             children = get_all_children(node)
             new_queue = Enum.reduce(children, rest, fn child, q -> :queue.in(child, q) end)
             walk_breadth_loop(new_queue, callback)
+
           :skip_children ->
             walk_breadth_loop(rest, callback)
+
           {:halt, value} ->
             {:halted, value}
         end
+
       {:empty, _} ->
         :ok
     end
@@ -298,9 +315,11 @@ defmodule BashParser.AST.Walker do
   end
 
   defp get_children_from_value(value) when is_struct(value), do: [value]
+
   defp get_children_from_value(values) when is_list(values) do
     Enum.filter(values, &is_struct/1)
   end
+
   defp get_children_from_value(_), do: []
 
   defp transform_children(node, transformer) when is_struct(node) do
@@ -330,6 +349,7 @@ defmodule BashParser.AST.Walker do
 
   defp get_node_type(node) when is_struct(node) do
     module = node.__struct__
+
     module
     |> Module.split()
     |> List.last()
