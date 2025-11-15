@@ -268,6 +268,19 @@ end
 6. **[`PIPELINE_DESIGN.md`](PIPELINE_DESIGN.md)** - Pipeline execution design
 7. **[`RUNTIME_DESIGN.md`](RUNTIME_DESIGN.md)** - Runtime execution model
 
+### Testing Documentation
+
+8. **[`TEST_GUIDE.md`](TEST_GUIDE.md)** - Comprehensive testing guide
+   - Test organization (unit vs integration)
+   - Preferred testing patterns (CLIHelper)
+   - Step-by-step guide for writing new tests
+   - Best practices and troubleshooting
+
+9. **[`UNIT_TESTS.md`](UNIT_TESTS.md)** - Detailed unit test coverage
+   - Complete documentation of all 7 unit test files
+   - Function-by-function test coverage breakdown
+   - Test patterns and statistics
+
 ---
 
 ## Testing Strategy
@@ -456,8 +469,9 @@ mix gen.ast_types
 
 1. Read [`ARCHITECTURE_DESIGN.md`](ARCHITECTURE_DESIGN.md) for system overview
 2. Check [`BUILD.md`](BUILD.md) for build issues
-3. Review test files for usage examples
-4. Consult design documents for specific subsystems
+3. Read [`TEST_GUIDE.md`](TEST_GUIDE.md) for testing best practices
+4. Review test files for usage examples
+5. Consult design documents for specific subsystems
 
 ---
 
