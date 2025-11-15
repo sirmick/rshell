@@ -1,4 +1,4 @@
-# RShell Builtin Commands Design
+io# RShell Builtin Commands Design
 
 **Last Updated**: 2025-11-12
 
@@ -18,7 +18,8 @@ Builtin commands are functions implemented in Elixir that execute within the run
 - ✅ Docstring-based options parsing and help text generation
 - ✅ Compile-time option parser generation from @doc attributes
 - ✅ Stream-only I/O design with JSON-based conversion
-- ✅ **9 implemented builtins**: echo, true, false, pwd, cd, export, printenv, man, env, test
+- ✅ **Module-based namespace system** for organizing builtins
+- ✅ **16 implemented builtins**: echo, true, false, pwd, cd, man, env, test, inspect, math:add, math:sub, math:mul, math:div, math:eq, math:neq, math:mod, math:rem
 
 ---
 
@@ -209,6 +210,140 @@ end
 ```
 
 **Note**: Option specs and help text are parsed at runtime from compiled docs, not stored as module attributes. This keeps the compiled beam file smaller.
+
+---
+
+## Namespace System
+
+RShell implements a **module-based namespace system** for organizing builtins. This keeps the codebase manageable and provides clear separation of concerns.
+
+### Architecture
+
+**Main Module**: `RShell.Builtins` - Core builtins and namespace routing
+**Namespace Modules**: `RShell.Builtins.*` - Domain-specific builtins
+
+```
+RShell.Builtins           # Core: echo, cd, pwd, env, test, inspect, etc.
+  ├── Math                # math:add, math:sub, math:mul, math:div, math:eq, math:neq, math:mod, math:rem
+  ├── Str (future)        # str:upper, str:lower, str:trim, etc.
+  └── Json (future)       # json:parse, json:format, etc.
+```
+
+### Usage
+
+**Namespaced commands** use colon (`:`) separator:
+
+```bash
+math:add 5 3              # Addition
+math:sub 10 3             # Subtraction
+math:mul 2 5              # Multiplication
+math:div 10 2             # Division
+math:eq 5 5               # Equality comparison (returns 1 or 0)
+math:neq 5 3              # Inequality comparison (returns 1 or 0)
+math:mod 10 3             # Modulo (returns 1)
+math:rem 10 3             # Remainder (returns 1)
+
+# Future namespaces:
+str:upper "hello"         # String operations
+json:parse '{"x":1}'      # JSON operations
+```
+
+### Implementation
+
+**1. Namespace Module Structure:**
+
+Each namespace is a separate module using the Helpers with `namespace: true`:
+
+```elixir
+defmodule RShell.Builtins.Math do
+  @moduledoc "Mathematical operations namespace"
+  
+  use RShell.Builtins.Helpers, namespace: true
+  
+  @namespace "math"
+  
+  def namespace, do: @namespace
+  
+  @shell_add_opts :argv
+  def shell_add(argv, _stdin, context) do
+    # Implementation
+  end
+end
+```
+
+**2. Routing in Main Module:**
+
+`RShell.Builtins.execute/4` routes namespaced commands:
+
+```elixir
+def execute(name, argv, stdin, context) do
+  case String.split(name, ":", parts: 2) do
+    [namespace, command] ->
+      # Route to RShell.Builtins.Math.shell_add/3
+      execute_namespaced(namespace, command, argv, stdin, context)
+    
+    [_single_name] ->
+      # Execute from RShell.Builtins.shell_*/3
+      execute_local(name, argv, stdin, context)
+  end
+end
+```
+
+**3. Public Helper Functions:**
+
+Namespace modules use `namespace: true` option, which generates **public** helper functions:
+
+```elixir
+# In namespace modules:
+def __builtin_options__(name), do: [...]
+def __builtin_help__(name), do: "..."
+def __builtin_mode__(name), do: :argv | :parsed
+```
+
+This allows `RShell.Builtins` to query mode and options from namespace modules.
+
+### Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Modularity** | Each namespace is self-contained |
+| **Scalability** | Add namespaces without bloating main module |
+| **Organization** | Clear separation by domain |
+| **Discoverability** | `math:` prefix makes purpose obvious |
+| **No Conflicts** | `add` in math namespace vs `add` in list namespace |
+
+### Adding a New Namespace
+
+1. Create module in `lib/r_shell/builtins/`:
+
+```elixir
+defmodule RShell.Builtins.Str do
+  use RShell.Builtins.Helpers, namespace: true
+  
+  @namespace "str"
+  def namespace, do: @namespace
+  
+  @shell_upper_opts :argv
+  def shell_upper(argv, _stdin, context) do
+    # Implementation
+  end
+end
+```
+
+2. That's it! Automatic discovery and routing.
+
+### Testing Namespaced Builtins
+
+```elixir
+# test/unit/builtins/str_test.exs
+test "str:upper converts to uppercase" do
+  {_ctx, stdout, _stderr, exit_code} =
+    Builtins.execute("str:upper", ["hello"], "", @empty_context)
+  
+  assert Enum.to_list(stdout) == ["HELLO"]
+  assert exit_code == 0
+end
+```
 
 ---
 
@@ -593,23 +728,7 @@ shell_echo(["-n", "-e", "test\\n"], "", %{})
 **Options**: `-L` (logical, default), `-P` (physical)
 **Modifies**: `context.cwd`
 
-### 6. Export (`shell_export`)
-
-**Status**: ✅ Fully implemented
-**Purpose**: Set environment variables
-**Mode**: `:parsed`
-**Options**: `-n` (unset)
-**Modifies**: `context.env`
-
-### 7. Printenv (`shell_printenv`)
-
-**Status**: ✅ Fully implemented
-**Purpose**: Print environment variables
-**Mode**: `:parsed`
-**Options**: `-0` (null separator)
-**Reads**: `context.env`
-
-### 8. Man (`shell_man`)
+### 6. Man (`shell_man`)
 
 **Status**: ✅ Fully implemented
 **Purpose**: Display help for builtins
@@ -617,7 +736,7 @@ shell_echo(["-n", "-e", "test\\n"], "", %{})
 **Options**: `-a` (list all)
 **Uses**: Compile-time generated help text from docstrings
 
-### 9. Env (`shell_env`)
+### 7. Env (`shell_env`)
 
 **Status**: ✅ Fully implemented (2025-11-13)
 **Purpose**: Unified environment variable management with rich type support
@@ -641,7 +760,17 @@ def shell_env(argv, _stdin, context) do
 end
 ```
 
-### 10. Test (`shell_test`)
+### 8. Inspect (`shell_inspect`)
+
+**Status**: ✅ Fully implemented
+**Purpose**: Inspect variable type and value
+**Mode**: `:argv`
+**Features**:
+- Display Elixir type of variables
+- Show IO.inspect representation
+- Support for all native types (maps, lists, numbers, etc.)
+
+### 9. Test (`shell_test`)
 
 **Status**: ✅ Fully implemented (2025-11-13)
 **Purpose**: Evaluate conditional expressions
@@ -664,6 +793,185 @@ test 5 -gt 3              # Numeric comparison
 test $NAME = "alice"      # String comparison
 test $CONFIG["port"] -eq 5432  # Map access
 ```
+
+### 10. Math:Add (`shell_add` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Add numbers with native type output
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Accepts 1 or more numbers
+- Automatic type conversion (strings, booleans, native numbers)
+- Returns sum as native integer or float
+- Outputs to stdout stream as native type (not string!)
+
+**Examples**:
+```bash
+math:add 5 3              # Returns 8
+math:add 10 20 30         # Returns 60
+math:add 3.14 2.86        # Returns 6.0
+env X=5
+math:add $X 10            # Returns 15
+```
+
+### 11. Math:Sub (`shell_sub` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Subtract numbers from left to right
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Single argument: returns negation
+- Multiple arguments: subtracts left to right
+- Returns result as native integer or float
+
+**Examples**:
+```bash
+math:sub 10 3             # Returns 7
+math:sub 100 20 5         # Returns 75
+math:sub 5                # Returns -5
+```
+
+### 12. Math:Mul (`shell_mul` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Multiply numbers
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Accepts 1 or more numbers
+- Multiplies all arguments
+- Returns product as native integer or float
+
+**Examples**:
+```bash
+math:mul 5 3              # Returns 15
+math:mul 2 3 4            # Returns 24
+math:mul 3.5 2            # Returns 7.0
+```
+
+### 13. Math:Div (`shell_div` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Divide numbers from left to right
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Requires at least 2 arguments
+- Divides left to right
+- Always returns float
+- Division by zero error handling
+
+**Examples**:
+```bash
+math:div 10 2             # Returns 5.0
+math:div 100 5 2          # Returns 10.0
+math:div 7 2              # Returns 3.5
+math:div 10 0             # Error: division by zero
+```
+### 14. Math:Eq (`shell_eq` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Test numeric equality and output boolean value
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Requires exactly 2 arguments
+- Compares two numbers for equality
+- Returns 1 (true) if equal, 0 (false) if not equal
+- Always exits with code 0 (success)
+- Automatic type conversion (strings, booleans, native numbers)
+
+**Examples**:
+```bash
+math:eq 5 5               # Returns 1
+math:eq 10 3              # Returns 0
+env X=42
+math:eq $X 42             # Returns 1
+```
+
+**Note**: This builtin outputs to stdout (1 or 0), not an exit code. For use in if statements, use the test builtin: `if test $X -eq 5; then ...`
+
+### 15. Math:Neq (`shell_neq` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Test numeric inequality and output boolean value
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Requires exactly 2 arguments
+- Compares two numbers for inequality
+- Returns 1 (true) if not equal, 0 (false) if equal
+- Always exits with code 0 (success)
+- Automatic type conversion (strings, booleans, native numbers)
+
+**Examples**:
+```bash
+math:neq 5 3              # Returns 1
+math:neq 10 10            # Returns 0
+env X=42
+math:neq $X 100           # Returns 1
+```
+
+**Note**: This builtin outputs to stdout (1 or 0), not an exit code. For use in if statements, use the test builtin: `if test $X -ne 5; then ...`
+
+### 16. Math:Mod (`shell_mod` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Compute modulo of two integers
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Requires exactly 2 arguments
+- Computes modulo (result has sign of divisor)
+- Converts floats to integers (truncates)
+- Returns result as native integer
+- Division by zero error handling
+
+**Examples**:
+```bash
+math:mod 10 3             # Returns 1
+math:mod -10 3            # Returns 2 (positive, sign of divisor)
+math:mod 10 -3            # Returns -2 (negative, sign of divisor)
+math:mod -10 -3           # Returns -1 (negative, sign of divisor)
+```
+
+**Mathematical Behavior**: `Integer.mod(dividend, divisor)` - result has same sign as divisor
+
+### 17. Math:Rem (`shell_rem` in `RShell.Builtins.Math`)
+
+**Status**: ✅ Fully implemented (2025-11-15)
+**Purpose**: Compute remainder of integer division
+**Mode**: `:argv`
+**Namespace**: `math`
+
+**Features**:
+- Requires exactly 2 arguments
+- Computes remainder (result has sign of dividend)
+- Converts floats to integers (truncates)
+- Returns result as native integer
+- Division by zero error handling
+
+**Examples**:
+```bash
+math:rem 10 3             # Returns 1
+math:rem -10 3            # Returns -1 (negative, sign of dividend)
+math:rem 10 -3            # Returns 1 (positive, sign of dividend)
+math:rem -10 -3           # Returns -1 (negative, sign of dividend)
+```
+
+**Mathematical Behavior**: `rem(dividend, divisor)` - result has same sign as dividend
+
+**Note**: The difference between `mod` and `rem` is in how they handle negative numbers. Use `mod` for mathematical modulo (always non-negative for positive divisor), use `rem` for remainder after truncating division.
+
 
 ---
 

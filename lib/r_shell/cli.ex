@@ -27,8 +27,10 @@ defmodule RShell.CLI do
   """
 
   alias RShell.{IncrementalParser, Runtime, PubSub, InputBuffer}
-  alias RShell.CLI.{Executor, State}
+  alias RShell.CLI.{Executor, State, InteractiveState}
+  alias RShell.Builtins.Utils
   alias BashParser.AST.Types
+  alias BashParser.AST.Utils, as: ASTUtils
 
   @commands %{
     ".reset" => "Clear parser state and start fresh",
@@ -358,39 +360,19 @@ defmodule RShell.CLI do
     IO.puts("Type bash commands. Built-in commands start with '.'")
     IO.puts("Type .help for available commands\n")
 
-    # Generate session ID
-    session_id = "cli_#{System.unique_integer([:positive, :monotonic])}"
+    # Create CLI state (includes parser, runtime, session)
+    {:ok, cli_state} = State.new()
 
-    # Start the parser GenServer with session ID
-    {:ok, parser_pid} =
-      IncrementalParser.start_link(
-        name: :rshell_cli_parser,
-        session_id: session_id,
-        broadcast: true
-      )
-
-    # Start the runtime GenServer (no auto-execute - now synchronous)
-    {:ok, runtime_pid} = Runtime.start_link(session_id: session_id)
-
-    IO.puts("✅ Parser started (PID: #{inspect(parser_pid)})")
-    IO.puts("✅ Runtime started (PID: #{inspect(runtime_pid)})")
-    IO.puts("📡 Session ID: #{session_id}\n")
+    IO.puts("✅ Parser started (PID: #{inspect(cli_state.parser_pid)})")
+    IO.puts("✅ Runtime started (PID: #{inspect(cli_state.runtime_pid)})")
+    IO.puts("📡 Session ID: #{cli_state.session_id}\n")
 
     # Subscribe to parser and runtime events
-    PubSub.subscribe(session_id, [:ast, :executable, :runtime, :output])
+    PubSub.subscribe(cli_state.session_id, [:ast, :executable, :runtime, :output])
 
-    # Start the input loop with state tracking
-    # last_incremental tracks the incremental changes from the last parse
-    # last_result tracks the last execution result for debugging
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      _previous_children = [],
-      _last_incremental = nil,
-      _input_buffer = "",
-      _last_result = nil
-    )
+    # Create interactive state and start loop
+    istate = InteractiveState.new(cli_state)
+    loop(istate)
   end
 
   ## Mode 3: Line-by-Line File Processing
@@ -448,12 +430,12 @@ defmodule RShell.CLI do
   # Helper to execute AST nodes synchronously
   defp execute_ast_nodes(%{children: children}, runtime) when is_list(children) do
     Enum.each(children, fn node ->
-      if is_executable_node?(node) do
+      if ASTUtils.executable?(node) do
         case Runtime.execute_node(runtime, node) do
           {:ok, context} ->
             # Display output
-            stdout = format_output(context.last_output.stdout)
-            stderr = format_output(context.last_output.stderr)
+            stdout = Utils.format_output(context.last_output.stdout)
+            stderr = Utils.format_output(context.last_output.stderr)
             if stdout != "", do: IO.write(stdout)
             if stderr != "", do: IO.write(:stderr, stderr)
 
@@ -466,20 +448,6 @@ defmodule RShell.CLI do
 
   defp execute_ast_nodes(_, _), do: :ok
 
-  # Check if node is executable (same logic as elsewhere)
-  defp is_executable_node?(node) do
-    case node do
-      %Types.Command{} -> true
-      %Types.VariableAssignment{} -> true
-      %Types.IfStatement{} -> true
-      %Types.ForStatement{} -> true
-      %Types.WhileStatement{} -> true
-      _ -> false
-    end
-  end
-
-  # wait_for_execution/0 removed - no longer needed with synchronous execution
-
   ## Mode 4: Parse-Only
 
   defp execute_parse_only(file_path) do
@@ -489,7 +457,7 @@ defmodule RShell.CLI do
           {:ok, ast_map} ->
             typed_ast = Types.from_map(ast_map)
             IO.puts("✅ Parse successful!\n")
-            print_typed_ast(typed_ast, 0)
+            ASTUtils.print(typed_ast)
 
           {:error, reason} ->
             IO.puts(:stderr, "❌ Parse error: #{inspect(reason)}")
@@ -508,8 +476,8 @@ defmodule RShell.CLI do
     receive do
       {:execution_result, %{status: :success, stdout: stdout, stderr: stderr}} ->
         # Convert native term lists to strings for display
-        stdout_str = format_output(stdout)
-        stderr_str = format_output(stderr)
+        stdout_str = Utils.format_output(stdout)
+        stderr_str = Utils.format_output(stderr)
 
         if stdout_str != "", do: IO.write(stdout_str)
         if stderr_str != "", do: IO.write(:stderr, stderr_str)
@@ -523,19 +491,11 @@ defmodule RShell.CLI do
     end
   end
 
-  defp loop(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         previous_children,
-         last_incremental,
-         input_buffer,
-         last_result \\ nil
-       ) do
+  defp loop(%InteractiveState{} = istate) do
     # Determine prompt based on input buffer state
-    prompt = get_prompt(input_buffer)
+    prompt = get_prompt(istate.input_buffer)
 
-    # Read input with a short timeout to check for PubSub messages
+    # Read input
     case IO.gets(prompt) do
       :eof ->
         IO.puts("\n👋 Goodbye!")
@@ -543,29 +503,11 @@ defmodule RShell.CLI do
 
       {:error, reason} ->
         IO.puts("❌ Error reading input: #{inspect(reason)}")
-
-        loop(
-          parser_pid,
-          runtime_pid,
-          session_id,
-          previous_children,
-          last_incremental,
-          input_buffer
-        )
+        loop(istate)
 
       line ->
         line = String.trim_trailing(line, "\n")
-
-        handle_input(
-          parser_pid,
-          runtime_pid,
-          session_id,
-          line,
-          previous_children,
-          last_incremental,
-          input_buffer,
-          last_result
-        )
+        handle_input(istate, line)
     end
   end
 
@@ -588,40 +530,13 @@ defmodule RShell.CLI do
   defp continuation_prompt(:heredoc_continuation), do: "  doc> "
   defp continuation_prompt(:structure_continuation), do: "     > "
 
-  defp handle_input(
-         _parser_pid,
-         _runtime_pid,
-         _session_id,
-         ".quit",
-         _prev_children,
-         _last_incremental,
-         _input_buffer,
-         _last_result
-       ),
-       do: IO.puts("\n👋 Goodbye!")
+  defp handle_input(%InteractiveState{} = _istate, ".quit"),
+    do: IO.puts("\n👋 Goodbye!")
 
-  defp handle_input(
-         _parser_pid,
-         _runtime_pid,
-         _session_id,
-         ".exit",
-         _prev_children,
-         _last_incremental,
-         _input_buffer,
-         _last_result
-       ),
-       do: IO.puts("\n👋 Goodbye!")
+  defp handle_input(%InteractiveState{} = _istate, ".exit"),
+    do: IO.puts("\n👋 Goodbye!")
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".help",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
+  defp handle_input(%InteractiveState{} = istate, ".help") do
     IO.puts("\n📖 Available Commands:\n")
 
     Enum.each(@commands, fn {cmd, desc} ->
@@ -631,27 +546,10 @@ defmodule RShell.CLI do
     IO.puts("\n💡 For help on builtins, use: .help <builtin>")
     IO.puts("   Example: .help echo\n")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".help " <> builtin_name,
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
+  defp handle_input(%InteractiveState{} = istate, ".help " <> builtin_name) do
     builtin = String.trim(builtin_name)
 
     if RShell.Builtins.is_builtin?(builtin) do
@@ -662,50 +560,24 @@ defmodule RShell.CLI do
       IO.puts("💡 Use '.help' to see available commands\n")
     end
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".reset",
-         _prev_children,
-         _last_incremental,
-         _input_buffer,
-         _last_result
-       ) do
-    :ok = IncrementalParser.reset(parser_pid)
+  defp handle_input(%InteractiveState{} = istate, ".reset") do
+    :ok = IncrementalParser.reset(istate.parser_pid)
     IO.puts("🔄 Parser state reset\n")
-    # Also clear input buffer, incremental state, and last result on reset
-    loop(parser_pid, runtime_pid, session_id, [], nil, "", nil)
+    # Reset interactive state
+    loop(InteractiveState.reset(istate))
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".status",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
-    buffer_size = IncrementalParser.get_buffer_size(parser_pid)
-    has_errors = IncrementalParser.has_errors?(parser_pid)
-    input = IncrementalParser.get_accumulated_input(parser_pid)
-    context = Runtime.get_context(runtime_pid)
+  defp handle_input(%InteractiveState{} = istate, ".status") do
+    buffer_size = IncrementalParser.get_buffer_size(istate.parser_pid)
+    has_errors = IncrementalParser.has_errors?(istate.parser_pid)
+    input = IncrementalParser.get_accumulated_input(istate.parser_pid)
+    context = Runtime.get_context(istate.runtime_pid)
 
     IO.puts("\n📊 Status:")
-    IO.puts("  Session ID: #{session_id}")
+    IO.puts("  Session ID: #{istate.session_id}")
     IO.puts("  Buffer size: #{buffer_size} bytes")
     IO.puts("  Has errors: #{has_errors}")
     IO.puts("  Lines accumulated: #{length(String.split(input, "\n")) - 1}")
@@ -713,13 +585,13 @@ defmodule RShell.CLI do
     IO.puts("  Exit code: #{context.exit_code}")
 
     # Show input buffer state
-    if input_buffer != "" do
+    if istate.input_buffer != "" do
       IO.puts("\n📝 Input Buffer (not yet sent to parser):")
       IO.puts(String.duplicate("-", 50))
-      IO.puts(input_buffer)
+      IO.puts(istate.input_buffer)
       IO.puts(String.duplicate("-", 50))
-      IO.puts("  Ready to parse: #{InputBuffer.ready_to_parse?(input_buffer)}")
-      IO.puts("  Continuation type: #{InputBuffer.continuation_type(input_buffer)}")
+      IO.puts("  Ready to parse: #{InputBuffer.ready_to_parse?(istate.input_buffer)}")
+      IO.puts("  Continuation type: #{InputBuffer.continuation_type(istate.input_buffer)}")
     end
 
     if buffer_size > 0 do
@@ -731,32 +603,15 @@ defmodule RShell.CLI do
 
     IO.puts("")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".ast",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
-    case IncrementalParser.get_current_ast(parser_pid) do
+  defp handle_input(%InteractiveState{} = istate, ".ast") do
+    case IncrementalParser.get_current_ast(istate.parser_pid) do
       {:ok, ast} ->
         IO.puts("\n🌳 Full Accumulated AST:")
         IO.puts(String.duplicate("-", 50))
-        print_typed_ast(ast, 0)
+        ASTUtils.print(ast)
         IO.puts(String.duplicate("-", 50))
 
       {:error, %{"reason" => "no_tree"}} ->
@@ -768,28 +623,11 @@ defmodule RShell.CLI do
 
     IO.puts("")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".last",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
-    case last_incremental do
+  defp handle_input(%InteractiveState{} = istate, ".last") do
+    case istate.last_ast_metadata do
       nil ->
         IO.puts("\n⚠️  No incremental changes yet")
 
@@ -798,7 +636,7 @@ defmodule RShell.CLI do
         IO.puts(String.duplicate("-", 50))
 
         Enum.each(changed_nodes, fn node ->
-          print_typed_ast(node, 0)
+          ASTUtils.print(node)
         end)
 
         IO.puts(String.duplicate("-", 50))
@@ -809,76 +647,49 @@ defmodule RShell.CLI do
 
     IO.puts("")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
   # New commands for debugging execution results
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".result",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
-    case last_result do
+  defp handle_input(%InteractiveState{} = istate, ".result") do
+    case InteractiveState.get_last_record(istate) do
       nil ->
         IO.puts("\n⚠️  No execution result yet")
 
-      result ->
+      record ->
         IO.puts("\n📊 Last Execution Result:")
         IO.puts(String.duplicate("-", 50))
-        IO.puts("Status:     #{result.status}")
-        IO.puts("Node Type:  #{result.node_type}")
-        if result[:node_text], do: IO.puts("Command:    #{result.node_text}")
-        if result[:exit_code], do: IO.puts("Exit Code:  #{result.exit_code}")
-        if result[:duration_us], do: IO.puts("Duration:   #{result.duration_us}μs")
-        if result[:error], do: IO.puts("Error:      #{result.error}")
-        if result[:reason], do: IO.puts("Reason:     #{result.reason}")
-        IO.puts("\nStdout: #{inspect(result[:stdout] || "")}")
-        IO.puts("Stderr: #{inspect(result[:stderr] || "")}")
+        IO.puts("Fragment:      #{String.trim(record.fragment)}")
+        IO.puts("Exit Code:     #{record.exit_code}")
+        IO.puts("Parse Time:    #{record.parse_metrics.duration_us}μs")
+        IO.puts("Exec Time:     #{record.exec_metrics.duration_us}μs")
+        IO.puts("Memory Delta:  #{record.exec_metrics.memory_delta} bytes")
+
+        if record.execution_result do
+          IO.puts("\nExecution Details:")
+          IO.puts("  Status:      #{record.execution_result.status}")
+          IO.puts("  Node Type:   #{record.execution_result.node_type}")
+          if record.execution_result[:node_text], do: IO.puts("  Command:     #{record.execution_result.node_text}")
+          if record.execution_result[:error], do: IO.puts("  Error:       #{record.execution_result.error}")
+        end
+
+        IO.puts("\nStdout: #{inspect(record.stdout)}")
+        IO.puts("Stderr: #{inspect(record.stderr)}")
         IO.puts(String.duplicate("-", 50))
     end
 
     IO.puts("")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".stdout",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
-    case last_result do
+  defp handle_input(%InteractiveState{} = istate, ".stdout") do
+    case InteractiveState.get_last_record(istate) do
       nil ->
         IO.puts("\n⚠️  No execution result yet")
 
-      result ->
-        stdout = result[:stdout] || ""
+      record ->
+        stdout = Utils.format_output(record.stdout)
 
         if stdout == "" do
           IO.puts("\n📭 No stdout from last execution")
@@ -892,33 +703,16 @@ defmodule RShell.CLI do
 
     IO.puts("")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         ".stderr",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
-    case last_result do
+  defp handle_input(%InteractiveState{} = istate, ".stderr") do
+    case InteractiveState.get_last_record(istate) do
       nil ->
         IO.puts("\n⚠️  No execution result yet")
 
-      result ->
-        stderr = result[:stderr] || ""
+      record ->
+        stderr = Utils.format_output(record.stderr)
 
         if stderr == "" do
           IO.puts("\n📭 No stderr from last execution")
@@ -932,351 +726,108 @@ defmodule RShell.CLI do
 
     IO.puts("")
 
-    loop(
-      parser_pid,
-      runtime_pid,
-      session_id,
-      prev_children,
-      last_incremental,
-      input_buffer,
-      last_result
-    )
+    loop(istate)
   end
 
   # Handle empty input - just continue accumulating if buffer is not empty
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         "",
-         prev_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
+  defp handle_input(%InteractiveState{} = istate, "") do
     # If buffer is empty, just loop with empty buffer
     # If buffer has content, add newline and check if ready
-    if input_buffer == "" do
-      loop(
-        parser_pid,
-        runtime_pid,
-        session_id,
-        prev_children,
-        last_incremental,
-        input_buffer,
-        last_result
-      )
+    if istate.input_buffer == "" do
+      loop(istate)
     else
       # Add newline to buffer
-      new_buffer = input_buffer <> "\n"
+      new_buffer = istate.input_buffer <> "\n"
 
       # Check if ready to parse
       if InputBuffer.ready_to_parse?(new_buffer) do
-        # Send complete fragment to parser
-        send_to_parser(
-          parser_pid,
-          runtime_pid,
-          session_id,
-          new_buffer,
-          prev_children,
-          last_incremental,
-          last_result
-        )
+        # Execute fragment using Executor
+        execute_and_loop(%{istate | input_buffer: new_buffer})
       else
         # Continue accumulating
-        loop(
-          parser_pid,
-          runtime_pid,
-          session_id,
-          prev_children,
-          last_incremental,
-          new_buffer,
-          last_result
-        )
+        loop(%{istate | input_buffer: new_buffer})
       end
     end
   end
 
   # Handle regular input - accumulate and check if ready to parse
-  defp handle_input(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         line,
-         previous_children,
-         last_incremental,
-         input_buffer,
-         last_result
-       ) do
+  defp handle_input(%InteractiveState{} = istate, line) do
     # Add line to buffer with newline
-    new_buffer = input_buffer <> line <> "\n"
+    new_buffer = istate.input_buffer <> line <> "\n"
 
     # Check if buffer is ready to parse
     if InputBuffer.ready_to_parse?(new_buffer) do
-      # Send complete fragment to parser
-      send_to_parser(
-        parser_pid,
-        runtime_pid,
-        session_id,
-        new_buffer,
-        previous_children,
-        last_incremental,
-        last_result
-      )
+      # Execute fragment using Executor
+      execute_and_loop(%{istate | input_buffer: new_buffer})
     else
       # Not ready yet - continue accumulating
-      loop(
-        parser_pid,
-        runtime_pid,
-        session_id,
-        previous_children,
-        last_incremental,
-        new_buffer,
-        last_result
-      )
+      loop(%{istate | input_buffer: new_buffer})
     end
   end
 
-  # Helper function to send complete fragment to parser and execute synchronously
-  defp send_to_parser(
-         parser_pid,
-         runtime_pid,
-         session_id,
-         fragment,
-         previous_children,
-         last_incremental,
-         _last_result
-       ) do
-    # Submit complete fragment to parser (will trigger PubSub events)
-    case IncrementalParser.append_fragment(parser_pid, fragment) do
-      {:ok, ast} ->
-        # Collect parser events (AST updates, etc.)
-        {new_children, new_incremental} =
-          handle_parser_events(session_id, previous_children, 100, last_incremental)
+  # Execute fragment using Executor and update interactive state
+  defp execute_and_loop(%InteractiveState{} = istate) do
+    # Use Executor to parse, execute, and create ExecutionRecord
+    case Executor.execute_fragment(istate.input_buffer, istate.cli_state) do
+      {:ok, new_cli_state} ->
+        # Drain any remaining PubSub events to prevent them from being processed later
+        drain_pubsub_events(istate.session_id)
 
-        # Execute nodes synchronously
-        execution_result = execute_interactive_nodes(ast, runtime_pid)
+        # Get the last execution record
+        last_record = List.last(new_cli_state.history)
 
-        # Display output if any
-        display_execution_result(execution_result)
+        # Display output
+        if last_record do
+          stdout_str = Utils.format_output(last_record.stdout)
+          stderr_str = Utils.format_output(last_record.stderr)
 
-        # Clear input buffer after successful parse
-        loop(
-          parser_pid,
-          runtime_pid,
-          session_id,
-          new_children,
-          new_incremental,
-          "",
-          execution_result
-        )
+          if stdout_str != "", do: IO.write(stdout_str)
+          if stderr_str != "", do: IO.write(:stderr, stderr_str)
 
-      {:error, %{"reason" => "buffer_overflow"} = error} ->
-        IO.puts("\n❌ Buffer overflow!")
-        IO.puts("   Current: #{error["current_size"]} bytes")
-        IO.puts("   Fragment: #{error["fragment_size"]} bytes")
-        IO.puts("   Max: #{error["max_size"]} bytes")
-        IO.puts("   Use .reset to clear buffer\n")
-        # Keep input buffer on error
-        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, "", nil)
+          # Show exit code if non-zero
+          if last_record.exit_code != 0 do
+            IO.puts("⚠️  Exit code: #{last_record.exit_code}")
+          end
+        end
+
+        # Update state with new cli_state and clear input buffer
+        # Wrap incremental_ast in expected format for .last command
+        last_ast_metadata = if last_record && last_record.incremental_ast do
+          %{changed_nodes: last_record.incremental_ast}
+        else
+          nil
+        end
+
+        new_istate = %{istate |
+          cli_state: new_cli_state,
+          input_buffer: "",
+          last_ast_metadata: last_ast_metadata,
+          previous_children: last_record && extract_children(last_record.full_ast)
+        }
+        loop(new_istate)
 
       {:error, reason} ->
-        IO.puts("\n❌ Parse error: #{inspect(reason)}\n")
+        IO.puts("\n❌ Execution error: #{inspect(reason)}\n")
         # Clear input buffer on error
-        loop(parser_pid, runtime_pid, session_id, previous_children, last_incremental, "", nil)
+        loop(%{istate | input_buffer: ""})
     end
   end
 
-  # Handle PubSub events from the parser only (no execution events)
-  # Returns {children, incremental_metadata} tuple
-  defp handle_parser_events(session_id, previous_children, timeout, last_incremental) do
+  # Drain any remaining PubSub events to prevent stale messages
+  defp drain_pubsub_events(session_id) do
     receive do
-      {:ast_incremental, metadata} ->
-        # Get current children from typed struct
-        current_children =
-          case metadata.full_ast do
-            %{children: children} when is_list(children) -> children
-            _ -> []
-          end
-
-        # Store incremental metadata for .last command
-        # Continue collecting events
-        handle_parser_events(session_id, current_children, timeout, metadata)
-
-      {:parsing_failed, error} ->
-        # Parser failed - display error and return
-        IO.puts("\n❌ Parsing failed: #{inspect(error)}\n")
-        {previous_children, last_incremental}
-
-      {:parsing_crashed, error} ->
-        # Parser crashed unexpectedly - display error and return
-        IO.puts("\n❌ Parser crashed: #{error.reason}")
-
-        if error[:exception] do
-          IO.puts("   #{error.exception}\n")
-        end
-
-        {previous_children, last_incremental}
-
-      {:executable_node, _typed_node, _count} ->
-        # Executable node detected - just note it and continue
-        # (execution happens synchronously now)
-        handle_parser_events(session_id, previous_children, timeout, last_incremental)
-
-      {:variable_set, info} ->
-        # Variable was set
-        IO.puts("✓ #{info.name}=#{info.value}")
-        handle_parser_events(session_id, previous_children, timeout, last_incremental)
+      {:ast_incremental, _} -> drain_pubsub_events(session_id)
+      {:executable_node, _, _} -> drain_pubsub_events(session_id)
+      {:variable_set, _} -> drain_pubsub_events(session_id)
+      {:parsing_failed, _} -> drain_pubsub_events(session_id)
+      {:parsing_crashed, _} -> drain_pubsub_events(session_id)
     after
-      timeout ->
-        # No more events, return current state
-        {previous_children, last_incremental}
+      0 -> :ok
     end
   end
 
-  # Execute AST nodes synchronously in interactive mode
-  defp execute_interactive_nodes(%{children: children}, runtime_pid) when is_list(children) do
-    Enum.reduce(children, nil, fn node, _last_result ->
-      if is_executable_node?(node) do
-        case Runtime.execute_node(runtime_pid, node) do
-          {:ok, _context} = result ->
-            # Convert to result map format
-            build_result_from_context(result, node)
+  # Extract children from AST for tracking
+  defp extract_children(%{children: children}) when is_list(children), do: children
+  defp extract_children(_), do: []
 
-          {:error, error} ->
-            %{status: :error, error: error, node: node}
-        end
-      else
-        nil
-      end
-    end)
-  end
-
-  defp execute_interactive_nodes(_, _), do: nil
-
-  # Build result map from Runtime.execute_node response
-  defp build_result_from_context({:ok, context}, node) do
-    %{
-      status: :success,
-      node: node,
-      node_type: node.__struct__ |> Module.split() |> List.last(),
-      stdout: context.last_output.stdout,
-      stderr: context.last_output.stderr,
-      exit_code: context.exit_code,
-      context: context
-    }
-  end
-
-  # Display execution result in interactive mode
-  defp display_execution_result(nil), do: :ok
-
-  defp display_execution_result(%{status: :success} = result) do
-    # Display output (convert native term lists to strings)
-    stdout_str = format_output(result.stdout)
-    stderr_str = format_output(result.stderr)
-
-    if stdout_str != "", do: IO.write(stdout_str)
-    if stderr_str != "", do: IO.write(:stderr, stderr_str)
-
-    # Show exit code if non-zero
-    if result.exit_code != 0 do
-      IO.puts("⚠️  Exit code: #{result.exit_code}")
-    end
-  end
-
-  defp display_execution_result(%{status: :error} = result) do
-    IO.puts("\n❌ Execution failed: #{inspect(result.error)}")
-
-    if result[:node] do
-      node_text = result.node.source_info.text
-      node_line = result.node.source_info.start_line
-      IO.puts("   Line #{node_line}: #{node_text}")
-    end
-  end
-
-  # Pretty-print typed AST
-  defp print_typed_ast(typed_node, indent) when is_atom(typed_node) do
-    # Handle error nodes (atoms like :error_node)
-    prefix = String.duplicate("  ", indent)
-    IO.puts("#{prefix}[ERROR_NODE] #{inspect(typed_node)}")
-  end
-
-  defp print_typed_ast(typed_node, indent) when is_struct(typed_node) do
-    prefix = String.duplicate("  ", indent)
-
-    type = typed_node.__struct__ |> Module.split() |> List.last()
-    text = typed_node.source_info.text || ""
-
-    # Truncate long text
-    display_text =
-      if String.length(text) > 40 do
-        String.slice(text, 0, 37) <> "..."
-      else
-        text
-      end
-
-    IO.puts("#{prefix}[#{type}] #{inspect(display_text)}")
-
-    # Print children recursively if present
-    if Map.has_key?(typed_node, :children) && is_list(typed_node.children) do
-      Enum.each(typed_node.children, fn child ->
-        print_typed_ast(child, indent + 1)
-      end)
-    end
-
-    # Also print named fields that contain nodes
-    typed_node
-    |> Map.from_struct()
-    |> Map.drop([:__struct__, :source_info, :children])
-    |> Enum.each(fn
-      {key, value} when is_struct(value) ->
-        IO.puts("#{prefix}  .#{key}:")
-        print_typed_ast(value, indent + 2)
-
-      {key, values} when is_list(values) ->
-        # Check if it's a list of nodes
-        if Enum.all?(values, &is_struct/1) && values != [] do
-          IO.puts("#{prefix}  .#{key}: [#{length(values)} items]")
-
-          Enum.each(values, fn item ->
-            print_typed_ast(item, indent + 2)
-          end)
-        end
-
-      _ ->
-        :skip
-    end)
-  end
-
-  # Format output for display - convert native term lists to strings
-  defp format_output([]), do: ""
-
-  defp format_output(output) when is_list(output) do
-    output
-    |> Enum.map(&term_to_string/1)
-    |> Enum.join("")
-  end
-
-  defp format_output(output) when is_binary(output), do: output
-  defp format_output(output), do: term_to_string(output)
-
-  # Convert a single term to string for display
-  defp term_to_string(term) when is_binary(term), do: term
-  defp term_to_string(term) when is_map(term), do: Jason.encode!(term)
-
-  defp term_to_string(term) when is_list(term) do
-    # Check if it's a charlist
-    if Enum.all?(term, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
-      List.to_string(term)
-    else
-      Jason.encode!(term)
-    end
-  end
-
-  defp term_to_string(term) when is_integer(term), do: Integer.to_string(term)
-  defp term_to_string(term) when is_float(term), do: Float.to_string(term)
-  defp term_to_string(true), do: "true"
-  defp term_to_string(false), do: "false"
-  defp term_to_string(nil), do: ""
-  defp term_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
 end

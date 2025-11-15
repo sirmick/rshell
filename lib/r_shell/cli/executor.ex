@@ -10,6 +10,7 @@ defmodule RShell.CLI.Executor do
 
   alias RShell.CLI.{Metrics, ExecutionRecord, State}
   alias RShell.{IncrementalParser, Runtime}
+  alias BashParser.AST.Utils, as: ASTUtils
 
   @doc """
   Execute a script fragment and return updated state with execution record.
@@ -64,10 +65,27 @@ defmodule RShell.CLI.Executor do
 
         # Add to history
         new_state = %{state | history: state.history ++ [record]}
+
+        # Drain any remaining PubSub events to prevent stale messages
+        drain_pubsub_events(state.session_id)
+
         {:ok, new_state}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Drain any remaining PubSub events to prevent stale messages
+  defp drain_pubsub_events(session_id) do
+    receive do
+      {:ast_incremental, _} -> drain_pubsub_events(session_id)
+      {:executable_node, _, _} -> drain_pubsub_events(session_id)
+      {:variable_set, _} -> drain_pubsub_events(session_id)
+      {:parsing_failed, _} -> drain_pubsub_events(session_id)
+      {:parsing_crashed, _} -> drain_pubsub_events(session_id)
+    after
+      0 -> :ok
     end
   end
 
@@ -107,9 +125,9 @@ defmodule RShell.CLI.Executor do
           %{
             status: :success,
             node: node,
-            node_type: get_node_type(node),
-            node_text: get_node_text(node),
-            node_line: get_node_line(node),
+            node_type: ASTUtils.node_type(node),
+            node_text: ASTUtils.node_text(node),
+            node_line: ASTUtils.node_line(node),
             exit_code: context.exit_code,
             stdout: context.last_output.stdout,
             stderr: context.last_output.stderr,
@@ -124,9 +142,9 @@ defmodule RShell.CLI.Executor do
           %{
             status: :error,
             node: node,
-            node_type: get_node_type(node),
-            node_text: get_node_text(node),
-            node_line: get_node_line(node),
+            node_type: ASTUtils.node_type(node),
+            node_text: ASTUtils.node_text(node),
+            node_line: ASTUtils.node_line(node),
             error: reason,
             reason: "ExecutionError",
             stdout: [],
@@ -138,49 +156,12 @@ defmodule RShell.CLI.Executor do
     end)
   end
 
-  # Find executable nodes in AST (same logic as IncrementalParser)
+  # Find executable nodes in AST
   defp find_executable_nodes(%{children: children}) when is_list(children) do
-    Enum.filter(children, &is_executable_node?/1)
+    Enum.filter(children, &ASTUtils.executable?/1)
   end
 
   defp find_executable_nodes(_), do: []
-
-  # Check if node is executable (same as IncrementalParser.is_executable_node?)
-  defp is_executable_node?(typed_node) do
-    case typed_node do
-      %BashParser.AST.Types.Command{} -> true
-      %BashParser.AST.Types.Pipeline{} -> true
-      %BashParser.AST.Types.List{} -> true
-      %BashParser.AST.Types.Subshell{} -> true
-      %BashParser.AST.Types.CompoundStatement{} -> true
-      %BashParser.AST.Types.ForStatement{} -> true
-      %BashParser.AST.Types.WhileStatement{} -> true
-      %BashParser.AST.Types.IfStatement{} -> true
-      %BashParser.AST.Types.CaseStatement{} -> true
-      %BashParser.AST.Types.FunctionDefinition{} -> true
-      %BashParser.AST.Types.DeclarationCommand{} -> true
-      %BashParser.AST.Types.VariableAssignment{} -> true
-      %BashParser.AST.Types.UnsetCommand{} -> true
-      %BashParser.AST.Types.TestCommand{} -> true
-      %BashParser.AST.Types.CStyleForStatement{} -> true
-      _ -> false
-    end
-  end
-
-  # Extract node type safely
-  defp get_node_type(node) when is_struct(node) do
-    node.__struct__ |> Module.split() |> List.last()
-  end
-
-  defp get_node_type(_), do: "Unknown"
-
-  # Extract node text safely
-  defp get_node_text(%{source_info: %{text: text}}) when is_binary(text), do: text
-  defp get_node_text(_), do: nil
-
-  # Extract node line safely
-  defp get_node_line(%{source_info: %{start_line: line}}) when is_integer(line), do: line
-  defp get_node_line(_), do: nil
 
   # Extract execution data from result and runtime
   defp extract_execution_data(nil, runtime_pid) do

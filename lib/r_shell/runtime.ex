@@ -301,7 +301,8 @@ defmodule RShell.Runtime do
 
     # Update environment
     new_env = Map.put(context.env, var_name, parsed_value)
-    %{context | env: new_env}
+    # Variable assignments produce NO output - clear last_output
+    %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
   end
 
   # Extract value text with smart JSON/expansion detection

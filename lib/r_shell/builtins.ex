@@ -42,6 +42,7 @@ defmodule RShell.Builtins do
   """
 
   use RShell.Builtins.Helpers
+  alias RShell.Builtins.Utils
 
   defmodule ParsedOptions do
     @moduledoc "Represents successfully parsed builtin options"
@@ -76,6 +77,20 @@ defmodule RShell.Builtins do
       {:error, :not_a_builtin}
   """
   def execute(name, argv, stdin, context) do
+    # Check if this is a namespaced command (e.g., "math:add")
+    case String.split(name, ":", parts: 2) do
+      [namespace, command] ->
+        # Namespaced command - route to appropriate module
+        execute_namespaced(namespace, command, argv, stdin, context)
+
+      [_single_name] ->
+        # Non-namespaced command - execute from this module
+        execute_local(name, argv, stdin, context)
+    end
+  end
+
+  # Execute a command from this module (non-namespaced)
+  defp execute_local(name, argv, stdin, context) do
     function_name = String.to_atom("shell_#{name}")
 
     if function_exported?(__MODULE__, function_name, 3) do
@@ -110,6 +125,54 @@ defmodule RShell.Builtins do
     end
   end
 
+  # Execute a namespaced command (e.g., "math:add" -> RShell.Builtins.Math.shell_add/3)
+  defp execute_namespaced(namespace, command, argv, stdin, context) do
+    # Convert namespace to module name: "math" -> RShell.Builtins.Math
+    module_name = namespace_to_module(namespace)
+
+    if Code.ensure_loaded?(module_name) do
+      function_name = String.to_atom("shell_#{command}")
+
+      if function_exported?(module_name, function_name, 3) do
+        # Check mode from the namespace module
+        mode = apply(module_name, :__builtin_mode__, [String.to_atom(command)])
+
+        case mode do
+          :argv ->
+            apply(module_name, function_name, [argv, stdin, context])
+
+          :parsed ->
+            option_specs = apply(module_name, :__builtin_options__, [String.to_atom(command)])
+
+            case RShell.Builtins.OptionParser.parse(argv, option_specs) do
+              {:ok, opts, args} ->
+                parsed = %ParsedOptions{options: opts, arguments: args, argv: argv}
+                apply(module_name, function_name, [parsed, stdin, context])
+
+              {:error, reason} ->
+                error = %ParseError{reason: reason, argv: argv}
+                apply(module_name, function_name, [error, stdin, context])
+            end
+
+          nil ->
+            {:error, :missing_opts_attribute}
+        end
+      else
+        {:error, :not_a_builtin}
+      end
+    else
+      {:error, :not_a_builtin}
+    end
+  end
+
+  # Convert namespace to module atom
+  # "math" -> RShell.Builtins.Math
+  # "str" -> RShell.Builtins.Str
+  defp namespace_to_module(namespace) do
+    capitalized = String.capitalize(namespace)
+    Module.concat(RShell.Builtins, capitalized)
+  end
+
   @doc """
   Check if a command name is a builtin.
 
@@ -122,8 +185,20 @@ defmodule RShell.Builtins do
       false
   """
   def is_builtin?(name) do
-    function_name = String.to_atom("shell_#{name}")
-    function_exported?(__MODULE__, function_name, 3)
+    case String.split(name, ":", parts: 2) do
+      [namespace, command] ->
+        # Namespaced command - check namespace module
+        module_name = namespace_to_module(namespace)
+        function_name = String.to_atom("shell_#{command}")
+
+        Code.ensure_loaded?(module_name) &&
+          function_exported?(module_name, function_name, 3)
+
+      [_single_name] ->
+        # Non-namespaced - check this module
+        function_name = String.to_atom("shell_#{name}")
+        function_exported?(__MODULE__, function_name, 3)
+    end
   end
 
   @doc """
@@ -163,7 +238,7 @@ defmodule RShell.Builtins do
   def shell_echo(%ParseError{reason: reason}, _stdin, context) do
     help_text = get_builtin_help("echo")
     stderr = "echo: #{reason}\n\n#{help_text}"
-    {context, stream(""), stream(stderr), 1}
+    {context, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
   def shell_echo(%ParsedOptions{} = opts, _stdin, context) do
@@ -174,7 +249,7 @@ defmodule RShell.Builtins do
 
     output =
       args
-      |> Enum.map(&convert_arg_to_string/1)
+      |> Enum.map(&Utils.to_string/1)
       |> Enum.join(" ")
       |> then(fn text ->
         if should_escape do
@@ -191,28 +266,8 @@ defmodule RShell.Builtins do
         end
       end)
 
-    {context, stream(output), stream(""), 0}
+    {context, Utils.stream(output), Utils.stream(""), 0}
   end
-
-  # Convert rich types to strings for echo output
-  defp convert_arg_to_string(arg) when is_binary(arg), do: arg
-  defp convert_arg_to_string(arg) when is_map(arg), do: RShell.EnvJSON.format(arg)
-
-  defp convert_arg_to_string(arg) when is_list(arg) do
-    # Check if charlist
-    if Enum.all?(arg, &(is_integer(&1) and &1 >= 32 and &1 <= 126)) do
-      List.to_string(arg)
-    else
-      RShell.EnvJSON.format(arg)
-    end
-  end
-
-  defp convert_arg_to_string(arg) when is_integer(arg), do: Integer.to_string(arg)
-  defp convert_arg_to_string(arg) when is_float(arg), do: Float.to_string(arg)
-  defp convert_arg_to_string(true), do: "true"
-  defp convert_arg_to_string(false), do: "false"
-  defp convert_arg_to_string(nil), do: ""
-  defp convert_arg_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
 
   @doc """
   true - do nothing, successfully
@@ -226,7 +281,7 @@ defmodule RShell.Builtins do
   """
   @shell_true_opts :argv
   def shell_true(_argv, _stdin, context) do
-    {context, stream(""), stream(""), 0}
+    {context, Utils.stream(""), Utils.stream(""), 0}
   end
 
   @doc """
@@ -241,7 +296,7 @@ defmodule RShell.Builtins do
   """
   @shell_false_opts :argv
   def shell_false(_argv, _stdin, context) do
-    {context, stream(""), stream(""), 1}
+    {context, Utils.stream(""), Utils.stream(""), 1}
   end
 
   @doc """
@@ -256,7 +311,7 @@ defmodule RShell.Builtins do
   """
   @shell_pwd_opts :argv
   def shell_pwd(_argv, _stdin, context) do
-    {context, stream(context.cwd <> "\n"), stream(""), 0}
+    {context, Utils.stream(context.cwd <> "\n"), Utils.stream(""), 0}
   end
 
   @doc """
@@ -289,7 +344,7 @@ defmodule RShell.Builtins do
   def shell_cd(%ParseError{reason: reason}, _stdin, context) do
     help_text = get_builtin_help("cd")
     stderr = "cd: #{reason}\n\n#{help_text}"
-    {context, stream(""), stream(stderr), 1}
+    {context, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
   def shell_cd(%ParsedOptions{} = opts, _stdin, context) do
@@ -310,7 +365,7 @@ defmodule RShell.Builtins do
 
     # Always update context (no mode check - just execute)
     new_context = %{context | cwd: target_dir}
-    {new_context, stream(""), stream(""), 0}
+    {new_context, Utils.stream(""), Utils.stream(""), 0}
   end
 
   # Resolve a path relative to the current working directory
@@ -331,169 +386,50 @@ defmodule RShell.Builtins do
   end
 
   @doc """
-  export - set environment variables
-
-  Set environment variable NAME to VALUE.
-
-  Usage: export NAME=VALUE
-
-  Options:
-    -n, --unset
-        type: boolean
-        default: false
-        desc: Remove the variable from the environment
-
-  ## Examples
-      export PATH=/usr/bin
-      export DEBUG=true
-      export -n DEBUG
-  """
-  @shell_export_opts :parsed
-  def shell_export(%ParseError{reason: reason}, _stdin, context) do
-    help_text = get_builtin_help("export")
-    stderr = "export: #{reason}\n\n#{help_text}"
-    {context, stream(""), stream(stderr), 1}
-  end
-
-  def shell_export(%ParsedOptions{} = opts, _stdin, context) do
-    args = opts.arguments
-
-    cond do
-      opts.options.unset && length(args) > 0 ->
-        # Remove variables
-        new_env =
-          Enum.reduce(args, context.env || %{}, fn var_name, env ->
-            Map.delete(env, var_name)
-          end)
-
-        new_context = %{context | env: new_env}
-        {new_context, stream(""), stream(""), 0}
-
-      length(args) == 0 ->
-        # No arguments - print all environment variables
-        env = context.env || %{}
-
-        output =
-          env
-          |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
-          |> Enum.sort()
-          |> Enum.join("\n")
-
-        output = if output == "", do: "", else: output <> "\n"
-        {context, stream(output), stream(""), 0}
-
-      true ->
-        # Set variables
-        new_env =
-          Enum.reduce(args, context.env || %{}, fn assignment, env ->
-            case String.split(assignment, "=", parts: 2) do
-              [name, value] -> Map.put(env, name, value)
-              [name] -> Map.put(env, name, "")
-            end
-          end)
-
-        new_context = %{context | env: new_env}
-        {new_context, stream(""), stream(""), 0}
-    end
-  end
-
-  @doc """
-  printenv - print environment variables
-
-  Print the values of environment variables.
-
-  Usage: printenv [OPTIONS] [NAME]...
-
-  If no NAME is specified, print all environment variables.
-
-  Options:
-    -0, --null
-        type: boolean
-        default: false
-        desc: End each output line with null byte instead of newline
-
-  ## Examples
-      printenv
-      printenv PATH
-      printenv HOME USER
-      printenv -0 PATH
-  """
-  @shell_printenv_opts :parsed
-  def shell_printenv(%ParseError{reason: reason}, _stdin, context) do
-    help_text = get_builtin_help("printenv")
-    stderr = "printenv: #{reason}\n\n#{help_text}"
-    {context, stream(""), stream(stderr), 1}
-  end
-
-  def shell_printenv(%ParsedOptions{} = opts, _stdin, context) do
-    args = opts.arguments
-    env = context.env || %{}
-    use_null = opts.options.null
-    separator = if use_null, do: <<0>>, else: "\n"
-
-    output =
-      if length(args) == 0 do
-        # Print all variables
-        env
-        |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
-        |> Enum.sort()
-        |> Enum.join(separator)
-      else
-        # Print specific variables
-        args
-        |> Enum.map(fn name -> Map.get(env, name, "") end)
-        |> Enum.join(separator)
-      end
-
-    output = if output == "", do: "", else: output <> separator
-    {context, stream(output), stream(""), 0}
-  end
-
-  @doc """
   man - display manual pages for builtin commands
 
   Display the help documentation for a builtin command.
 
   Usage: man [COMMAND]
 
+  With no arguments, lists all available builtins organized by namespace.
+  With COMMAND, displays the manual page for that builtin.
+
   Options:
     -a, --all
         type: boolean
         default: false
-        desc: List all available builtins
+        desc: List all available builtins (same as no arguments)
 
   ## Examples
-      man echo
-      man -a
+      man                  # List all builtins by namespace
+      man echo             # Show help for echo
+      man math:add         # Show help for math:add
   """
   @shell_man_opts :parsed
   def shell_man(%ParseError{reason: reason}, _stdin, context) do
     help_text = get_builtin_help("man")
     stderr = "man: #{reason}\n\n#{help_text}"
-    {context, stream(""), stream(stderr), 1}
+    {context, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
   def shell_man(%ParsedOptions{} = opts, _stdin, context) do
     args = opts.arguments
 
     cond do
-      opts.options.all ->
-        # List all builtins
-        builtins = list_all_builtins()
-        output = "Available builtins:\n" <> Enum.join(builtins, "\n") <> "\n"
-        {context, stream(output), stream(""), 0}
-
-      length(args) == 0 ->
-        {context, stream(""), stream("man: missing command name\nUsage: man [COMMAND]\n"), 1}
+      opts.options.all || length(args) == 0 ->
+        # List all builtins organized by namespace
+        output = format_builtin_list()
+        {context, Utils.stream(output), Utils.stream(""), 0}
 
       true ->
         [command_name | _] = args
 
         if is_builtin?(command_name) do
           help_text = get_builtin_help(command_name)
-          {context, stream(help_text <> "\n"), stream(""), 0}
+          {context, Utils.stream(help_text <> "\n"), Utils.stream(""), 0}
         else
-          {context, stream(""), stream("man: no manual entry for #{command_name}\n"), 1}
+          {context, Utils.stream(""), Utils.stream("man: no manual entry for #{command_name}\n"), 1}
         end
     end
   end
@@ -539,7 +475,7 @@ defmodule RShell.Builtins do
           |> Enum.join("\n")
 
         output = if output == "", do: "", else: output <> "\n"
-        {context, stream(output), stream(""), 0}
+        {context, Utils.stream(output), Utils.stream(""), 0}
 
       # Has arguments - check if they're assignments or lookups
       true ->
@@ -588,10 +524,10 @@ defmodule RShell.Builtins do
               ""
             end
 
-          {new_context, stream(output), stream(""), 0}
+          {new_context, Utils.stream(output), Utils.stream(""), 0}
         else
           # Only assignments, no output
-          {new_context, stream(""), stream(""), 0}
+          {new_context, Utils.stream(""), Utils.stream(""), 0}
         end
     end
   end
@@ -635,7 +571,7 @@ defmodule RShell.Builtins do
   @shell_inspect_opts :argv
   def shell_inspect([], _stdin, context) do
     stderr = "inspect: missing variable name\nUsage: inspect [NAME]...\n"
-    {context, stream(""), stream(stderr), 1}
+    {context, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
   def shell_inspect(argv, _stdin, context) do
@@ -688,7 +624,7 @@ defmodule RShell.Builtins do
       end)
       |> Enum.join("\n")
 
-    {context, stream(output), stream(""), 0}
+    {context, Utils.stream(output), Utils.stream(""), 0}
   end
 
   @doc """
@@ -731,26 +667,26 @@ defmodule RShell.Builtins do
   @shell_test_opts :argv
   def shell_test([], _stdin, context) do
     # No arguments - return false
-    {context, stream(""), stream(""), 1}
+    {context, Utils.stream(""), Utils.stream(""), 1}
   end
 
   def shell_test([arg], _stdin, context) do
     # Single argument - check if truthy
     result = is_truthy?(arg)
     exit_code = if result, do: 0, else: 1
-    {context, stream(""), stream(""), exit_code}
+    {context, Utils.stream(""), Utils.stream(""), exit_code}
   end
 
   def shell_test([left, op, right], _stdin, context) do
     # Three arguments - binary comparison
     result = evaluate_comparison(left, op, right, context)
     exit_code = if result, do: 0, else: 1
-    {context, stream(""), stream(""), exit_code}
+    {context, Utils.stream(""), Utils.stream(""), exit_code}
   end
 
   def shell_test(_argv, _stdin, context) do
     # Other arities - not supported yet
-    {context, stream(""), stream("test: unsupported expression\n"), 1}
+    {context, Utils.stream(""), Utils.stream("test: unsupported expression\n"), 1}
   end
 
   defp is_truthy?(nil), do: false
@@ -769,60 +705,85 @@ defmodule RShell.Builtins do
 
     case op do
       # String equality
-      "=" -> to_string(left) == to_string(right)
-      "!=" -> to_string(left) != to_string(right)
+      "=" -> Kernel.to_string(left) == Kernel.to_string(right)
+      "!=" -> Kernel.to_string(left) != Kernel.to_string(right)
       # Numeric comparisons
-      "-eq" -> to_number(left) == to_number(right)
-      "-ne" -> to_number(left) != to_number(right)
-      "-gt" -> to_number(left) > to_number(right)
-      "-ge" -> to_number(left) >= to_number(right)
-      "-lt" -> to_number(left) < to_number(right)
-      "-le" -> to_number(left) <= to_number(right)
+      "-eq" -> Utils.to_number(left) == Utils.to_number(right)
+      "-ne" -> Utils.to_number(left) != Utils.to_number(right)
+      "-gt" -> Utils.to_number(left) > Utils.to_number(right)
+      "-ge" -> Utils.to_number(left) >= Utils.to_number(right)
+      "-lt" -> Utils.to_number(left) < Utils.to_number(right)
+      "-le" -> Utils.to_number(left) <= Utils.to_number(right)
       # Length checks
-      "-n" -> is_truthy?(left) && String.length(to_string(left)) > 0
-      "-z" -> !is_truthy?(left) || String.length(to_string(left)) == 0
+      "-n" -> is_truthy?(left) && String.length(Kernel.to_string(left)) > 0
+      "-z" -> !is_truthy?(left) || String.length(Kernel.to_string(left)) == 0
       _ -> false
     end
   end
 
-  defp to_number(value) when is_integer(value), do: value
-  defp to_number(value) when is_float(value), do: value
-
-  defp to_number(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} ->
-        int
-
-      _ ->
-        case Float.parse(value) do
-          {float, ""} -> float
-          _ -> 0
-        end
-    end
-  end
-
-  defp to_number(true), do: 1
-  defp to_number(false), do: 0
-  defp to_number(_), do: 0
-
+  # Get all builtins organized by namespace
   defp list_all_builtins do
-    __MODULE__.__info__(:functions)
-    |> Enum.filter(fn {name, arity} ->
-      String.starts_with?(Atom.to_string(name), "shell_") && arity == 3
-    end)
-    |> Enum.map(fn {name, _arity} ->
-      name
-      |> Atom.to_string()
-      |> String.trim_leading("shell_")
-    end)
-    |> Enum.sort()
+    # Get core builtins (no namespace)
+    core_builtins =
+      __MODULE__.__info__(:functions)
+      |> Enum.filter(fn {name, arity} ->
+        String.starts_with?(Atom.to_string(name), "shell_") && arity == 3
+      end)
+      |> Enum.map(fn {name, _arity} ->
+        name
+        |> Atom.to_string()
+        |> String.trim_leading("shell_")
+      end)
+      |> Enum.sort()
+
+    # Get namespaced builtins (currently just math)
+    math_builtins =
+      if Code.ensure_loaded?(RShell.Builtins.Math) do
+        RShell.Builtins.Math.__info__(:functions)
+        |> Enum.filter(fn {name, arity} ->
+          String.starts_with?(Atom.to_string(name), "shell_") && arity == 3
+        end)
+        |> Enum.map(fn {name, _arity} ->
+          command =
+            name
+            |> Atom.to_string()
+            |> String.trim_leading("shell_")
+
+          "math:#{command}"
+        end)
+        |> Enum.sort()
+      else
+        []
+      end
+
+    %{
+      core: core_builtins,
+      math: math_builtins
+    }
   end
 
-  # Helper: Convert text to Stream
-  # Wraps text in a single-element list so Stream yields the text as one chunk
-  # Empty strings become empty streams (not streams with one empty string)
-  defp stream(""), do: Stream.concat([[]])
-  defp stream(text) when is_binary(text), do: Stream.concat([[text]])
+  # Format the builtin list organized by namespace
+  defp format_builtin_list do
+    builtins = list_all_builtins()
+
+    sections = [
+      {"Core Builtins:", builtins.core},
+      {"Math Builtins:", builtins.math}
+    ]
+
+    sections
+    |> Enum.reject(fn {_title, commands} -> Enum.empty?(commands) end)
+    |> Enum.map(fn {title, commands} ->
+      commands_str =
+        commands
+        |> Enum.map(fn cmd -> "  #{cmd}" end)
+        |> Enum.join("\n")
+
+      "#{title}\n#{commands_str}"
+    end)
+    |> Enum.join("\n\n")
+    |> Kernel.<>("\n")
+  end
 
   # Process backslash escape sequences
   defp process_escapes(text) do

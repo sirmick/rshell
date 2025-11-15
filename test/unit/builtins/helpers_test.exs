@@ -57,12 +57,22 @@ defmodule RShell.Builtins.HelpersTest do
 
       {_ctx, stdout, _stderr, _exit} = Builtins.execute("man", ["-a"], "", context)
 
-      assert materialize(stdout) =~ "Available builtins:"
-      assert materialize(stdout) =~ "echo"
-      assert materialize(stdout) =~ "pwd"
-      assert materialize(stdout) =~ "cd"
-      assert materialize(stdout) =~ "export"
-      assert materialize(stdout) =~ "man"
+      output = materialize(stdout)
+
+      # Check for namespace headers
+      assert output =~ "Core Builtins:"
+      assert output =~ "Math Builtins:"
+
+      # Check for core builtins
+      assert output =~ "echo"
+      assert output =~ "pwd"
+      assert output =~ "cd"
+      assert output =~ "man"
+      assert output =~ "env"
+
+      # Check for math builtins
+      assert output =~ "math:add"
+      assert output =~ "math:sub"
     end
   end
 
@@ -75,12 +85,12 @@ defmodule RShell.Builtins.HelpersTest do
       assert function_exported?(Builtins, :shell_echo, 3)
       assert function_exported?(Builtins, :shell_pwd, 3)
       assert function_exported?(Builtins, :shell_cd, 3)
-      assert function_exported?(Builtins, :shell_export, 3)
-      assert function_exported?(Builtins, :shell_printenv, 3)
       assert function_exported?(Builtins, :shell_man, 3)
       assert function_exported?(Builtins, :shell_true, 3)
       assert function_exported?(Builtins, :shell_false, 3)
       assert function_exported?(Builtins, :shell_env, 3)
+      assert function_exported?(Builtins, :shell_test, 3)
+      assert function_exported?(Builtins, :shell_inspect, 3)
     end
   end
 end
