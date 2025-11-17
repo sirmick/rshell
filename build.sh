@@ -43,7 +43,32 @@ check_dependencies() {
         exit 1
     fi
     
+    # Check tree-sitter CLI
+    if ! command -v tree-sitter &> /dev/null; then
+        print_status $YELLOW "⚠️  tree-sitter CLI not found. Grammar will not be built."
+        SKIP_GRAMMAR=1
+    fi
+    
     print_status $GREEN "✅ All dependencies found"
+}
+
+# Build RShell grammar (tree-sitter)
+build_grammar() {
+    if [ "$SKIP_GRAMMAR" = "1" ]; then
+        print_status $YELLOW "⏭️  Skipping grammar build (tree-sitter not available)"
+        return
+    fi
+    
+    print_status $YELLOW "🌳 Building RShell grammar..."
+    
+    if [ -f "rshell-grammar/build_grammar.sh" ]; then
+        cd rshell-grammar
+        ./build_grammar.sh
+        cd ..
+        print_status $GREEN "✅ RShell grammar built successfully"
+    else
+        print_status $YELLOW "⚠️  Grammar build script not found, skipping"
+    fi
 }
 
 # Setup tree-sitter-bash
@@ -171,6 +196,9 @@ main() {
     # Check dependencies
     check_dependencies
     
+    # Build RShell grammar (tree-sitter)
+    build_grammar
+    
     # Setup tree-sitter-bash
     setup_tree_sitter
     
@@ -198,6 +226,7 @@ main() {
     print_status $YELLOW "📋 Next steps:"
     echo "  - CLI usage: mix parse_bash <script.sh>"
     echo "  - Programmatic: See examples in mix_test_programmatic.exs"
+    echo "  - Grammar tests: cd rshell-grammar && python3 tests/test_grammar_simple.py"
     echo ""
 }
 

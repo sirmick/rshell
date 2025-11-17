@@ -1,0 +1,36 @@
+{
+  "name": "tree-sitter-rshell",
+  "version": "0.1.0",
+  "description": "RShell grammar for tree-sitter",
+  "main": "bindings/node",
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "build": "tree-sitter generate && node-gyp rebuild"
+  },
+  "keywords": [
+    "parser",
+    "shell",
+    "rshell"
+  ],
+  "author": "RShell Team",
+  "license": "MIT",
+  "dependencies": {
+    "nan": "^2.17.0"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.20.8"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.rshell",
+      "path": ".",
+      "file-types": [
+        "rsh",
+        "rshell"
+      ],
+      "injection-regex": "^(rsh|rshell)$",
+      "highlights": "queries/highlights.scm"
+    }
+  ]
+}

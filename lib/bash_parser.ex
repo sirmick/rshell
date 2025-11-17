@@ -63,6 +63,24 @@ defmodule BashParser do
   end
 
   @doc """
+  Create a new parser resource for a specific language (bash or rshell).
+
+  Returns `{:ok, resource}` on success.
+  """
+  def new_parser_with_language(_language) do
+    :erlang.nif_error(:nif_not_loaded)
+  end
+
+  @doc """
+  Create a new parser resource for a specific language with custom buffer size.
+
+  Returns `{:ok, resource}` on success.
+  """
+  def new_parser_with_language_and_size(_language, _max_buffer_size) do
+    :erlang.nif_error(:nif_not_loaded)
+  end
+
+  @doc """
   Parse incrementally by appending a fragment.
 
   Returns `{:ok, ast}` or `{:error, reason}`.

@@ -10,7 +10,15 @@ mod atoms {
         buffer_overflow,
         parse_error,
         no_tree,
+        invalid_language,
     }
+}
+
+/// Language type for parser
+#[derive(Clone, Copy)]
+enum LanguageType {
+    Bash,
+    RShell,
 }
 
 /// ParserResource holds the parser state for incremental parsing
@@ -20,21 +28,30 @@ pub struct ParserResource {
     old_tree: Mutex<Option<Tree>>,
     accumulated_input: Mutex<String>,
     max_buffer_size: usize,
+    language: LanguageType,  // NEW: Track which language this parser uses
 }
 
 impl ParserResource {
     fn new(max_buffer_size: usize) -> Result<Self, String> {
+        Self::new_with_language(max_buffer_size, LanguageType::Bash)
+    }
+    
+    fn new_with_language(max_buffer_size: usize, language: LanguageType) -> Result<Self, String> {
         let mut parser = Parser::new();
-        let bash_language = tree_sitter_bash::LANGUAGE.into();
+        let tree_sitter_lang = match language {
+            LanguageType::Bash => tree_sitter_bash::LANGUAGE.into(),
+            LanguageType::RShell => tree_sitter_rshell::LANGUAGE.into(),
+        };
         
-        parser.set_language(&bash_language)
-            .map_err(|_| "Failed to set Bash language")?;
+        parser.set_language(&tree_sitter_lang)
+            .map_err(|_| "Failed to set language")?;
         
         Ok(ParserResource {
             parser: Mutex::new(parser),
             old_tree: Mutex::new(None),
             accumulated_input: Mutex::new(String::new()),
             max_buffer_size,
+            language,
         })
     }
 }
@@ -54,6 +71,41 @@ fn new_parser_with_size(
     max_buffer_size: usize
 ) -> NifResult<(Atom, ResourceArc<ParserResource>)> {
     match ParserResource::new(max_buffer_size) {
+        Ok(resource) => Ok((atoms::ok(), ResourceArc::new(resource))),
+        Err(msg) => Err(Error::Term(Box::new(msg))),
+    }
+}
+
+/// Create a new parser resource with specific language
+#[rustler::nif]
+fn new_parser_with_language(
+    language: String
+) -> NifResult<(Atom, ResourceArc<ParserResource>)> {
+    let lang_type = match language.as_str() {
+        "bash" => LanguageType::Bash,
+        "rshell" => LanguageType::RShell,
+        _ => return Err(Error::Atom("invalid_language")),
+    };
+    
+    match ParserResource::new_with_language(10 * 1024 * 1024, lang_type) {
+        Ok(resource) => Ok((atoms::ok(), ResourceArc::new(resource))),
+        Err(msg) => Err(Error::Term(Box::new(msg))),
+    }
+}
+
+/// Create a new parser resource with specific language and buffer size
+#[rustler::nif]
+fn new_parser_with_language_and_size(
+    language: String,
+    max_buffer_size: usize,
+) -> NifResult<(Atom, ResourceArc<ParserResource>)> {
+    let lang_type = match language.as_str() {
+        "bash" => LanguageType::Bash,
+        "rshell" => LanguageType::RShell,
+        _ => return Err(Error::Atom("invalid_language")),
+    };
+    
+    match ParserResource::new_with_language(max_buffer_size, lang_type) {
         Ok(resource) => Ok((atoms::ok(), ResourceArc::new(resource))),
         Err(msg) => Err(Error::Term(Box::new(msg))),
     }
@@ -517,6 +569,8 @@ rustler::init!(
         parse_bash,
         new_parser,
         new_parser_with_size,
+        new_parser_with_language,
+        new_parser_with_language_and_size,
         parse_incremental,
         reset_parser,
         get_current_ast,

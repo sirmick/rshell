@@ -13,3 +13,4 @@ crate-type = ["cdylib"]
 rustler = "0.32.0"
 tree-sitter = "0.25"
 tree-sitter-bash = { path = "../../vendor/tree-sitter-bash" }
+tree-sitter-rshell = { path = "../../vendor/tree-sitter-rshell" }

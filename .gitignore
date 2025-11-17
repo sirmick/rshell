@@ -71,3 +71,4 @@ deps/
 .env
 .env.local
 .config.local
+venv/

@@ -1,478 +1,305 @@
-# START HERE - RShell Development Guide
+# RShell - Getting Started
 
-**A prompt starter for AI-assisted development on the RShell project.**
-
----
-
-## Project Overview
-
-RShell is an **interactive Bash shell implementation in Elixir** that provides incremental parsing, execution, and a functional CLI using strongly-typed AST structures. The project emphasizes clean architecture, comprehensive testing, and type safety.
-
-### Core Philosophy
-
-- **Test-First Development**: Write tests before implementation
-- **Clean Code**: Heavy abstraction, clear separation of concerns
-- **Type Safety**: Strongly-typed AST with 59 auto-generated structs
-- **Event-Driven**: Loose coupling via Phoenix.PubSub
-- **Comprehensive Testing**: 184+ tests covering all layers
+**Status**: ✅ Phase 2 Complete - 96.8% Test Coverage (60/62 tests passing)
+**Last Updated**: 2025-11-17
 
 ---
 
-## Critical Files
+## Quick Start
 
-### Main Entry Points
-
-1. **[`lib/r_shell.ex`](lib/r_shell.ex)** (305 lines)
-   - High-level parsing API
-   - AST analysis utilities
-   - Entry point for programmatic usage
-
-2. **[`lib/r_shell/cli.ex`](lib/r_shell/cli.ex)** (666 lines)
-   - Interactive REPL implementation
-   - Multiple execution modes (interactive, file, line-by-line, parse-only)
-   - Command history and debug commands
-
-### Core Architecture Components
-
-3. **[`lib/r_shell/incremental_parser.ex`](lib/r_shell/incremental_parser.ex)** (357 lines)
-   - GenServer managing incremental parsing state
-   - Broadcasts AST updates and executable nodes via PubSub
-   - Detects completion and executable nodes
-
-4. **[`lib/r_shell/runtime.ex`](lib/r_shell/runtime.ex)** (477 lines)
-   - Execution engine for parsed commands
-   - Context management (env vars, cwd, exit codes)
-   - Subscribes to parser events, executes nodes
-
-5. **[`lib/r_shell/input_buffer.ex`](lib/r_shell/input_buffer.ex)** (203 lines)
-   - Lightweight lexical analysis
-   - Detects continuation needs (quotes, heredocs, control structures)
-   - No AST analysis required
-
-6. **[`lib/r_shell/builtins.ex`](lib/r_shell/builtins.ex)** (621 lines)
-   - Native Elixir implementations of shell builtins
-   - 8 implemented: echo, true, false, pwd, cd, export, printenv, man, env
-   - Two invocation modes: `:parsed` (with option parser) and `:argv` (raw)
-
-### Type System
-
-7. **[`lib/bash_parser/ast/types.ex`](lib/bash_parser/ast/types.ex)** (1848 lines)
-   - **59 auto-generated typed structs** from tree-sitter grammar
-   - Strong typing with `@enforce_keys` and `@type` specs
-   - ⚠️ **AUTO-GENERATED** - Do not manually edit (except ErrorNode module)
-
-8. **[`lib/bash_parser.ex`](lib/bash_parser.ex)** (114 lines)
-   - NIF interface to Rust parser
-   - Low-level parsing functions
-   - Incremental parsing API
-
-### Rust NIF Layer
-
-9. **[`native/RShell.BashParser/src/lib.rs`](native/RShell.BashParser/src/lib.rs)** (405 lines)
-   - Tree-sitter-bash parser wrapper
-   - Incremental parsing with tree reuse
-   - Converts parse tree to Elixir maps
-
----
-
-## Important Directories
-
-### `/lib/r_shell/`
-Core runtime and execution components:
-- `application.ex` - OTP application setup
-- `builtins.ex` - Shell builtin implementations
-- `cli.ex` - Interactive shell
-- `error_classifier.ex` - Distinguishes syntax errors from incomplete structures
-- `incremental_parser.ex` - Parser GenServer
-- `input_buffer.ex` - Continuation detection
-- `pubsub.ex` - Event bus wrapper
-- `runtime.ex` - Execution engine
-
-### `/lib/bash_parser/ast/`
-AST manipulation and types:
-- `types.ex` - 59 auto-generated typed structs ⚠️
-- `walker.ex` - AST traversal utilities
-
-### `/test/`
-Comprehensive test suite (243 active tests, 21 skipped):
-- **Organization**: `unit/`, `integration/`, `support/`, `.deprecated/`
-- **Performance**: 4 seconds execution time (10x faster)
-- **Pattern**: Silent success, verbose failure with full diagnostics
-- **Protection**: Global 2-second timeout + CLI helper 5-second timeout
-
-**Unit Tests** (`test/unit/`):
-- `input_buffer_test.exs` (51 tests) - Continuation detection
-- `error_classifier_test.exs` (14 tests) - Error classification
-- `pubsub_test.exs` (26 tests) - Event bus
-- `env_json_test.exs` - Environment JSON handling
-- `builtins/` - Builtin subsystem tests (doc_parser, helpers, option_parser)
-
-**Integration Tests** (`test/integration/`):
-- `cli_test.exs` (17 tests) - CLI execution with helper pattern
-- `incremental_parser_pubsub_test.exs` (24 tests) - Parser events
-- `pubsub_guarantees_test.exs` - PubSub reliability
-- `control_flow_test.exs` (18 tests, skipped) - If/for/while execution
-- `parser_runtime_integration_test.exs` (3 tests, skipped) - Parser + Runtime
-
-**Test Helpers** (`test/support/`):
-- `cli_test_helper.ex` - Silent success/verbose failure pattern
-- `execution_helper.ex` - AST test utilities
-
-**Global Config**: `test/test_helper.exs` - 2-second timeout protection
-
-### `/native/RShell.BashParser/`
-Rust NIF implementation:
-- `src/lib.rs` - Parser implementation
-- `Cargo.toml` - Rust dependencies (tree-sitter, rustler)
-
----
-
-## Architecture Layers
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              Application Layer (CLI, REPL)              │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │   InputBuffer (Continuation Detection)             │ │
-│  │   - No AST analysis                                │ │
-│  │   - Lightweight lexical checks                     │ │
-│  └────────────────────────────────────────────────────┘ │
-└────────────────────┬────────────────────────────────────┘
-                     │ Complete fragments only
-                     ↓
-┌─────────────────────────────────────────────────────────┐
-│         Phoenix.PubSub (Event Bus)                      │
-│   Topics: :ast, :executable, :runtime, :output, :context│
-└─────────────────────────────────────────────────────────┘
-                     │
-            ┌────────┴────────┐
-            ↓                 ↓
-   ┌─────────────────┐  ┌─────────────────┐
-   │ IncrementalParser│  │    Runtime      │
-   │   GenServer      │  │   GenServer     │
-   │                  │  │                 │
-   │ - Rust NIF       │  │ - Execute nodes │
-   │ - Broadcast AST  │  │ - Context mgmt  │
-   │ - Detect exec    │  │ - Builtins      │
-   └─────────────────┘  └─────────────────┘
-```
-
----
-
-## Development Style
-
-### 1. Test-First Approach
-
-Always write tests before implementation:
-
-```elixir
-# Example test structure
-describe "feature_name" do
-  test "describes expected behavior" do
-    # Arrange
-    input = prepare_input()
-    
-    # Act
-    result = function_under_test(input)
-    
-    # Assert
-    assert result == expected
-    assert result.field == specific_value
-  end
-end
-```
-
-### 2. Heavy Abstraction
-
-- Separate concerns into distinct modules
-- Use GenServers for stateful components
-- Communicate via PubSub events
-- Strong typing throughout
-
-### 3. Pattern Matching on Types
-
-```elixir
-case node do
-  %Types.Command{} -> execute_command(node, context)
-  %Types.IfStatement{} -> execute_if_statement(node, context)
-  %Types.Pipeline{} -> execute_pipeline(node, context)
-end
-```
-
-### 4. Comprehensive Error Handling
-
-- Distinguish syntax errors from incomplete structures
-- Provide context-aware user feedback
-- No silent failures
-
----
-
-## Key Design Decisions
-
-### Why Separate Parser and Runtime?
-
-| Benefit | Description |
-|---------|-------------|
-| **Concurrency** | Parse while executing |
-| **Flexibility** | Parse-only or execute-only modes |
-| **Fault Tolerance** | Independent failure domains |
-| **Testing** | Test components in isolation |
-
-**Cost**: +55 KB memory (~9%), +3 μs CPU (0.3%)  
-**Verdict**: Negligible overhead, substantial benefits
-
-### Why InputBuffer Before Parser?
-
-- **Prevents ERROR nodes** for incomplete input
-- **Lightweight** - no AST analysis required
-- **Clean separation** - continuation detection vs parsing
-- **Matches bash** - separate lexer/parser phases
-
-### Why Strongly-Typed AST?
-
-| Benefit | Typed Structs | String Types |
-|---------|---------------|--------------|
-| Type Safety | ✅ Compile-time | ❌ Runtime |
-| Performance | ✅ Fast pattern matching | ❌ String comparison |
-| IDE Support | ✅ Autocomplete | ❌ None |
-| Maintainability | ✅ Clear structure | ❌ Fragile |
-
----
-
-## Documentation Files
-
-### Essential Reading
-
-1. **[`ARCHITECTURE_DESIGN.md`](ARCHITECTURE_DESIGN.md)** (661 lines)
-   - Comprehensive architecture overview
-   - Component descriptions
-   - Performance characteristics
-   - Design decisions with justification
-
-2. **[`BUILD.md`](BUILD.md)** (283 lines)
-   - Complete build instructions
-   - Platform-specific notes
-   - Troubleshooting guide
-
-3. **[`README.md`](README.md)** (411 lines)
-   - Quick start guide
-   - Usage examples
-   - Feature overview
-   - API documentation
-
-### Design Documents
-
-4. **[`BUILTIN_DESIGN.md`](BUILTIN_DESIGN.md)** - Builtin command design
-5. **[`ENV_VAR_DESIGN.md`](ENV_VAR_DESIGN.md)** - Environment variable handling
-6. **[`PIPELINE_DESIGN.md`](PIPELINE_DESIGN.md)** - Pipeline execution design
-7. **[`RUNTIME_DESIGN.md`](RUNTIME_DESIGN.md)** - Runtime execution model
-
-### Testing Documentation
-
-8. **[`TEST_GUIDE.md`](TEST_GUIDE.md)** - Comprehensive testing guide
-   - Test organization (unit vs integration)
-   - Preferred testing patterns (CLIHelper)
-   - Step-by-step guide for writing new tests
-   - Best practices and troubleshooting
-
-9. **[`UNIT_TESTS.md`](UNIT_TESTS.md)** - Detailed unit test coverage
-   - Complete documentation of all 7 unit test files
-   - Function-by-function test coverage breakdown
-   - Test patterns and statistics
-
----
-
-## Testing Strategy
-
-### Test Suite Organization
-
-**New Consolidated Structure** (12 active files):
-- **Unit Tests**: 7 files in `test/unit/` - One test per module
-- **Integration Tests**: 5 files in `test/integration/` - Cross-module tests
-- **Test Helpers**: 2 files in `test/support/` - Reusable utilities
-- **Archived Tests**: 12 files in `test/.deprecated/` - Reference only
-
-### Test Coverage by Layer
-
-| Layer | Location | Tests | Purpose |
-|-------|----------|-------|---------|
-| **CLI Integration** | `integration/cli_test.exs` | 17 | CLI execution patterns |
-| **Input Buffer** | `unit/input_buffer_test.exs` | 51 | Continuation detection |
-| **Parser Events** | `integration/incremental_parser_pubsub_test.exs` | 24 | Event broadcasting |
-| **PubSub** | `unit/pubsub_test.exs` | 26 | Event bus |
-| **Error Classification** | `unit/error_classifier_test.exs` | 14 | Error vs incomplete |
-| **Builtins** | `unit/builtins/*` | many | Builtin subsystems |
-| **Total Active** | 12 files | **243** | All layers |
-| **Skipped** | 2 files | 21 | Old async model |
-
-### Test Patterns
-
-**Silent Success Pattern**:
-```elixir
-test "basic command execution" do
-  state = assert_cli_success("echo hello")
-  assert length(state.history) == 1
-end
-```
-✅ No output when passing
-
-**Verbose Failure Pattern**:
-```elixir
-# On failure, shows:
-# - Full AST structure
-# - Execution context
-# - Command history
-# - Metrics (parse time, exec time)
-# - Stdout/stderr
-```
-⚠️ Detailed diagnostics when failing
-
-### Running Tests
+### Option 1: Build Everything (Recommended)
 
 ```bash
-# All tests (243 active, completes in ~4 seconds)
-mix test
-
-# Specific test directory
-mix test test/unit/
-mix test test/integration/
-
-# Specific test file
-mix test test/unit/input_buffer_test.exs
-
-# With verbose output
-mix test --trace
-
-# Include skipped tests
-mix test --include skip
-
-# Run only specific tests
-mix test --only tag_name
-```
-
-### Test Performance
-
-- **Before consolidation**: 462 tests, ~40 seconds
-- **After consolidation**: 243 active tests, ~4 seconds
-- **Improvement**: 10x faster execution, 0 failures
-
----
-
-## Building the Project
-
-### Quick Build
-
-```bash
+# From project root - builds Elixir project AND grammar
 ./build.sh
 ```
 
-This automatically:
-1. Clones tree-sitter-bash grammar
-2. Builds Rust NIF
-3. Generates 59 typed AST structs
-4. Compiles Elixir project
+This will:
+1. Build RShell grammar (tree-sitter)
+2. Build Elixir project with Rust NIF
+3. Run all tests
 
-### Manual Build Steps
-
-See [`BUILD.md`](BUILD.md) for detailed instructions.
-
----
-
-## Common Development Tasks
-
-### Adding a New Builtin
-
-1. Add function to `lib/r_shell/builtins.ex`
-2. Choose invocation mode (`:parsed` or `:argv`)
-3. Add docstring with usage and options
-4. Write comprehensive tests in `test/builtins_test.exs`
-5. Update `BUILTIN_DESIGN.md`
-
-### Modifying AST Types
-
-⚠️ **Do not manually edit `lib/bash_parser/ast/types.ex`**
-
-1. Update tree-sitter-bash grammar (external)
-2. Run `mix gen.ast_types`
-3. Recompile and test
-
-### Adding Parser Features
-
-1. Write tests in `test/incremental_parser_pubsub_test.exs`
-2. Modify `lib/r_shell/incremental_parser.ex`
-3. Update `lib/r_shell/runtime.ex` if execution needed
-4. Update documentation
-
----
-
-## Project Status
-
-### Implemented ✅
-
-- Incremental parsing with tree-sitter
-- 59 strongly-typed AST structs
-- Event-driven architecture (PubSub)
-- InputBuffer continuation detection
-- Interactive CLI with multi-line input
-- 8 builtin commands (echo, cd, export, etc.)
-- **Comprehensive test suite** (243 active tests, 10x faster, 0 failures)
-- **Test infrastructure** (timeout protection, silent success/verbose failure)
-
-### Stubbed (Not Yet Implemented) ⚠️
-
-- External command execution (via ports)
-- Pipeline execution (`|`, `&&`, `||`)
-- Control structures (if/for/while/case execution)
-- Command substitution
-- Process substitution
-- Redirects (>, <, >>, 2>&1)
-
----
-
-## Quick Reference
-
-### File Editing Guidelines
-
-| File Pattern | Edit Policy |
-|--------------|-------------|
-| `lib/bash_parser/ast/types.ex` | ⚠️ **AUTO-GENERATED** - Do not edit manually |
-| `test/*.exs` | ✅ Always add tests first |
-| `lib/r_shell/*.ex` | ✅ Clean abstractions, heavy testing |
-| `native/RShell.BashParser/src/lib.rs` | ⚠️ Requires Rust rebuild |
-| `*.md` | ✅ Keep updated with code changes |
-
-### Key Commands
+### Option 2: Build Grammar Only
 
 ```bash
-# Build
-./build.sh
+# Just the tree-sitter grammar
+cd rshell-grammar
+./build_grammar.sh
+```
 
-# Test
-mix test
-mix test --trace
+This will:
+1. Generate parser from [`grammar.js`](rshell-grammar/grammar.js:1)
+2. Compile external scanner ([`src/scanner.c`](rshell-grammar/src/scanner.c:1))
+3. Run grammar tests (should show 60/62 passing - 96.8%)
 
-# Run CLI
-mix run -e "RShell.CLI.main([])"
+---
 
-# Build escript
-mix escript.build
-./rshell
+## Testing the Grammar
 
-# Regenerate types
-mix gen.ast_types
+### Run All Tests
+
+```bash
+cd rshell-grammar
+python3 tests/test_grammar_simple.py
+```
+
+**Expected output:**
+```
+✓ Passed: 60
+✗ Failed: 2
+Total:    62
+
+Pass rate: 96.8%
+```
+
+**Known failing tests:** Multiline lists and maps (Phase 3 feature)
+
+### Run Specific Tests
+
+```bash
+# Test specific category
+python3 tests/test_grammar_simple.py --filter control_flow
+
+# Verbose mode (show parse trees)
+python3 tests/test_grammar_simple.py --verbose
+
+# Skip regeneration (faster)
+python3 tests/test_grammar_simple.py --no-generate
+```
+
+### Test Scanner Mode Detection
+
+```bash
+python3 tests/test_scanner_mode_detection.py
+```
+
+### Parse Individual Files
+
+```bash
+# Parse and show AST
+tree-sitter parse examples/rshell/01_server_health_monitor.rsh
+
+# Just check for errors
+tree-sitter parse examples/rshell/01_server_health_monitor.rsh --quiet
 ```
 
 ---
 
-## Getting Help
+## Grammar Development Workflow
 
-1. Read [`ARCHITECTURE_DESIGN.md`](ARCHITECTURE_DESIGN.md) for system overview
-2. Check [`BUILD.md`](BUILD.md) for build issues
-3. Read [`TEST_GUIDE.md`](TEST_GUIDE.md) for testing best practices
-4. Review test files for usage examples
-5. Consult design documents for specific subsystems
+### Step 1: Edit the Grammar
+
+```bash
+# Edit the grammar file
+vim rshell-grammar/grammar.js
+
+# Or edit the scanner
+vim rshell-grammar/src/scanner.c
+```
+
+### Step 2: Generate Parser
+
+```bash
+cd rshell-grammar
+tree-sitter generate
+```
+
+This compiles `grammar.js` and `src/scanner.c` into:
+- `src/parser.c` - Generated parser
+- `src/node-types.json` - Node type definitions
+- `src/grammar.json` - Grammar specification
+
+### Step 3: Test Your Changes
+
+```bash
+# Quick test (skip regeneration)
+python3 tests/test_grammar_simple.py --no-generate
+
+# Full test (regenerate + test)
+python3 tests/test_grammar_simple.py
+
+# Or use the build script
+./build_grammar.sh
+```
 
 ---
 
-**Remember**: This project prioritizes clean architecture, comprehensive testing, and type safety. Always write tests first, maintain clear separation of concerns, and update documentation alongside code changes.
+## Understanding the Grammar
+
+### Files Structure
+
+```
+rshell-grammar/
+├── grammar.js              # Main grammar definition (~274 lines)
+├── src/
+│   ├── scanner.c          # External scanner for mode detection (213 lines)
+│   ├── parser.c           # Generated parser (auto-generated)
+│   └── grammar.json       # Grammar spec (auto-generated)
+├── tests/
+│   ├── test_grammar_simple.py           # Full grammar test suite (38 tests)
+│   └── test_scanner_mode_detection.py   # Scanner-specific tests (20 tests)
+├── examples/rshell/       # Example RShell scripts
+└── build_grammar.sh       # Build script
+```
+
+### Key Concepts
+
+1. **External Scanner** (`src/scanner.c`):
+   - Determines EXPR vs CMD mode for each line
+   - Emits tokens: `line_start`, `expr_line_start`, `cmd_line_start`
+   - Optimizes by only emitting mode tokens on changes
+
+2. **Grammar Rules** (`grammar.js`):
+   - Accepts line_start tokens from scanner
+   - Defines syntax for assignments, control flow, commands, expressions
+   - Handles blocks, property access, operators
+
+3. **Mode Detection**:
+   - **EXPR mode**: Lines starting with `X =`, `if`, `for`, `while`
+   - **CMD mode**: Everything else (shell commands)
+   - Automatic - no manual mode switching needed!
+
+---
+
+## Common Tasks
+
+### Add a New Test
+
+Edit `rshell-grammar/tests/test_grammar_simple.py`:
+
+```python
+TEST_CASES = {
+    "your_category": [
+        {
+            "name": "Test description",
+            "code": "X = 42",
+            "expect": ["assignment", "number"],
+        },
+    ],
+}
+```
+
+### Debug a Parse Error
+
+```bash
+# Parse with verbose output
+cd rshell-grammar
+tree-sitter parse /tmp/test.rsh
+
+# Or use Python test with verbose
+python3 tests/test_grammar_simple.py --filter your_test --verbose
+```
+
+### Check for Grammar Conflicts
+
+```bash
+cd rshell-grammar
+tree-sitter generate
+# Look for "Unresolved conflict" messages
+```
+
+---
+
+## Build Process Details
+
+### What `tree-sitter generate` Does:
+
+1. **Reads** `grammar.js` and `src/scanner.c`
+2. **Compiles** the grammar into a parser state machine
+3. **Generates** `src/parser.c` (the actual parser code)
+4. **Validates** for conflicts and ambiguities
+5. **Creates** `src/node-types.json` and `src/grammar.json`
+
+### Manual Build Steps (if needed):
+
+```bash
+# 1. Generate parser
+cd rshell-grammar
+tree-sitter generate
+
+# 2. The scanner is automatically compiled by tree-sitter
+#    No separate compilation step needed!
+
+# 3. Run tests
+python3 tests/test_grammar_simple.py --no-generate
+
+# 4. Parse a file
+tree-sitter parse examples/rshell/01_server_health_monitor.rsh
+```
+
+---
+
+## Current Status
+
+### ✅ What Works (96.8% coverage - 60/62 tests passing):
+
+**Core Features:**
+- ✅ Automatic mode detection (EXPR vs CMD)
+- ✅ Assignments: `X = 42`, compound operators (`+=`, `-=`, `*=`, `/=`)
+- ✅ Data types: numbers, strings, booleans, lists, maps
+- ✅ Commands: `echo hello`, `ls -la`, pipelines
+- ✅ Control flow: `if`/`elif`/`else`, `for`, `while` with nested blocks
+- ✅ Expressions: arithmetic, comparisons, logical operators
+- ✅ Property access: `SERVER.fqdn`, `$CONFIG.port`
+- ✅ Comments: `# comment`
+- ✅ Semicolons: Multiple statements on one line
+
+### ⚠️ Known Limitations (2 failing tests):
+
+- ❌ Multiline lists: `ITEMS = [\n  1,\n  2\n]` (use single-line instead)
+- ❌ Multiline maps: `CONFIG = {\n  "key": "value"\n}` (use single-line instead)
+
+**Workaround:** Use single-line syntax: `ITEMS = [1, 2, 3]` ✅
+
+### 🔜 Phase 3 (Planned):
+
+- Multiline structure support (requires bracket tracking in scanner)
+- `return`, `continue`, `break` statements
+- `shell()` function for explicit command execution
+- `{}` interpolation for expressions in commands
+- Path literals: `/bin/ls`, `./script.sh`
+
+---
+
+## Documentation
+
+**Essential Files:**
+- [`rshell-grammar/README.md`](rshell-grammar/README.md:1) - Grammar overview and quick reference
+- [`rshell-grammar/CURRENT_STATUS.md`](rshell-grammar/CURRENT_STATUS.md:1) - Project status and test results
+- [`RSHELL_SYNTAX_DESIGN.md`](RSHELL_SYNTAX_DESIGN.md:1) - Complete syntax specification
+
+**Technical Deep Dives:**
+- [`rshell-grammar/LINE_BASED_MODE_DETECTION.md`](rshell-grammar/LINE_BASED_MODE_DETECTION.md:1) - Mode detection explained
+- [`rshell-grammar/TREE_SITTER_EXTERNAL_SCANNER.md`](rshell-grammar/TREE_SITTER_EXTERNAL_SCANNER.md:1) - Scanner implementation guide
+- [`rshell-grammar/PHASE_2_MODE_DETECTION_COMPLETE.md`](rshell-grammar/PHASE_2_MODE_DETECTION_COMPLETE.md:1) - Implementation details
+
+---
+
+## Example RShell Code
+
+```rshell
+# Automatic EXPR mode detection
+SERVERS = [
+  {'fqdn':'web1.example.com', 'port':22},
+  {'fqdn':'web2.example.com', 'port':22}
+]
+
+# Automatic CMD mode detection
+echo "Starting health check..."
+
+# Control flow (EXPR mode detected)
+for S in SERVERS {
+  # Assignment inside block
+  STATUS = 0
+  
+  # Commands work inside EXPR blocks!
+  echo Checking server
+}
+
+# Back to CMD mode automatically
+echo "Health check complete"
+```
+
+---
+
+**Need help?** Check the documentation files or run `./build_grammar.sh` to verify everything works!

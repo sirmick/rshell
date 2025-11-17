@@ -1,0 +1,1694 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    RSHELL AST VALIDATION SUITE                               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: BASIC_LITERALS                                                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Number assignment
+================================================================================
+Description: Should produce assignment with identifier and number literal
+
+Input Code:
+----------------------------------------
+  X = 42
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 6]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 6]
+      name: (identifier [0, 0] - [0, 1])
+      value: (number [0, 4] - [0, 6])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: String assignment
+================================================================================
+Description: Should produce assignment with string literal
+
+Input Code:
+----------------------------------------
+  NAME = "production"
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 19]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 19]
+      name: (identifier [0, 0] - [0, 4])
+      value: (string [0, 7] - [0, 19])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Boolean true
+================================================================================
+Description: Should produce assignment with boolean literal
+
+Input Code:
+----------------------------------------
+  ENABLED = true
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 14]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 14]
+      name: (identifier [0, 0] - [0, 7])
+      value: (boolean [0, 10] - [0, 14])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Boolean false
+================================================================================
+Description: Should produce assignment with boolean literal
+
+Input Code:
+----------------------------------------
+  DEBUG = false
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 13]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 13]
+      name: (identifier [0, 0] - [0, 5])
+      value: (boolean [0, 8] - [0, 13])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: COMPOUND_ASSIGNMENTS                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Compound += operator
+================================================================================
+Description: Should produce assignment with += operator and operands
+
+Input Code:
+----------------------------------------
+  COUNT += 1
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 10]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 10]
+      name: (identifier [0, 0] - [0, 5])
+      value: (number [0, 9] - [0, 10])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Compound -= operator
+================================================================================
+Description: Should produce assignment with -= operator and operands
+
+Input Code:
+----------------------------------------
+  VALUE -= 10
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 11]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 11]
+      name: (identifier [0, 0] - [0, 5])
+      value: (number [0, 9] - [0, 11])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Compound *= operator
+================================================================================
+Description: Should produce assignment with *= operator and operands
+
+Input Code:
+----------------------------------------
+  TOTAL *= 2
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 10]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 10]
+      name: (identifier [0, 0] - [0, 5])
+      value: (number [0, 9] - [0, 10])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: DATA_STRUCTURES                                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Simple list
+================================================================================
+Description: Should produce list with three number elements
+
+Input Code:
+----------------------------------------
+  NUMS = [1, 2, 3]
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 16]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 16]
+      name: (identifier [0, 0] - [0, 4])
+      value: (list [0, 7] - [0, 16]
+        (number [0, 8] - [0, 9])
+        (number [0, 11] - [0, 12])
+        (number [0, 14] - [0, 15]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Nested list
+================================================================================
+Description: Should produce list containing two sub-lists
+
+Input Code:
+----------------------------------------
+  MATRIX = [[1, 2], [3, 4]]
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 25]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 25]
+      name: (identifier [0, 0] - [0, 6])
+      value: (list [0, 9] - [0, 25]
+        (list [0, 10] - [0, 16]
+          (number [0, 11] - [0, 12])
+          (number [0, 14] - [0, 15]))
+        (list [0, 18] - [0, 24]
+          (number [0, 19] - [0, 20])
+          (number [0, 22] - [0, 23])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Simple map
+================================================================================
+Description: Should produce map with single key-value entry
+
+Input Code:
+----------------------------------------
+  CONFIG = {"key": "value"}
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 25]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 25]
+      name: (identifier [0, 0] - [0, 6])
+      value: (map [0, 9] - [0, 25]
+        (map_entry [0, 10] - [0, 24]
+          key: (string [0, 10] - [0, 15])
+          value: (string [0, 17] - [0, 24])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Multi-entry map
+================================================================================
+Description: Should produce map with multiple entries
+
+Input Code:
+----------------------------------------
+  SERVER = {"name": "web1", "port": 8080}
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 39]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 39]
+      name: (identifier [0, 0] - [0, 6])
+      value: (map [0, 9] - [0, 39]
+        (map_entry [0, 10] - [0, 24]
+          key: (string [0, 10] - [0, 16])
+          value: (string [0, 18] - [0, 24]))
+        (map_entry [0, 26] - [0, 38]
+          key: (string [0, 26] - [0, 32])
+          value: (number [0, 34] - [0, 38])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Empty list
+================================================================================
+Description: Should produce empty list structure
+
+Input Code:
+----------------------------------------
+  ITEMS = []
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 10]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 10]
+      name: (identifier [0, 0] - [0, 5])
+      value: (list [0, 8] - [0, 10])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Empty map
+================================================================================
+Description: Should produce empty map structure
+
+Input Code:
+----------------------------------------
+  CONFIG = {}
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 11]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 11]
+      name: (identifier [0, 0] - [0, 6])
+      value: (map [0, 9] - [0, 11])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: COMMANDS_AND_PIPELINES                                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Simple command
+================================================================================
+Description: Should produce command node with identifier
+
+Input Code:
+----------------------------------------
+  ls
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 2]
+    (cmd_line_start [0, 0] - [0, 0])
+    (command [0, 0] - [0, 2]
+      name: (command_name [0, 0] - [0, 2]
+        (identifier [0, 0] - [0, 2]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Command with arguments
+================================================================================
+Description: Should produce command with multiple arguments
+
+Input Code:
+----------------------------------------
+  echo hello world
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 16]
+    (cmd_line_start [0, 0] - [0, 0])
+    (command [0, 0] - [0, 16]
+      name: (command_name [0, 0] - [0, 4]
+        (identifier [0, 0] - [0, 4]))
+      argument: (identifier [0, 5] - [0, 10])
+      argument: (identifier [0, 11] - [0, 16])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Command with string argument
+================================================================================
+Description: Should produce command with string literal argument
+
+Input Code:
+----------------------------------------
+  echo "hello world"
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 18]
+    (cmd_line_start [0, 0] - [0, 0])
+    (command [0, 0] - [0, 18]
+      name: (command_name [0, 0] - [0, 4]
+        (identifier [0, 0] - [0, 4]))
+      argument: (string [0, 5] - [0, 18])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Simple pipeline
+================================================================================
+Description: Should produce pipeline with two commands
+
+Input Code:
+----------------------------------------
+  ls | grep txt
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 13]
+    (cmd_line_start [0, 0] - [0, 0])
+    (pipeline [0, 0] - [0, 13]
+      (command [0, 0] - [0, 2]
+        name: (command_name [0, 0] - [0, 2]
+          (identifier [0, 0] - [0, 2])))
+      (command [0, 5] - [0, 13]
+        name: (command_name [0, 5] - [0, 9]
+          (identifier [0, 5] - [0, 9]))
+        argument: (identifier [0, 10] - [0, 13]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Multi-stage pipeline
+================================================================================
+Description: Should produce pipeline with three commands
+
+Input Code:
+----------------------------------------
+  cat file | grep pattern | wc -l
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 31]
+    (cmd_line_start [0, 0] - [0, 0])
+    (pipeline [0, 0] - [0, 31]
+      (command [0, 0] - [0, 8]
+        name: (command_name [0, 0] - [0, 3]
+          (identifier [0, 0] - [0, 3]))
+        argument: (identifier [0, 4] - [0, 8]))
+      (command [0, 11] - [0, 23]
+        name: (command_name [0, 11] - [0, 15]
+          (identifier [0, 11] - [0, 15]))
+        argument: (identifier [0, 16] - [0, 23]))
+      (command [0, 26] - [0, 31]
+        name: (command_name [0, 26] - [0, 28]
+          (identifier [0, 26] - [0, 28]))
+        argument: (command_flag [0, 29] - [0, 31]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: VARIABLES_AND_PROPERTIES                                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Variable reference in command
+================================================================================
+Description: Should produce command with variable_reference
+
+Input Code:
+----------------------------------------
+  echo $HOME
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 10]
+    (cmd_line_start [0, 0] - [0, 0])
+    (command [0, 0] - [0, 10]
+      name: (command_name [0, 0] - [0, 4]
+        (identifier [0, 0] - [0, 4]))
+      argument: (variable_reference [0, 5] - [0, 10]
+        name: (identifier [0, 6] - [0, 10]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Variable in assignment
+================================================================================
+Description: Should produce assignment with variable_reference
+
+Input Code:
+----------------------------------------
+  Y = $X
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 6]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 6]
+      name: (identifier [0, 0] - [0, 1])
+      value: (variable_reference [0, 4] - [0, 6]
+        name: (identifier [0, 5] - [0, 6]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Property access
+================================================================================
+Description: Should produce property_access with identifier and property
+
+Input Code:
+----------------------------------------
+  HOST = SERVER.fqdn
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 18]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 18]
+      name: (identifier [0, 0] - [0, 4])
+      value: (property_access [0, 7] - [0, 18]
+        object: (identifier [0, 7] - [0, 13])
+        properties: (property_chain [0, 13] - [0, 18]
+          property: (identifier [0, 14] - [0, 18])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Chained property access
+================================================================================
+Description: Should produce property_access with property_chain
+
+Input Code:
+----------------------------------------
+  PORT = CONFIG.database.port
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 27]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 27]
+      name: (identifier [0, 0] - [0, 4])
+      value: (property_access [0, 7] - [0, 27]
+        object: (identifier [0, 7] - [0, 13])
+        properties: (property_chain [0, 13] - [0, 27]
+          property: (identifier [0, 14] - [0, 22])
+          property: (identifier [0, 23] - [0, 27])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Variable with property
+================================================================================
+Description: Should produce variable_reference with property_chain
+
+Input Code:
+----------------------------------------
+  VALUE = $SERVER.fqdn
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 20]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 20]
+      name: (identifier [0, 0] - [0, 5])
+      value: (variable_reference [0, 8] - [0, 20]
+        name: (identifier [0, 9] - [0, 15])
+        (property_chain [0, 15] - [0, 20]
+          property: (identifier [0, 16] - [0, 20])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: EXPRESSIONS                                                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Binary expression (addition)
+================================================================================
+Description: Should produce binary_expression with + operator
+
+Input Code:
+----------------------------------------
+  SUM = 10 + 5
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 12]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 12]
+      name: (identifier [0, 0] - [0, 3])
+      value: (binary_expression [0, 6] - [0, 12]
+        (number [0, 6] - [0, 8])
+        (number [0, 11] - [0, 12]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Binary expression (multiplication)
+================================================================================
+Description: Should produce binary_expression with * operator
+
+Input Code:
+----------------------------------------
+  PRODUCT = 10 * 5
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 16]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 16]
+      name: (identifier [0, 0] - [0, 7])
+      value: (binary_expression [0, 10] - [0, 16]
+        (number [0, 10] - [0, 12])
+        (number [0, 15] - [0, 16]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Binary expression (comparison)
+================================================================================
+Description: Should produce binary_expression with > operator
+
+Input Code:
+----------------------------------------
+  CHECK = X > 10
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 14]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 14]
+      name: (identifier [0, 0] - [0, 5])
+      value: (binary_expression [0, 8] - [0, 14]
+        (identifier [0, 8] - [0, 9])
+        (number [0, 12] - [0, 14]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Logical AND
+================================================================================
+Description: Should produce binary_expression with 'and' operator
+
+Input Code:
+----------------------------------------
+  BOTH = A and B
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 14]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 14]
+      name: (identifier [0, 0] - [0, 4])
+      value: (binary_expression [0, 7] - [0, 14]
+        (identifier [0, 7] - [0, 8])
+        (identifier [0, 13] - [0, 14]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Logical OR
+================================================================================
+Description: Should produce binary_expression with 'or' operator
+
+Input Code:
+----------------------------------------
+  EITHER = A or B
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 15]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 15]
+      name: (identifier [0, 0] - [0, 6])
+      value: (binary_expression [0, 9] - [0, 15]
+        (identifier [0, 9] - [0, 10])
+        (identifier [0, 14] - [0, 15]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Unary expression (not)
+================================================================================
+Description: Should produce unary_expression with 'not' operator
+
+Input Code:
+----------------------------------------
+  NEG = not TRUE
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 14]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 14]
+      name: (identifier [0, 0] - [0, 3])
+      value: (unary_expression [0, 6] - [0, 14]
+        (identifier [0, 10] - [0, 14]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Parenthesized expression
+================================================================================
+Description: Should produce parenthesized_expression containing binary_expression
+
+Input Code:
+----------------------------------------
+  CALC = (5 + 3)
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 14]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 14]
+      name: (identifier [0, 0] - [0, 4])
+      value: (parenthesized_expression [0, 7] - [0, 14]
+        (binary_expression [0, 8] - [0, 13]
+          (number [0, 8] - [0, 9])
+          (number [0, 12] - [0, 13])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Complex expression
+================================================================================
+Description: Should produce nested expression with correct precedence
+
+Input Code:
+----------------------------------------
+  RESULT = (10 + 5) * 2
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 21]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 21]
+      name: (identifier [0, 0] - [0, 6])
+      value: (binary_expression [0, 9] - [0, 21]
+        (parenthesized_expression [0, 9] - [0, 17]
+          (binary_expression [0, 10] - [0, 16]
+            (number [0, 10] - [0, 12])
+            (number [0, 15] - [0, 16])))
+        (number [0, 20] - [0, 21]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: CONTROL_FLOW                                                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Simple if statement
+================================================================================
+Description: Should produce if_statement with condition and block
+
+Input Code:
+----------------------------------------
+  if (X > 10) {
+    Y = 1
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [2, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [2, 1]
+      (if_statement [0, 0] - [2, 1]
+        condition: (parenthesized_expression [0, 3] - [0, 11]
+          (binary_expression [0, 4] - [0, 10]
+            (identifier [0, 4] - [0, 5])
+            (number [0, 8] - [0, 10])))
+        consequence: (block [0, 12] - [2, 1]
+          (line_start [1, 0] - [1, 0])
+          (assignment [1, 2] - [1, 7]
+            name: (identifier [1, 2] - [1, 3])
+            value: (number [1, 6] - [1, 7]))
+          (line_start [2, 0] - [2, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: If-else statement
+================================================================================
+Description: Should produce if_statement with else_clause
+
+Input Code:
+----------------------------------------
+  if (X > 10) {
+    Y = 1
+  } else {
+    Y = 0
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [4, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [4, 1]
+      (if_statement [0, 0] - [4, 1]
+        condition: (parenthesized_expression [0, 3] - [0, 11]
+          (binary_expression [0, 4] - [0, 10]
+            (identifier [0, 4] - [0, 5])
+            (number [0, 8] - [0, 10])))
+        consequence: (block [0, 12] - [2, 1]
+          (line_start [1, 0] - [1, 0])
+          (assignment [1, 2] - [1, 7]
+            name: (identifier [1, 2] - [1, 3])
+            value: (number [1, 6] - [1, 7]))
+          (line_start [2, 0] - [2, 0]))
+        alternative: (else_clause [2, 2] - [4, 1]
+          consequence: (block [2, 7] - [4, 1]
+            (line_start [3, 0] - [3, 0])
+            (assignment [3, 2] - [3, 7]
+              name: (identifier [3, 2] - [3, 3])
+              value: (number [3, 6] - [3, 7]))
+            (line_start [4, 0] - [4, 0]))))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: If-elif-else chain
+================================================================================
+Description: Should produce if_statement with elif_clause and else_clause
+
+Input Code:
+----------------------------------------
+  if (X > 10) {
+    Y = 1
+  } elif (X > 5) {
+    Y = 2
+  } else {
+    Y = 3
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [6, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [6, 1]
+      (if_statement [0, 0] - [6, 1]
+        condition: (parenthesized_expression [0, 3] - [0, 11]
+          (binary_expression [0, 4] - [0, 10]
+            (identifier [0, 4] - [0, 5])
+            (number [0, 8] - [0, 10])))
+        consequence: (block [0, 12] - [2, 1]
+          (line_start [1, 0] - [1, 0])
+          (assignment [1, 2] - [1, 7]
+            name: (identifier [1, 2] - [1, 3])
+            value: (number [1, 6] - [1, 7]))
+          (line_start [2, 0] - [2, 0]))
+        alternative: (elif_clause [2, 2] - [4, 1]
+          condition: (parenthesized_expression [2, 7] - [2, 14]
+            (binary_expression [2, 8] - [2, 13]
+              (identifier [2, 8] - [2, 9])
+              (number [2, 12] - [2, 13])))
+          consequence: (block [2, 15] - [4, 1]
+            (line_start [3, 0] - [3, 0])
+            (assignment [3, 2] - [3, 7]
+              name: (identifier [3, 2] - [3, 3])
+              value: (number [3, 6] - [3, 7]))
+            (line_start [4, 0] - [4, 0])))
+        alternative: (else_clause [4, 2] - [6, 1]
+          consequence: (block [4, 7] - [6, 1]
+            (line_start [5, 0] - [5, 0])
+            (assignment [5, 2] - [5, 7]
+              name: (identifier [5, 2] - [5, 3])
+              value: (number [5, 6] - [5, 7]))
+            (line_start [6, 0] - [6, 0]))))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: For loop
+================================================================================
+Description: Should produce for_statement with iterator and block
+
+Input Code:
+----------------------------------------
+  for S in SERVERS {
+    echo test
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [2, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [2, 1]
+      (for_statement [0, 0] - [2, 1]
+        variable: (identifier [0, 4] - [0, 5])
+        iterable: (identifier [0, 9] - [0, 16])
+        body: (block [0, 17] - [2, 1]
+          (cmd_line_start [1, 0] - [1, 0])
+          (command [1, 2] - [1, 11]
+            name: (command_name [1, 2] - [1, 6]
+              (identifier [1, 2] - [1, 6]))
+            argument: (identifier [1, 7] - [1, 11]))
+          (expr_line_start [2, 0] - [2, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: While loop
+================================================================================
+Description: Should produce while_statement with condition and block
+
+Input Code:
+----------------------------------------
+  while (X < 100) {
+    X += 1
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [2, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [2, 1]
+      (while_statement [0, 0] - [2, 1]
+        condition: (parenthesized_expression [0, 6] - [0, 15]
+          (binary_expression [0, 7] - [0, 14]
+            (identifier [0, 7] - [0, 8])
+            (number [0, 11] - [0, 14])))
+        body: (block [0, 16] - [2, 1]
+          (line_start [1, 0] - [1, 0])
+          (assignment [1, 2] - [1, 8]
+            name: (identifier [1, 2] - [1, 3])
+            value: (number [1, 7] - [1, 8]))
+          (line_start [2, 0] - [2, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: RETURN_AND_LOOP_CONTROL                                           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Return with value
+================================================================================
+Description: Should produce return_statement with number value
+
+Input Code:
+----------------------------------------
+  return 42
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 9]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [0, 9]
+      (return_statement [0, 0] - [0, 9]
+        (number [0, 7] - [0, 9]))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Return without value
+================================================================================
+Description: Should produce return_statement without child value
+
+Input Code:
+----------------------------------------
+  return
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 6]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [0, 6]
+      (return_statement [0, 0] - [0, 6])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Return in if block
+================================================================================
+Description: Should produce if_statement containing return_statement
+
+Input Code:
+----------------------------------------
+  if (X > 0) {
+    return X
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [2, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [2, 1]
+      (if_statement [0, 0] - [2, 1]
+        condition: (parenthesized_expression [0, 3] - [0, 10]
+          (binary_expression [0, 4] - [0, 9]
+            (identifier [0, 4] - [0, 5])
+            (number [0, 8] - [0, 9])))
+        consequence: (block [0, 11] - [2, 1]
+          (line_start [1, 0] - [1, 0])
+          (control_flow [1, 2] - [1, 10]
+            (return_statement [1, 2] - [1, 10]
+              (identifier [1, 9] - [1, 10])))
+          (line_start [2, 0] - [2, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Continue statement
+================================================================================
+Description: Should produce continue_statement
+
+Input Code:
+----------------------------------------
+  continue
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 8]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [0, 8]
+      (continue_statement [0, 0] - [0, 8])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Break statement
+================================================================================
+Description: Should produce break_statement
+
+Input Code:
+----------------------------------------
+  break
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 5]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [0, 5]
+      (break_statement [0, 0] - [0, 5])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Continue in loop
+================================================================================
+Description: Should produce for_statement with nested if containing continue
+
+Input Code:
+----------------------------------------
+  for X in LIST {
+    if (X > 5) {
+      continue
+    }
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [4, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [4, 1]
+      (for_statement [0, 0] - [4, 1]
+        variable: (identifier [0, 4] - [0, 5])
+        iterable: (identifier [0, 9] - [0, 13])
+        body: (block [0, 14] - [4, 1]
+          (line_start [1, 0] - [1, 0])
+          (control_flow [1, 2] - [3, 3]
+            (if_statement [1, 2] - [3, 3]
+              condition: (parenthesized_expression [1, 5] - [1, 12]
+                (binary_expression [1, 6] - [1, 11]
+                  (identifier [1, 6] - [1, 7])
+                  (number [1, 10] - [1, 11])))
+              consequence: (block [1, 13] - [3, 3]
+                (line_start [2, 0] - [2, 0])
+                (control_flow [2, 4] - [2, 12]
+                  (continue_statement [2, 4] - [2, 12]))
+                (line_start [3, 0] - [3, 0]))))
+          (line_start [4, 0] - [4, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Break in loop
+================================================================================
+Description: Should produce while_statement with nested if containing break
+
+Input Code:
+----------------------------------------
+  while (true) {
+    if (X > 10) {
+      break
+    }
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [4, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [4, 1]
+      (while_statement [0, 0] - [4, 1]
+        condition: (parenthesized_expression [0, 6] - [0, 12]
+          (boolean [0, 7] - [0, 11]))
+        body: (block [0, 13] - [4, 1]
+          (line_start [1, 0] - [1, 0])
+          (control_flow [1, 2] - [3, 3]
+            (if_statement [1, 2] - [3, 3]
+              condition: (parenthesized_expression [1, 5] - [1, 13]
+                (binary_expression [1, 6] - [1, 12]
+                  (identifier [1, 6] - [1, 7])
+                  (number [1, 10] - [1, 12])))
+              consequence: (block [1, 14] - [3, 3]
+                (line_start [2, 0] - [2, 0])
+                (control_flow [2, 4] - [2, 9]
+                  (break_statement [2, 4] - [2, 9]))
+                (line_start [3, 0] - [3, 0]))))
+          (line_start [4, 0] - [4, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: NESTED_STRUCTURES                                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: If inside for
+================================================================================
+Description: Should produce for_statement with nested if_statement
+
+Input Code:
+----------------------------------------
+  for X in LIST {
+    if (X > 5) {
+      Y = 1
+    }
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [4, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [4, 1]
+      (for_statement [0, 0] - [4, 1]
+        variable: (identifier [0, 4] - [0, 5])
+        iterable: (identifier [0, 9] - [0, 13])
+        body: (block [0, 14] - [4, 1]
+          (line_start [1, 0] - [1, 0])
+          (control_flow [1, 2] - [3, 3]
+            (if_statement [1, 2] - [3, 3]
+              condition: (parenthesized_expression [1, 5] - [1, 12]
+                (binary_expression [1, 6] - [1, 11]
+                  (identifier [1, 6] - [1, 7])
+                  (number [1, 10] - [1, 11])))
+              consequence: (block [1, 13] - [3, 3]
+                (line_start [2, 0] - [2, 0])
+                (assignment [2, 4] - [2, 9]
+                  name: (identifier [2, 4] - [2, 5])
+                  value: (number [2, 8] - [2, 9]))
+                (line_start [3, 0] - [3, 0]))))
+          (line_start [4, 0] - [4, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: For inside if
+================================================================================
+Description: Should produce if_statement with nested for_statement
+
+Input Code:
+----------------------------------------
+  if (COUNT > 0) {
+    for ITEM in ITEMS {
+      echo test
+    }
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [4, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [4, 1]
+      (if_statement [0, 0] - [4, 1]
+        condition: (parenthesized_expression [0, 3] - [0, 14]
+          (binary_expression [0, 4] - [0, 13]
+            (identifier [0, 4] - [0, 9])
+            (number [0, 12] - [0, 13])))
+        consequence: (block [0, 15] - [4, 1]
+          (line_start [1, 0] - [1, 0])
+          (control_flow [1, 2] - [3, 3]
+            (for_statement [1, 2] - [3, 3]
+              variable: (identifier [1, 6] - [1, 10])
+              iterable: (identifier [1, 14] - [1, 19])
+              body: (block [1, 20] - [3, 3]
+                (cmd_line_start [2, 0] - [2, 0])
+                (command [2, 4] - [2, 13]
+                  name: (command_name [2, 4] - [2, 8]
+                    (identifier [2, 4] - [2, 8]))
+                  argument: (identifier [2, 9] - [2, 13]))
+                (expr_line_start [3, 0] - [3, 0]))))
+          (line_start [4, 0] - [4, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: While inside while
+================================================================================
+Description: Should produce nested while_statements with correct scoping
+
+Input Code:
+----------------------------------------
+  while (X < 10) {
+    while (Y < 5) {
+      Y += 1
+    }
+    X += 1
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [5, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [5, 1]
+      (while_statement [0, 0] - [5, 1]
+        condition: (parenthesized_expression [0, 6] - [0, 14]
+          (binary_expression [0, 7] - [0, 13]
+            (identifier [0, 7] - [0, 8])
+            (number [0, 11] - [0, 13])))
+        body: (block [0, 15] - [5, 1]
+          (line_start [1, 0] - [1, 0])
+          (control_flow [1, 2] - [3, 3]
+            (while_statement [1, 2] - [3, 3]
+              condition: (parenthesized_expression [1, 8] - [1, 15]
+                (binary_expression [1, 9] - [1, 14]
+                  (identifier [1, 9] - [1, 10])
+                  (number [1, 13] - [1, 14])))
+              body: (block [1, 16] - [3, 3]
+                (line_start [2, 0] - [2, 0])
+                (assignment [2, 4] - [2, 10]
+                  name: (identifier [2, 4] - [2, 5])
+                  value: (number [2, 9] - [2, 10]))
+                (line_start [3, 0] - [3, 0]))))
+          (line_start [4, 0] - [4, 0])
+          (assignment [4, 2] - [4, 8]
+            name: (identifier [4, 2] - [4, 3])
+            value: (number [4, 7] - [4, 8]))
+          (line_start [5, 0] - [5, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: List of maps
+================================================================================
+Description: Should produce list containing map elements
+
+Input Code:
+----------------------------------------
+  SERVERS = [{"name": "web1"}, {"name": "web2"}]
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 46]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 46]
+      name: (identifier [0, 0] - [0, 7])
+      value: (list [0, 10] - [0, 46]
+        (map [0, 11] - [0, 27]
+          (map_entry [0, 12] - [0, 26]
+            key: (string [0, 12] - [0, 18])
+            value: (string [0, 20] - [0, 26])))
+        (map [0, 29] - [0, 45]
+          (map_entry [0, 30] - [0, 44]
+            key: (string [0, 30] - [0, 36])
+            value: (string [0, 38] - [0, 44]))))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Map with list value
+================================================================================
+Description: Should produce map with list value
+
+Input Code:
+----------------------------------------
+  CONFIG = {"ports": [8080, 8081]}
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 32]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 32]
+      name: (identifier [0, 0] - [0, 6])
+      value: (map [0, 9] - [0, 32]
+        (map_entry [0, 10] - [0, 31]
+          key: (string [0, 10] - [0, 17])
+          value: (list [0, 19] - [0, 31]
+            (number [0, 20] - [0, 24])
+            (number [0, 26] - [0, 30]))))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: COMMENTS                                                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Comment alone
+================================================================================
+Description: Should produce comment node
+
+Input Code:
+----------------------------------------
+  # This is a comment
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 19]
+    (cmd_line_start [0, 0] - [0, 0])
+    (comment [0, 0] - [0, 19]))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Comment after statement
+================================================================================
+Description: Should produce assignment with trailing comment
+
+Input Code:
+----------------------------------------
+  X = 42  # Set X to 42
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 21]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 6]
+      name: (identifier [0, 0] - [0, 1])
+      value: (number [0, 4] - [0, 6]))
+    (comment [0, 8] - [0, 21]))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Comment before statement
+================================================================================
+Description: Should produce comment followed by command
+
+Input Code:
+----------------------------------------
+  # Run echo
+  echo hello
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [1, 10]
+    (cmd_line_start [0, 0] - [0, 0])
+    (comment [0, 0] - [0, 10])
+    (line_start [1, 0] - [1, 0])
+    (command [1, 0] - [1, 10]
+      name: (command_name [1, 0] - [1, 4]
+        (identifier [1, 0] - [1, 4]))
+      argument: (identifier [1, 5] - [1, 10])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CATEGORY: MIXED_MODE                                                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+TEST: Commands and assignments in block
+================================================================================
+Description: Should produce if_statement with mixed assignment and command statements
+
+Input Code:
+----------------------------------------
+  if (X > 0) {
+    Y = 1
+    echo test
+    Z = 2
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [4, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [4, 1]
+      (if_statement [0, 0] - [4, 1]
+        condition: (parenthesized_expression [0, 3] - [0, 10]
+          (binary_expression [0, 4] - [0, 9]
+            (identifier [0, 4] - [0, 5])
+            (number [0, 8] - [0, 9])))
+        consequence: (block [0, 11] - [4, 1]
+          (line_start [1, 0] - [1, 0])
+          (assignment [1, 2] - [1, 7]
+            name: (identifier [1, 2] - [1, 3])
+            value: (number [1, 6] - [1, 7]))
+          (cmd_line_start [2, 0] - [2, 0])
+          (command [2, 2] - [2, 11]
+            name: (command_name [2, 2] - [2, 6]
+              (identifier [2, 2] - [2, 6]))
+            argument: (identifier [2, 7] - [2, 11]))
+          (expr_line_start [3, 0] - [3, 0])
+          (assignment [3, 2] - [3, 7]
+            name: (identifier [3, 2] - [3, 3])
+            value: (number [3, 6] - [3, 7]))
+          (line_start [4, 0] - [4, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Pipeline in for loop
+================================================================================
+Description: Should produce for_statement with pipeline in block
+
+Input Code:
+----------------------------------------
+  for F in FILES {
+    cat $F | grep pattern
+  }
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [2, 1]
+    (expr_line_start [0, 0] - [0, 0])
+    (control_flow [0, 0] - [2, 1]
+      (for_statement [0, 0] - [2, 1]
+        variable: (identifier [0, 4] - [0, 5])
+        iterable: (identifier [0, 9] - [0, 14])
+        body: (block [0, 15] - [2, 1]
+          (cmd_line_start [1, 0] - [1, 0])
+          (pipeline [1, 2] - [1, 23]
+            (command [1, 2] - [1, 8]
+              name: (command_name [1, 2] - [1, 5]
+                (identifier [1, 2] - [1, 5]))
+              argument: (variable_reference [1, 6] - [1, 8]
+                name: (identifier [1, 7] - [1, 8])))
+            (command [1, 11] - [1, 23]
+              name: (command_name [1, 11] - [1, 15]
+                (identifier [1, 11] - [1, 15]))
+              argument: (identifier [1, 16] - [1, 23])))
+          (expr_line_start [2, 0] - [2, 0])))))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+================================================================================
+TEST: Multiple statements with semicolon
+================================================================================
+Description: Should produce separate statements with semicolon separator
+
+Input Code:
+----------------------------------------
+  X = 1; Y = 2; echo done
+
+Generated AST:
+----------------------------------------
+  (program [0, 0] - [0, 23]
+    (expr_line_start [0, 0] - [0, 0])
+    (assignment [0, 0] - [0, 5]
+      name: (identifier [0, 0] - [0, 1])
+      value: (number [0, 4] - [0, 5]))
+    (line_start [0, 6] - [0, 6])
+    (assignment [0, 7] - [0, 12]
+      name: (identifier [0, 7] - [0, 8])
+      value: (number [0, 11] - [0, 12]))
+    (cmd_line_start [0, 13] - [0, 13])
+    (command [0, 14] - [0, 23]
+      name: (command_name [0, 14] - [0, 18]
+        (identifier [0, 14] - [0, 18]))
+      argument: (identifier [0, 19] - [0, 23])))
+  Warning: You have not configured any parser directories!
+  Please run `tree-sitter init-config` and edit the resulting
+  configuration file to indicate where we should look for
+  language grammars.
+
+✓ VALID - No parse errors detected
+
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              VALIDATION SUMMARY                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  ✓ Valid ASTs:     54                                                            ║
+║  ✗ Invalid ASTs:   0                                                             ║
+║  Total Tests:      54                                                            ║
+║  Pass Rate:        100.0%                                                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
