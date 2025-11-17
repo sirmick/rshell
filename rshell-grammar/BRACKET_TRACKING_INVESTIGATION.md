@@ -1,7 +1,7 @@
 # Bracket Tracking Investigation
 
 **Date**: 2025-11-17
-**Status**: ✅ IMPLEMENTED - 100% test coverage achieved
+**Status**: ✅ SOLVED - 100% test coverage achieved with grammar-based solution
 **Issue**: RESOLVED - Multiline lists and maps now work
 
 ## Problem Statement
@@ -209,19 +209,45 @@ Our problem is different:
    - We chose simplicity (clean scanner) over 100% coverage
    - The 2 failing tests are acceptable edge cases
 
+## Solution That Worked: Grammar-Based Approach
+
+After investigating scanner-based solutions, we found a **pure grammar solution** that achieved 100% test coverage!
+
+### The Key Insight
+
+Instead of trying to prevent the scanner from emitting line tokens inside structures, we modified the grammar to **accept and consume** these tokens as part of the structure.
+
+### Implementation
+
+```javascript
+// List item that can have line starts inside
+_list_item: $ => seq(
+  repeat(choice($._newline, $.line_start, $.expr_line_start, $.cmd_line_start)),
+  $._value,
+  repeat(choice($._newline, $.line_start, $.expr_line_start, $.cmd_line_start))
+),
+```
+
+This allows the parser to consume line start tokens that appear inside lists and maps, preventing them from being misinterpreted as statement boundaries.
+
+### Results
+
+- **Before**: 97.1% pass rate (67/69 tests)
+- **After**: 100% pass rate (69/69 tests) ✅
+
+See [`MULTILINE_FIX_EXPLANATION.md`](MULTILINE_FIX_EXPLANATION.md) for full details.
+
 ## Conclusion
 
-Bracket depth tracking in an external scanner is theoretically possible but practically very difficult without deeper Tree-sitter integration. 
+The grammar-based solution proved superior to scanner modifications:
+1. **Simpler**: No complex state tracking needed
+2. **Cleaner**: Pure grammar solution, scanner unchanged
+3. **Effective**: 100% test coverage achieved
+4. **Maintainable**: Easy to understand and modify
 
-The pragmatic approach is to:
-1. **Accept 96.8% as Phase 2 complete**
-2. **Document the limitation** (multiline structures)
-3. **Defer full solution to Phase 3** (when more time can be invested)
-4. **Provide workaround** (single-line structures work perfectly)
-
-This represents excellent progress and the project is production-ready for all implemented features.
+This demonstrates that working WITH the system (accepting tokens) rather than against it (trying to prevent tokens) often leads to better solutions.
 
 ---
 
-**Decision**: Mark Phase 2 complete at 96.8% coverage  
-**Next Steps**: Phase 3 planning (bracket tracking, return/continue/break statements, path literals)
+**Decision**: Phase 2 complete with 100% coverage 🎉
+**Next Steps**: Phase 3 features (shell() function, {} interpolation, path literals)

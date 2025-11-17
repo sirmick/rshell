@@ -1,5 +1,5 @@
 /**
- * @file RShell grammar - Clean, purpose-built shell with structured data
+ * @file RShell grammar - Experimental fix for multiline structures
  * @author RShell Team
  * @license MIT
  */
@@ -7,24 +7,19 @@
 module.exports = grammar({
   name: 'rshell',
 
-  // NEW: Declare external tokens for line-based mode detection
+  // External tokens for line-based mode detection
   externals: $ => [
     $._newline,           // Track newlines
-    $.line_start,         // Mark start of new line (mode-agnostic)
-    $.expr_line_start,    // Expression mode line start (when mode changes)
-    $.cmd_line_start,     // Command mode line start (when mode changes)
+    $.line_start,         // Mark start of new line (generic)
+    $.expr_line_start,    // Expression mode line start
+    $.cmd_line_start,     // Command mode line start
+    $.command_substitution, // NEW: $(...) command substitution
   ],
 
-  // Resolve ambiguity: newline can be part of statement or follow it
-  conflicts: $ => [
-    [$._statement],
-    [$._statement, $.block],
-    [$._block_statement],
-    [$._block_statement, $.block],
-    [$.command],
-    [$.assignment],
-    [$.control_flow],
-    [$.pipeline],
+  // Precedence for resolving ambiguities
+  precedences: $ => [
+    [$.list, $._statement],
+    [$.map, $._statement],
   ],
 
   extras: $ => [
@@ -32,28 +27,31 @@ module.exports = grammar({
     /[ \t]/,  // Spaces and tabs (but NOT newlines!)
   ],
 
+  conflicts: $ => [
+    [$._statement],
+    [$.list],
+    [$.map],
+    [$.command],  // Add conflict for command
+  ],
+
   rules: {
     // ===== TOP LEVEL =====
     program: $ => repeat($._statement),
 
     _statement: $ => choice(
-      // Expression mode statements
-      // Mode change: explicit mode marker
+      // Expression mode statements 
       seq($.expr_line_start, $.assignment, optional($._newline)),
       seq($.expr_line_start, $.control_flow, optional($._newline)),
-      // Same mode: generic line marker
       seq($.line_start, $.assignment, optional($._newline)),
       seq($.line_start, $.control_flow, optional($._newline)),
       
       // Command mode statements
-      // Mode change: explicit mode marker
       seq($.cmd_line_start, $.command, optional($._newline)),
       seq($.cmd_line_start, $.pipeline, optional($._newline)),
-      // Same mode: generic line marker
       seq($.line_start, $.command, optional($._newline)),
       seq($.line_start, $.pipeline, optional($._newline)),
       
-      // Comments (can appear anywhere)
+      // Comments
       seq($.line_start, $.comment, optional($._newline)),
       seq($.expr_line_start, $.comment, optional($._newline)),
       seq($.cmd_line_start, $.comment, optional($._newline)),
@@ -68,20 +66,23 @@ module.exports = grammar({
       repeat(field('argument', $._command_argument))
     ),
     
-    // Command name - can be identifier or string
+    // Command name - can be identifier, string, or path literal
     command_name: $ => choice(
       $.identifier,
       $.string,
+      $.path_literal,  // Allow path literals as command names
     ),
     
-    // Command arguments - more permissive than expression values
+    // Command arguments
     _command_argument: $ => choice(
-      $.command_flag,      // -la, --verbose, etc.
+      $.command_flag,
       $.string,
       $.number,
       $.identifier,
       $.variable_reference,
-      // Note: no lists/maps in command arguments
+      $.command_interpolation,  // NEW: {} interpolation
+      $.path_literal,           // NEW: path literals
+      /[a-zA-Z0-9_\-\.]+[:]/,  // Allow words ending with colon (like Total:)
     ),
     
     // Command flags (start with - or --)
@@ -121,6 +122,10 @@ module.exports = grammar({
       $.binary_expression,
       $.unary_expression,
       $.parenthesized_expression,
+      $.command_substitution,  // NEW: $(...) command substitution (replaces shell())
+      $.template_string,       // NEW: template strings
+      $.path_literal,          // NEW: path literals
+      $.function_call,         // NEW: generic function calls
     ),
 
     // ===== DATA TYPES =====
@@ -137,44 +142,51 @@ module.exports = grammar({
     // Booleans
     boolean: $ => choice('true', 'false'),
 
-    // Lists
+    // Lists - FIXED to handle internal structure
     list: $ => seq(
       '[',
-      optional($._newline),  // Allow newline after opening bracket
-      optional(seq(
-        $._value,
-        repeat(seq(
-          ',',
-          optional($._newline),  // Allow newline after comma
-          $._value
-        )),
-        optional(','),  // Allow trailing comma
-        optional($._newline)  // Allow newline before closing bracket
-      )),
+      optional($._list_content),
       ']'
     ),
 
-    // Maps
+    // List content that can span multiple lines
+    _list_content: $ => seq(
+      $._list_item,
+      repeat(seq(',', $._list_item)),
+      optional(',')  // Allow trailing comma
+    ),
+
+    // List item that can have line starts inside
+    _list_item: $ => seq(
+      repeat(choice($._newline, $.line_start, $.expr_line_start, $.cmd_line_start)),
+      $._value,
+      repeat(choice($._newline, $.line_start, $.expr_line_start, $.cmd_line_start))
+    ),
+
+    // Maps - FIXED to handle internal structure  
     map: $ => seq(
       '{',
-      optional($._newline),  // Allow newline after opening brace
-      optional(seq(
-        $.map_entry,
-        repeat(seq(
-          ',',
-          optional($._newline),  // Allow newline after comma
-          $.map_entry
-        )),
-        optional(','),  // Allow trailing comma
-        optional($._newline)  // Allow newline before closing brace
-      )),
+      optional($._map_content),
       '}'
+    ),
+
+    // Map content that can span multiple lines
+    _map_content: $ => seq(
+      $._map_item,
+      repeat(seq(',', $._map_item)),
+      optional(',')  // Allow trailing comma
+    ),
+
+    // Map item that can have line starts inside
+    _map_item: $ => seq(
+      repeat(choice($._newline, $.line_start, $.expr_line_start, $.cmd_line_start)),
+      $.map_entry,
+      repeat(choice($._newline, $.line_start, $.expr_line_start, $.cmd_line_start))
     ),
 
     map_entry: $ => seq(
       field('key', $.string),
       ':',
-      optional($._newline),  // Allow newline after colon
       field('value', $._value)
     ),
 
@@ -186,10 +198,14 @@ module.exports = grammar({
     ),
 
     // Property access for expressions (without $)
-    property_access: $ => seq(
-      field('object', $.identifier),
+    property_access: $ => prec.left(20, seq(
+      field('object', choice(
+        $.identifier,
+        $.command_substitution,  // Allow property access on command results
+        $.function_call,         // Allow property access on function results
+      )),
       field('properties', $.property_chain)
-    ),
+    )),
 
     // Chain of property accesses (.field)
     property_chain: $ => repeat1(seq(
@@ -304,7 +320,6 @@ module.exports = grammar({
     ),
 
     // Statements inside blocks - without line_start prefix
-    // (line_start tokens are consumed by the block rule itself)
     _block_statement: $ => choice(
       $.assignment,
       $.control_flow,
@@ -318,5 +333,60 @@ module.exports = grammar({
 
     // Comment
     comment: $ => token(seq('#', /.*/)),
+
+    // ===== PHASE 3 FEATURES =====
+    
+    // Command substitution - $(...) captures command and returns result
+    // The scanner handles tokenizing the full $(...) construct
+    // This replaces the shell() function with a more natural syntax
+
+    // Template strings with ${} interpolation
+    template_string: $ => seq(
+      '`',
+      repeat(choice(
+        $.template_chars,
+        $.template_interpolation
+      )),
+      '`'
+    ),
+
+    template_chars: $ => /[^`$]+/,
+    
+    template_interpolation: $ => seq(
+      '$',
+      '{',
+      $._value,  // Any expression
+      '}'
+    ),
+
+    // {} interpolation in command mode
+    command_interpolation: $ => seq(
+      '{',
+      $._value,  // Any expression
+      '}'
+    ),
+
+    // Path literals for commands
+    path_literal: $ => choice(
+      // Absolute paths
+      /\/[a-zA-Z0-9_\-\.\/]+/,
+      // Relative paths starting with ./ or ../
+      /\.\.?\/[a-zA-Z0-9_\-\.\/]+/,
+      // Home paths
+      /~\/[a-zA-Z0-9_\-\.\/]*/
+    ),
+
+    // Generic function calls (for future builtins)
+    function_call: $ => seq(
+      field('name', $.identifier),
+      '(',
+      optional($._function_arguments),
+      ')'
+    ),
+
+    _function_arguments: $ => seq(
+      $._value,
+      repeat(seq(',', $._value))
+    ),
   }
 });

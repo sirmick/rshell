@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <stdio.h>
 
 // Token types MUST match order in grammar's externals
 enum TokenType {
@@ -11,7 +10,6 @@ enum TokenType {
   LINE_START,       // 1 - generic line start (mode unchanged)
   EXPR_LINE_START,  // 2 - expression mode line start (mode change)
   CMD_LINE_START,   // 3 - command mode line start (mode change)
-  COMMAND_SUBSTITUTION, // 4 - NEW: $(...) command substitution
 };
 
 // Scanner state - persisted between calls
@@ -95,50 +93,6 @@ bool tree_sitter_rshell_external_scanner_scan(
   const bool *valid_symbols
 ) {
   Scanner *scanner = (Scanner *)payload;
-  
-  // Check for command substitution $(...) - can happen anywhere
-  if (valid_symbols[COMMAND_SUBSTITUTION]) {
-    // Skip whitespace first
-    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-      lexer->advance(lexer, true);
-    }
-    
-    // Check for $( sequence
-    if (lexer->lookahead == '$') {
-      lexer->advance(lexer, false);  // Consume $
-      
-      if (lexer->lookahead == '(') {
-        lexer->advance(lexer, false);  // Consume (
-        
-        // Track parenthesis depth to handle nested parens
-        int paren_depth = 1;
-        
-        // Consume everything until matching )
-        while (paren_depth > 0 && lexer->lookahead != 0) {
-          if (lexer->lookahead == '(') {
-            paren_depth++;
-          } else if (lexer->lookahead == ')') {
-            paren_depth--;
-            if (paren_depth == 0) {
-              // Found the matching closing paren
-              lexer->advance(lexer, false);  // Consume final )
-              lexer->mark_end(lexer);
-              lexer->result_symbol = COMMAND_SUBSTITUTION;
-              return true;
-            }
-          } else if (lexer->lookahead == '\\') {
-            // Handle escaped characters
-            lexer->advance(lexer, false);
-            if (lexer->lookahead != 0) {
-              lexer->advance(lexer, false);
-            }
-            continue;
-          }
-          lexer->advance(lexer, false);
-        }
-      }
-    }
-  }
   
   // Check if we should emit a line start token
   if (scanner->at_line_start &&

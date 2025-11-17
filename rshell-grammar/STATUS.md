@@ -1,8 +1,8 @@
 # RShell Grammar - Current Status
 
-**Last Updated**: 2025-11-17  
-**Phase**: Phase 2 Complete  
-**Test Coverage**: 96.8% (60/62 tests passing)
+**Last Updated**: 2025-11-17
+**Phase**: Phase 2 Complete with 100% Test Coverage 🎉
+**Test Coverage**: 100% (69/69 tests passing)
 
 ---
 
@@ -18,7 +18,7 @@ The RShell tree-sitter grammar implements **automatic line-based mode detection*
 
 ## Test Results
 
-### Grammar Tests: 60/62 passing (96.8%)
+### Grammar Tests: 69/69 passing (100%) ✅
 
 | Category | Tests | Status |
 |----------|-------|--------|
@@ -40,12 +40,13 @@ The RShell tree-sitter grammar implements **automatic line-based mode detection*
 | Mixed Mode Blocks | 2 | ✅ 100% |
 | Semicolons | 2 | ✅ 100% |
 
-### Failing Tests (2)
+### Previously Failing Tests (Now Fixed!)
 
-1. **Multiline list**: `SERVERS = [\n  1,\n  2\n]` - Scanner emits line_start inside list
-2. **Multiline map**: `CONFIG = {\n  "key": "value"\n}` - Scanner emits line_start inside map
+1. **Multiline list**: ✅ FIXED with grammar-based solution
+2. **Multiline map**: ✅ FIXED with grammar-based solution
 
-**Workaround**: Use single-line syntax: `ITEMS = [1, 2, 3]` ✅
+**Solution**: Modified grammar to accept line tokens inside structures.
+See [`MULTILINE_FIX_EXPLANATION.md`](MULTILINE_FIX_EXPLANATION.md) for details.
 
 ---
 
@@ -124,26 +125,29 @@ python3 tests/test_grammar_simple.py --verbose
 
 ---
 
-## Known Limitation: Multiline Structures
+## Multiline Structures - SOLVED! ✅
 
-**Problem**: 2 tests fail for multiline lists/maps
+**Previous Problem**: Multiline lists/maps were failing (2 tests)
+
+**Solution Implemented**: Grammar-based approach that accepts line tokens inside structures
 
 ```rshell
-# Fails:
+# Now works perfectly:
 ITEMS = [
-  1,    # ← line_start emitted here, parser confused
-  2
+  1,    # ✅ Grammar accepts line tokens here
+  2,
+  3
 ]
 
-# Works:
-ITEMS = [1, 2, 3]  # Single line - perfect!
+CONFIG = {
+  "host": "localhost",  # ✅ Works!
+  "port": 8080
+}
 ```
 
-**Why**: Scanner doesn't know we're inside brackets (called before parser consumes `[`)
+**How**: Modified grammar rules to consume line start tokens inside lists/maps, preventing them from being misinterpreted as statement boundaries.
 
-**Workaround**: Use single-line syntax
-
-**Future**: Phase 3 will add bracket tracking for 100% coverage
+**Result**: 100% test coverage achieved!
 
 ---
 
@@ -212,10 +216,11 @@ echo "Deployment complete"
 
 ## Next Steps (Phase 3)
 
-1. **Multiline structures** - Bracket tracking → 100% coverage
+1. ~~**Multiline structures**~~ - ✅ COMPLETE! 100% coverage achieved
 2. **Path literals** - `/bin/ls`, `./script.sh`
 3. **Shell function** - `shell()` for explicit commands
 4. **Interpolation** - `{}` in commands
+5. **Additional builtins** - More built-in functions
 
 ---
 
