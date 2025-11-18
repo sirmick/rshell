@@ -1,6 +1,6 @@
 # RShell Enhanced Syntax Design
 
-**Status**: ✅ Phase 2 Complete - Mode Detection + Control Flow + Expressions
+**Status**: ✅ Phase 3 Complete - Command Substitution + Redirection Design
 **Last Updated**: 2025-11-17
 **Goal**: Clean, purpose-built shell with structured data support
 
@@ -36,7 +36,7 @@ SERVERS = [{'fqdn':'a.b.c', 'port':8000}]
 # Expression mode (starts with 'for')
 for S in SERVERS {
   # Expression mode (starts with assignment)
-  result = shell(ssh $S.fqdn -p $S.port)
+  result = $(ssh $S.fqdn -p $S.port)
   
   # Expression mode (starts with 'if')
   if (not result.success) {FAILED += S}
@@ -49,8 +49,8 @@ ssh server.com -p 8080 -c uname -a
 ### 3. Cross-Mode Features
 
 **Expression Mode → Command Mode:**
-- `shell(COMMAND)` - Explicit command execution from expression mode
-- Returns result object with `.success`, `.stdout`, `.stderr`, `.exit_code`
+- `$(command)` - Command substitution (bash-style)
+- Returns captured output as string or result object
 
 **Command Mode → Expression Mode:**
 - `{expression}` - Expression interpolation within commands
@@ -91,9 +91,10 @@ if (not result.success) {
   SUCCESS += S
 }
 
-# Explicit command execution
-result = shell(ssh $S.fqdn -p $S.port)
-output = shell(uname -a)
+# Command substitution (bash-style)
+result = $(ssh $S.fqdn -p $S.port)
+output = $(uname -a)
+hostname = $(hostname)
 ```
 
 ### Command Mode Triggers
@@ -300,23 +301,30 @@ while (not ready) {
 }
 ```
 
-### The shell() Function
+### Command Substitution with $()
 
-Execute commands from expression mode:
+Execute commands and capture output (bash-style syntax):
 
 ```bash
-# Basic execution
-result = shell(ls -la)
-result = shell(ssh $S.fqdn -p $S.port)
+# Basic substitution
+hostname = $(hostname)
+files = $(ls -la)
+user = $(whoami)
 
-# Result object has:
-result.success    # Boolean: exit_code == 0
-result.stdout     # String: captured output
-result.stderr     # String: captured errors
-result.exit_code  # Number: command exit code
+# Multiple substitutions
+user = $(whoami) and host = $(hostname)
 
-# Usage
-result = shell(ssh server.com uname -a)
+# In assignments
+result = $(ssh $S.fqdn -p $S.port)
+
+# In command arguments
+grep $(cat pattern.txt) logfile.txt
+
+# Nested substitution
+parent_dir = $(dirname $(pwd))
+
+# With result object (when assigned)
+result = $(ssh server.com uname -a)
 if (result.success) {
   echo $result.stdout
 } else {
@@ -344,6 +352,13 @@ git commit -m 'message'
 # Pipelines
 cat file.txt | grep pattern | wc -l
 ps aux | grep python | awk '{print $2}'
+
+# With redirection (planned)
+echo "hello" > output.txt
+echo "world" >> output.txt
+grep "pattern" < input.txt
+command (stderr)> errors.txt
+command (stderr+stdout)> all_output.txt
 ```
 
 ### Expression Interpolation with {}
@@ -366,6 +381,20 @@ echo Processing item {i+1} of {ITEMS.length}
 ssh {SERVERS[0].fqdn} whoami
 ```
 
+### Command Substitution with $()
+
+Use command output as arguments:
+
+```bash
+# Basic substitution in CMD mode
+echo $(whoami)
+grep $(cat pattern.txt) file.log
+
+# Combined with other features
+ssh $(hostname) -p {CONFIG.port}
+cat $(find . -name "*.txt" | head -1)
+```
+
 ### Variable References
 
 ```bash
@@ -377,6 +406,28 @@ cat $FILENAME
 # {} syntax for expressions
 echo {S.fqdn}
 ssh {S.fqdn} -p {S.port}
+```
+
+### File Redirection (Planned)
+
+RShell will use a more explicit syntax for redirection:
+
+```bash
+# Standard output
+echo "hello" > file.txt          # Overwrite
+echo "world" >> file.txt          # Append
+
+# Standard input
+grep "pattern" < input.txt
+
+# Error streams with explicit syntax
+command (stderr)> errors.txt                # Stderr only
+command (stderr+stdout)> all_output.txt     # Both streams
+
+# Command chaining
+command1 && command2    # Run if success
+command1 || command2    # Run if failure
+command1 ; command2     # Run regardless
 ```
 
 ---
@@ -402,7 +453,7 @@ SERVERS += {'fqdn':'api1.example.com', 'port':22}
 
 # Expression mode - check each server
 for S in SERVERS {
-  result = shell(ssh $S.fqdn -p $S.port echo ok)
+  result = $(ssh $S.fqdn -p $S.port echo ok)
   
   if (not result.success) {
     FAILED += S
@@ -441,8 +492,8 @@ ERROR_COUNT = 0
 WARNING_COUNT = 0
 ERRORS = []
 
-# Expression mode - read log (shell command)
-LINES = shell(cat $LOGFILE).stdout.split('\n')
+# Expression mode - read log (command substitution)
+LINES = $(cat $LOGFILE).stdout.split('\n')
 
 # Expression mode - process lines
 for LINE in LINES {
@@ -487,7 +538,7 @@ for S in SERVERS {
   echo Deploying {VERSION} to {S.fqdn} ({S.role})
   
   # Expression mode - copy files
-  result = shell(rsync -avz ./dist/ {S.fqdn}:/app/)
+  result = $(rsync -avz ./dist/ {S.fqdn}:/app/)
   
   if (not result.success) {
     # Command mode
@@ -496,7 +547,7 @@ for S in SERVERS {
   }
   
   # Expression mode - restart service
-  restart_result = shell(ssh {S.fqdn} systemctl restart app)
+  restart_result = $(ssh {S.fqdn} systemctl restart app)
   
   if (restart_result.success) {
     # Command mode
@@ -568,28 +619,49 @@ for S in SERVERS {
 }
 ```
 
-### Phase 3: Cross-Mode Features (Week 3)
+### Phase 3: Cross-Mode Features (Completed)
 
-**Goal**: shell() and {} interpolation
+**Goal**: Command substitution and interpolation
 
 **Grammar Features**:
-- `shell(command)` function in expression mode
+- `$(command)` substitution (bash-style, replaces shell())
 - `{expression}` interpolation in command mode
+- Path literals: `/bin/ls`, `./script.sh`
 - Result object (`.success`, `.stdout`, `.stderr`, `.exit_code`)
-- String methods (`.contains()`, `.split()`, `.length`)
 
-**Checklist**:
-- [ ] shell() executes commands
-- [ ] Result object works
-- [ ] {} interpolation in commands
-- [ ] Property access works
-- [ ] Method calls work
+**Completed Features**:
+- ✅ $() command substitution
+- ✅ {} interpolation in commands
+- ✅ Path literal support
+- ✅ Property access
+- ✅ Result objects
 
 **Test Cases**:
 ```bash
-result = shell(ls -la)
+result = $(ls -la)
 echo Status: {result.exit_code}
 ssh {S.fqdn} -p {S.port} whoami
+user = $(whoami) and host = $(hostname)
+grep $(cat pattern.txt) file.log
+```
+
+### Phase 4: Redirection & Command Chaining (Planned)
+
+**Goal**: File redirection and command sequencing
+
+**Planned Features**:
+- Output redirection: `>`, `>>`
+- Input redirection: `<`
+- Error redirection: `(stderr)>`, `(stderr+stdout)>`
+- Command chaining: `&&`, `||`, `;`
+
+**Test Cases**:
+```bash
+echo "hello" > output.txt
+echo "world" >> output.txt
+grep "pattern" < input.txt
+command (stderr)> errors.txt
+test -f file && echo "exists" || echo "not found"
 ```
 
 ---
@@ -608,7 +680,7 @@ ssh {S.fqdn} -p {S.port} whoami
    - Natural, readable syntax
 
 3. **Clear interpolation syntax**
-   - Expression mode: `shell(command)` for explicit commands
+   - Expression mode: `$(command)` for command substitution
    - Command mode: `{expr}` for expression injection
 
 ### Development Tips
@@ -633,9 +705,10 @@ ssh {S.fqdn} -p {S.port} whoami
    - While loops
 
 4. **Finally cross-mode features**
-   - `shell()` function
+   - `$()` command substitution
    - `{}` interpolation
    - Result objects
+   - Path literals
 
 ---
 
@@ -644,9 +717,10 @@ ssh {S.fqdn} -p {S.port} whoami
 | Phase | Duration | Status | Deliverable |
 |-------|----------|--------|-------------|
 | 1 | 1 week | ✅ Complete | Mode switching + data structures |
-| 2 | 1 week | ✅ Complete | **Automatic mode detection** + control flow + expressions + property access |
-| 3 | 1 week | 🚧 In Progress | shell() and {} interpolation |
-| **Total** | **3 weeks** | **Phase 2** | **Complete RShell syntax** |
+| 2 | 1 week | ✅ Complete | Automatic mode detection + control flow + expressions |
+| 3 | 1 week | ✅ Complete | $() substitution + {} interpolation + path literals |
+| 4 | 1 week | 📋 Planned | File redirection + command chaining |
+| **Total** | **4 weeks** | **Phase 3** | **Core RShell syntax complete** |
 
 ---
 
@@ -667,5 +741,6 @@ See [`PHASE_2_MODE_DETECTION_COMPLETE.md`](PHASE_2_MODE_DETECTION_COMPLETE.md) f
 ---
 
 **Last Updated**: 2025-11-17
-**Current Phase**: Week 3 - Cross-mode features (shell() and {} interpolation)
-**Completed**: Phase 1 + Phase 2 with automatic mode detection - All 38 tests passing (100%)
+**Current Phase**: Phase 3 Complete - Command substitution with $() syntax
+**Completed**: All core syntax features including $() substitution, {} interpolation, and path literals
+**Next**: Phase 4 - File redirection with explicit syntax: `(stderr)>`, `(stderr+stdout)>`

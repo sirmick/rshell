@@ -1,215 +1,188 @@
 # RShell Syntax Implementation Plan
 
-**Status**: ✅ Phase 2 Complete - Automatic Mode Detection
-**Timeline**: 2-3 weeks total
-**Approach**: Clean, minimal, purpose-built grammar
+**Status**: Phase 3 In Progress - Cross-Mode Features
+**Timeline**: 3-4 weeks total
+**Approach**: Modern shell breaking with bash for clean, structured programming
 
 ---
 
 ## Current Status
 
-**✅ PHASE 2 COMPLETE**: Automatic line-based mode detection implemented!
-**Grammar**: `rshell-grammar/grammar.js` (~274 lines)
-**Scanner**: `rshell-grammar/src/scanner.c` (213 lines) - Mode detection with optimization
-**Test Results**: 38/38 tests passing (100%)
-**Test Suite**: `test_grammar_simple.py` with filter/verbose modes
+**Phase 3 IN PROGRESS**: Mode-specific constructs (`${}` and `$rsh()`) 
+**Grammar**: `rshell-grammar/grammar.js` (~444 lines)
+**Scanner**: `rshell-grammar/src/scanner.c` (382 lines) - Two-mode detection with cross-mode features
+**Test Results**: 
+- Basic features: 69/69 tests passing (100%)
+- Mode-specific: 19/23 tests passing (82.6%)
 
 ### Quick Start
 
 ```bash
-# Edit grammar
-vim rshell-grammar/grammar_simple.js
+# Build and test
+cd rshell-grammar
+./build_grammar.sh
 
-# Run tests (auto-generates grammar)
-python test_grammar_simple.py
-
-# Run specific category with verbose output
-python test_grammar_simple.py --filter commands --verbose
+# Run specific tests
+python3 tests/test_mode_specific_syntax.py
+python3 tests/test_scanner_mode_detection.py
 ```
 
 ---
 
-## Phase 1: Core Shell (Week 1)
+## Design Philosophy
 
-**Goal**: Basic shell functionality with clear command/assignment distinction.
+**RShell breaks with bash intentionally** to create a modern shell with:
+- **Two distinct modes**: EXPR for programming, CMD for shell operations
+- **Structured data types**: Native lists, maps, objects (not just strings)
+- **Modern control flow**: Python-like if/for/while with blocks
+- **Cross-mode features**: `${}` interpolation in CMD, `$rsh()` execution in EXPR
 
-### Grammar Structure
-```javascript
-program     := statement*
-statement   := assignment | command | pipeline | comment
-assignment  := IDENTIFIER '=' expression
-command     := cmd_name argument*
-pipeline    := command ('|' command)*
+---
+
+## The Two-Mode System
+
+### Mode Detection (Automatic)
+
+Mode is determined by **how each line starts**:
+
+#### EXPR Mode Triggers
+- Keywords: `if`, `elif`, `else`, `for`, `while`, `return`, `continue`, `break`
+- Assignments: `X =`, `COUNT +=` 
+- Property access: `SERVER.port`
+- Function calls: `calculate()`
+- Block closings: `}`
+
+#### CMD Mode (Default)
+- Everything else (commands, paths, executables)
+
+### Cross-Mode Constructs
+
+| Mode | Construct | Purpose | Example |
+|------|-----------|---------|---------|
+| CMD | `${expr}` | Interpolate expressions | `echo ${user.name}` |
+| EXPR | `$rsh(cmd)` | Execute commands | `result = $rsh(ls -la)` |
+
+---
+
+## Implementation Phases
+
+### ✅ Phase 1: Core Shell (Complete)
+
+**Deliverables**: Basic parsing, data structures, mode detection
+
+**Features Implemented**:
+- [x] Line-based mode detection
+- [x] Basic data types (numbers, strings, booleans)
+- [x] Lists and maps with nesting
+- [x] Simple assignments (`X = 42`)
+- [x] Direct commands (`echo hello`)
+- [x] Pipelines (`ls | grep txt`)
+- [x] Comments (`# comment`)
+
+**Test Coverage**: 100% (all basic tests passing)
+
+---
+
+### ✅ Phase 2: Control Flow & Expressions (Complete)
+
+**Deliverables**: Modern programming constructs
+
+**Features Implemented**:
+- [x] If/elif/else statements
+- [x] For loops (`for item in list`)
+- [x] While loops
+- [x] Arithmetic operators (`+`, `-`, `*`, `/`)
+- [x] Comparison operators (`>`, `<`, `==`, `!=`, `>=`, `<=`)
+- [x] Logical operators (`and`, `or`, `not`)
+- [x] Property access (`SERVER.port`, `CONFIG.db.host`)
+- [x] Array indexing (`ITEMS[0]`, `ITEMS[-1]`)
+- [x] Compound assignments (`+=`, `-=`, `*=`, `/=`)
+
+**Test Coverage**: 100% (control flow and expressions working)
+
+---
+
+### 🔧 Phase 3: Cross-Mode Features (In Progress)
+
+**Goal**: Enable seamless interaction between EXPR and CMD modes
+
+**Planned Features**:
+- [x] `${}` expression interpolation in CMD mode (partially working)
+- [x] `$rsh()` command execution in EXPR mode (needs fixes)
+- [ ] Pipeline support in cross-mode constructs
+- [ ] Property access on `$rsh()` results
+- [ ] Nested interpolation support
+
+**Current Issues**:
+1. Grammar integration bugs (lines 379-408 in grammar.js)
+2. Pipeline support incomplete
+3. Property access on command results failing
+4. Test coverage: 82.6% (19/23 tests passing)
+
+**Test Failures**:
 ```
-
-### Week 1 Checklist
-- [ ] Commands parse: `ls`, `echo hello`, `cat file`
-- [ ] Assignments parse: `X = 42`, `NAME = "test"`
-- [ ] Pipelines parse: `ls | grep txt`
-- [ ] Variables work: `echo $X`
-- [ ] Comments work: `# comment`
-
-### Examples to Support
-
-```bash
-# Basic commands
-ls
-echo hello
-cat file.txt
-
-# Commands with arguments
-ls -la
-echo "hello world"
-git commit -m "message"
-
-# Pipelines
-ls | grep txt
-cat file | sort | uniq
-
-# Assignments
-X = 42
-NAME = "Alice"
-DEBUG = true
-
-# Variable references
-echo $X
-Y = $X
+- ${} in pipeline
+- $rsh() in pipeline  
+- $rsh() with property access
+- Chained assignments with $rsh()
 ```
 
 ---
 
-## Phase 2: Data Structures (Week 2)
+### 📋 Phase 4: Advanced Shell Features (Planned)
 
-**Goal**: Structured data types with intuitive syntax.
+**Goal**: Modern redirection and command sequencing
 
-### Grammar Extensions
-```javascript
-expression := literal | variable | binary_op | property_access
-literal    := number | string | boolean | list | map
-list       := '[' (expression (',' expression)*)? ']'
-map        := '{' (key ':' value (',' key ':' value)*)? '}'
-property   := variable ('.' field | '[' index ']')*
-```
-
-### Week 2 Checklist
-- [ ] Lists: `[1, 2, 3]`, nested lists
-- [ ] Maps: `{"key": "value"}`, nested maps
-- [ ] Property access: `$SERVER.port`, `$ITEMS[0]`
-- [ ] Mixed structures: lists of maps, maps with lists
-
-### Examples to Support
-
-```bash
-# Lists
-NUMBERS = [1, 2, 3, 4, 5]
-MATRIX = [[1, 2], [3, 4]]
-SERVERS = ["web1", "web2", "db1"]
-
-# Maps
-CONFIG = {"host": "localhost", "port": 8080}
-DATABASE = {
-    "primary": {"host": "db1", "port": 5432},
-    "replica": {"host": "db2", "port": 5432}
-}
-
-# Property access
-HOST = $CONFIG.host
-PORT = $SERVER.port
-FIRST = $ITEMS[0]
-NESTED = $CONFIG.database.host
-```
-
----
-
-## Phase 3: Expressions & Control Flow (Week 3)
-
-**Goal**: Expression evaluation and modern control structures.
-
-### Grammar Extensions
-```javascript
-if_stmt    := 'if' expression block ('elif' expression block)* ('else' block)?
-for_stmt   := 'for' IDENTIFIER 'in' expression block
-while_stmt := 'while' expression block
-block      := '{' statement* '}'
-expression := ... | comparison | logical | arithmetic | grouped
-```
-
-### Week 3 Checklist
-- [ ] Arithmetic: `5 + 3`, `10 * 2`, `(5 + 3) * 2`
-- [ ] Comparison: `X > 5`, `Y == 10`, `Z != 0`
-- [ ] Logical: `and`, `or`, `not`
-- [ ] If/elif/else: `if X > 5 { ... }`
-- [ ] For loops: `for item in $list { ... }`
-- [ ] While loops: `while X < 10 { ... }`
-
-### Examples to Support
-
-```bash
-# Arithmetic
-X = 5 + 3
-Y = (10 + 5) * 2
-TOTAL = $PRICE * $QUANTITY
-
-# Comparisons
-if $COUNT > 0 {
-    echo "Found items"
-}
-
-# Control flow
-for S in $SERVERS {
-    echo "Server: $S.name"
-}
-
-while $COUNT < 10 {
-    COUNT = $COUNT + 1
-}
-
-# Complex conditions
-if $STATUS == "ready" and $COUNT > 5 {
-    process_data
-}
-```
+**Planned Features**:
+- [ ] Output redirection: `>`, `>>`
+- [ ] Input redirection: `<`
+- [ ] Error redirection: `(stderr)>`, `(stderr+stdout)>`
+- [ ] Command chaining: `&&`, `||`, `;`
+- [ ] Background execution: `&`
+- [ ] Job control
 
 ---
 
 ## Testing Strategy
 
-### Test Categories
-1. **assignments** - Variable assignments with different types
-2. **commands** - Basic commands and arguments
-3. **pipelines** - Single and multi-stage pipelines
-4. **lists** - List literals and nesting
-5. **maps** - Map literals and nesting
-6. **variables** - Variable references
-7. **mixed** - Complex combinations
+### Test Structure
 
-### Test Workflow
-
-```bash
-# Run all tests
-python test_grammar_simple.py
-
-# Test specific category
-python test_grammar_simple.py --filter commands
-
-# Verbose output (show parse trees)
-python test_grammar_simple.py --verbose --filter assignments
-
-# Skip grammar generation (for quick re-runs)
-python test_grammar_simple.py --no-generate
+```
+tests/
+├── test_grammar_simple.py        # Basic features (69 tests)
+├── test_mode_specific_syntax.py  # Cross-mode (23 tests)
+├── test_scanner_mode_detection.py # Scanner unit tests
+└── test_phase3.py               # Advanced features
 ```
 
-### Adding New Tests
+### Running Tests
 
-Edit `test_grammar_simple.py` and add to `TEST_CASES` dict:
+```bash
+# All basic tests
+python3 tests/test_grammar_simple.py
+
+# Mode-specific features
+python3 tests/test_mode_specific_syntax.py
+
+# Verbose output for debugging
+python3 tests/test_grammar_simple.py --verbose --filter control
+
+# Scanner tests
+python3 tests/test_scanner_mode_detection.py
+```
+
+### Adding Tests
+
+Edit test files and add to appropriate category:
 
 ```python
 TEST_CASES = {
-    "your_category": [
+    "category_name": [
         {
             "name": "Test description",
             "code": "X = 42",
             "expect": ["assignment", "number"],
+            "should_pass": True
         },
     ],
 }
@@ -217,109 +190,119 @@ TEST_CASES = {
 
 ---
 
+## Grammar Architecture
+
+### Core Components
+
+1. **scanner.c** (382 lines)
+   - Tracks line boundaries
+   - Detects mode based on line start patterns
+   - Manages `${}` and `$rsh()` depth tracking
+   - Handles parenthesis balancing
+
+2. **grammar.js** (444 lines)
+   - Tree-sitter grammar rules
+   - Declares 8 external tokens from scanner
+   - Defines syntax for both modes
+
+3. **External Tokens**
+   ```c
+   NEWLINE                  // Line boundaries
+   LINE_START               // Generic line start
+   EXPR_LINE_START         // EXPR mode line start
+   CMD_LINE_START          // CMD mode line start
+   CMD_EXPR_INTERP_START   // ${ in CMD mode
+   CMD_EXPR_INTERP_END     // } closing ${}
+   EXPR_CMD_EXEC_START     // $rsh( in EXPR mode
+   EXPR_CMD_EXEC_END       // ) closing $rsh()
+   ```
+
+---
+
+## Current Work Items
+
+### Immediate Fixes Needed
+
+1. **Grammar bugs** (30 min)
+   - Remove unused token declarations (lines 18-19)
+   - Fix `$rsh()` implementation (lines 406-419)
+   - Fix `$()` implementation (lines 377-391)
+
+2. **Pipeline support** (1 hour)
+   - Add pipeline handling in `$rsh()` content
+   - Support pipes in `${}` interpolation
+
+3. **Property access** (30 min)
+   - Enable `.property` on `$rsh()` results
+   - Fix chained assignments with `$rsh()`
+
+### Documentation Updates
+
+1. ✅ **RSHELL_SYNTAX_DESIGN.md** - Updated with two-mode philosophy
+2. ⏳ **RSHELL_SYNTAX_PLAN.md** - This document (updated)
+3. [ ] **README.md** - Update feature list and examples
+4. [ ] **STATUS.md** - Reflect actual implementation state
+
+---
+
 ## Success Metrics
 
-### ✅ Phase 1 Complete:
-- [x] Clean grammar template created
-- [x] Test infrastructure ready
-- [x] **100% command tests passing**
-- [x] **100% assignment tests passing**
-- [x] **100% pipeline tests passing**
-- [x] Basic data types working (numbers, strings, booleans)
+### Phase Completion Criteria
 
-### ✅ Phase 2 Complete:
-- [x] 100% list tests passing
-- [x] 100% map tests passing
-- [x] Property access working
-- [x] Nested structures working
-- [x] **Automatic mode detection implemented**
-- [x] Expression evaluation working
-- [x] Control flow (if/for/while) working
-- [x] Comparison operators working
-- [x] Logical operators working
+| Phase | Target | Current | Status |
+|-------|--------|---------|--------|
+| Phase 1 | 100% basic tests | 100% | ✅ Complete |
+| Phase 2 | 100% control flow | 100% | ✅ Complete |
+| Phase 3 | 100% cross-mode | 82.6% | 🔧 In Progress |
+| Phase 4 | Redirection working | 0% | 📋 Not Started |
 
-### Phase 3 In Progress:
-- [ ] shell() function implementation
-- [ ] {} interpolation in commands
-- [ ] Result object (.success, .stdout, .stderr, .exit_code)
-- [ ] String methods (.contains(), .split(), .length)
+### Overall Progress
+
+- **Lines of Code**: ~850 (grammar + scanner + tests)
+- **Test Coverage**: 88/92 tests passing (95.6% overall)
+- **Features Complete**: 75% of planned features
+- **Time Invested**: ~2.5 weeks
+- **Time Remaining**: ~1.5 weeks
 
 ---
 
-## Grammar Development Tips
+## Design Decisions & Rationale
 
-### 1. Start Simple
+### Why Break with Bash?
 
-Begin with the absolute minimum:
-```javascript
-program: $ => repeat($._statement),
-_statement: $ => $.command,
-command: $ => seq($.identifier, repeat($.identifier)),
-identifier: $ => /[a-zA-Z_][a-zA-Z0-9_]*/,
-```
+1. **Structured Data**: Lists and maps as first-class citizens
+2. **Type Safety**: Variables have types, not just strings
+3. **Clean Syntax**: Clear visual distinction between modes
+4. **Better Errors**: Parser knows context for meaningful messages
+5. **Modern Features**: Property access, methods, proper scoping
 
-### 2. Add One Feature at a Time
+### Why Two Modes?
 
-Don't try to implement everything at once. Add features incrementally:
-1. Commands → 2. Assignments → 3. Strings → 4. Numbers → etc.
+1. **Clarity**: Always clear if you're programming or commanding
+2. **Optimization**: Parser can optimize for each mode
+3. **Safety**: Can't accidentally execute code as commands
+4. **Expressiveness**: Best of both worlds without compromise
 
-### 3. Use Verbose Mode
+### Why `${}` and `$rsh()`?
 
-When a test fails, run with verbose to see the parse tree:
-```bash
-python test_grammar_simple.py --filter commands --verbose
-```
-
-### 4. Common Pitfalls
-
-- **Precedence**: Use `prec()` to resolve conflicts
-- **Whitespace**: Tree-sitter handles whitespace automatically
-- **Conflicts**: Run `tree-sitter generate` to see conflict warnings
-- **Testing**: Test each grammar change before moving on
-
----
-
-## Implementation Notes
-
-### Why Fresh Start?
-
-Modifying the bash grammar failed because:
-- **0/5 command tests passing** - Basic commands broken
-- **1,260 lines of complexity** - Bash baggage we don't need
-- **Fundamental conflicts** - Text-based vs data-oriented paradigms
-- **3-4+ weeks to fix** - Longer than building from scratch
-
-### Key Design Decisions
-
-1. **Pattern-based parsing**: `IDENTIFIER = VALUE` triggers assignment mode
-2. **No ambiguity**: Every syntax element has one clear meaning
-3. **Simple precedence**: Minimal precedence rules needed
-4. **Clean separation**: Commands vs assignments vs control flow
-
-### Files to Focus On
-
-**Active Development:**
-- `rshell-grammar/grammar_simple.js` - The grammar itself
-- `test_grammar_simple.py` - Test harness
-- `RSHELL_SYNTAX_DESIGN.md` - Complete syntax spec
-
-**Reference:**
-- `IMPLEMENTATION_GUIDE.md` - Runtime implementation details
-- `CURRENT_STATUS.md` - Overall project status
+1. **Visual Distinction**: Immediately clear what's happening
+2. **No Ambiguity**: `${}` = expression, `$rsh()` = command
+3. **Parser Friendly**: Unambiguous tokens for tree-sitter
+4. **Extensible**: Room for future constructs like `$async()`
 
 ---
 
 ## Timeline Summary
 
-| Phase | Duration | Status | Deliverable |
-|-------|----------|--------|-------------|
-| 1 | 1 week | ✅ Complete | Commands + assignments + pipelines + data structures |
-| 2 | 1 week | ✅ Complete | **Automatic mode detection** + control flow + expressions + property access |
-| 3 | 1 week | 🚧 In Progress | shell() and {} interpolation |
-| **Total** | **3 weeks** | **Phase 2** | **Complete enhanced syntax** |
+| Week | Focus | Status | Notes |
+|------|-------|--------|-------|
+| 1 | Core parsing + data structures | ✅ Complete | Ahead of schedule |
+| 2 | Control flow + expressions | ✅ Complete | All tests passing |
+| 3 | Cross-mode features | 🔧 Current | 82.6% complete |
+| 4 | Redirection + polish | 📋 Next | Final features |
 
 ---
 
-**Last Updated**: 2025-11-17
-**Milestone Achieved**: ✅ Automatic mode detection - 38/38 tests passing (100%)
-**Next Milestone**: shell() function and {} interpolation
+**Last Updated**: 2025-11-18
+**Current Focus**: Fixing grammar integration for `$rsh()` and `${}` constructs
+**Next Milestone**: 100% cross-mode test coverage

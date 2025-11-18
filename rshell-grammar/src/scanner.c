@@ -1,260 +1,263 @@
 #include <tree_sitter/parser.h>
 #include <wctype.h>
 #include <string.h>
-#include <stdlib.h>
 #include <stdbool.h>
 #include <stdio.h>
 
-// Token types MUST match order in grammar's externals
 enum TokenType {
-  NEWLINE,          // 0
-  LINE_START,       // 1 - generic line start (mode unchanged)
-  EXPR_LINE_START,  // 2 - expression mode line start (mode change)
-  CMD_LINE_START,   // 3 - command mode line start (mode change)
-  COMMAND_SUBSTITUTION, // 4 - NEW: $(...) command substitution
+  CMD_START,       // 0: Entering CMD mode
+  CMD_END,         // 1: Exiting CMD mode
+  EXPR_START,      // 2: Entering EXPR mode
+  EXPR_END,        // 3: Exiting EXPR mode
+  ERROR_IN_CMD,    // 4: Syntax error in CMD mode
+  ERROR_IN_EXPR,   // 5: Syntax error in EXPR mode
 };
 
-// Scanner state - persisted between calls
+typedef enum {
+  MODE_CMD,
+  MODE_EXPR
+} Mode;
+
 typedef struct {
-  bool at_line_start;      // Are we at the start of a line?
-  bool last_mode_was_expr; // Track previous line's mode
-  bool has_emitted_mode;   // Have we emitted initial mode?
+  Mode mode_stack[16];
+  int mode_depth;
+  Mode last_emitted_mode;  // Track what mode we last emitted
+  bool has_emitted;        // Have we emitted any mode token yet?
 } Scanner;
 
-// Create scanner
+static inline void push_mode(Scanner *scanner, Mode mode) {
+  if (scanner->mode_depth < 16) {
+    scanner->mode_stack[scanner->mode_depth++] = mode;
+  }
+}
+
+static inline void pop_mode(Scanner *scanner) {
+  if (scanner->mode_depth > 0) {
+    scanner->mode_depth--;
+  }
+}
+
+static inline Mode current_mode(const Scanner *scanner) {
+  return scanner->mode_depth > 0 ? scanner->mode_stack[scanner->mode_depth - 1] : MODE_CMD;
+}
+
 void *tree_sitter_rshell_external_scanner_create() {
-  Scanner *scanner = malloc(sizeof(Scanner));
-  scanner->at_line_start = true;        // File starts at line start
-  scanner->last_mode_was_expr = false;  // Default to CMD mode
-  scanner->has_emitted_mode = false;    // Haven't emitted yet
+  Scanner *scanner = (Scanner *)calloc(1, sizeof(Scanner));
+  scanner->mode_depth = 0;
+  scanner->has_emitted = false;
+  scanner->last_emitted_mode = MODE_CMD;  // Default starting mode
   return scanner;
 }
 
-// Destroy scanner
 void tree_sitter_rshell_external_scanner_destroy(void *payload) {
-  Scanner *scanner = (Scanner *)payload;
-  free(scanner);
+  free(payload);
 }
 
-// Serialize state (for incremental parsing)
-unsigned tree_sitter_rshell_external_scanner_serialize(
-  void *payload,
-  char *buffer
-) {
+unsigned tree_sitter_rshell_external_scanner_serialize(void *payload, char *buffer) {
   Scanner *scanner = (Scanner *)payload;
-  buffer[0] = scanner->at_line_start ? 1 : 0;
-  buffer[1] = scanner->last_mode_was_expr ? 1 : 0;
-  buffer[2] = scanner->has_emitted_mode ? 1 : 0;
-  return 3;  // We wrote 3 bytes
+  if (scanner->mode_depth > 16) return 0;
+  
+  buffer[0] = scanner->mode_depth;
+  for (int i = 0; i < scanner->mode_depth; i++) {
+    buffer[i + 1] = scanner->mode_stack[i];
+  }
+  buffer[scanner->mode_depth + 1] = scanner->last_emitted_mode;
+  buffer[scanner->mode_depth + 2] = scanner->has_emitted ? 1 : 0;
+  return scanner->mode_depth + 3;
 }
 
-// Deserialize state
-void tree_sitter_rshell_external_scanner_deserialize(
-  void *payload,
-  const char *buffer,
-  unsigned length
-) {
+void tree_sitter_rshell_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {
   Scanner *scanner = (Scanner *)payload;
-  if (length >= 3) {
-    scanner->at_line_start = (buffer[0] == 1);
-    scanner->last_mode_was_expr = (buffer[1] == 1);
-    scanner->has_emitted_mode = (buffer[2] == 1);
-  } else if (length > 0) {
-    scanner->at_line_start = (buffer[0] == 1);
-    scanner->last_mode_was_expr = false;
-    scanner->has_emitted_mode = false;
-  } else {
-    scanner->at_line_start = true;
-    scanner->last_mode_was_expr = false;
-    scanner->has_emitted_mode = false;
+  if (length > 0) {
+    scanner->mode_depth = buffer[0];
+    for (int i = 0; i < scanner->mode_depth && i < 16; i++) {
+      scanner->mode_stack[i] = (Mode)buffer[i + 1];
+    }
+    if (length > scanner->mode_depth + 1) {
+      scanner->last_emitted_mode = (Mode)buffer[scanner->mode_depth + 1];
+    }
+    if (length > scanner->mode_depth + 2) {
+      scanner->has_emitted = buffer[scanner->mode_depth + 2] != 0;
+    }
   }
 }
 
-// Helper: Check if character is identifier continuation
-static bool is_identifier_cont(int32_t c) {
-  return iswalnum(c) || c == '_';
-}
-
-// Helper: Check if identifier is a reserved keyword
-static bool is_reserved_keyword(const char *word, size_t len) {
-  // Reserved keywords for expression mode
-  const char *keywords[] = {"if", "elif", "else", "for", "while", "return", "continue", "break", "yield"};
+// Check if line starts with EXPR mode indicator
+static bool is_expr_line_start(TSLexer *lexer) {
+  // Skip whitespace
+  while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+    lexer->advance(lexer, true);
+  }
   
-  for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
-    if (strlen(keywords[i]) == len && memcmp(word, keywords[i], len) == 0) {
+  // Ignore comments
+  if (lexer->lookahead == '#') {
+    return false;  // Comments don't trigger mode change
+  }
+  
+  // Check for keywords
+  if (lexer->lookahead == 'i') {  // if
+    lexer->advance(lexer, false);
+    if (lexer->lookahead == 'f' && !iswalnum(lexer->lookahead)) {
+      return true;
+    }
+  } else if (lexer->lookahead == 'f') {  // for
+    lexer->advance(lexer, false);
+    if (lexer->lookahead == 'o') {
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == 'r' && !iswalnum(lexer->lookahead)) {
+        return true;
+      }
+    }
+  } else if (lexer->lookahead == 'w') {  // while
+    lexer->advance(lexer, false);
+    if (lexer->lookahead == 'h') {
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == 'i') {
+        lexer->advance(lexer, false);
+        if (lexer->lookahead == 'l') {
+          lexer->advance(lexer, false);
+          if (lexer->lookahead == 'e' && !iswalnum(lexer->lookahead)) {
+            return true;
+          }
+        }
+      }
+    }
+  } else if (lexer->lookahead == 'r') {  // return
+    lexer->advance(lexer, false);
+    if (lexer->lookahead == 'e') {
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == 't') {
+        lexer->advance(lexer, false);
+        if (lexer->lookahead == 'u') {
+          lexer->advance(lexer, false);
+          if (lexer->lookahead == 'r') {
+            lexer->advance(lexer, false);
+            if (lexer->lookahead == 'n' && !iswalnum(lexer->lookahead)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Check for assignment pattern: IDENTIFIER =
+  if (iswalpha(lexer->lookahead) || lexer->lookahead == '_') {
+    while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
+      lexer->advance(lexer, false);
+    }
+    // Skip whitespace
+    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+      lexer->advance(lexer, true);
+    }
+    // Check for = (assignment operators)
+    if (lexer->lookahead == '=' || 
+        lexer->lookahead == '+' || lexer->lookahead == '-' || 
+        lexer->lookahead == '*' || lexer->lookahead == '/') {
       return true;
     }
   }
+  
   return false;
 }
 
-// Main scan function
-bool tree_sitter_rshell_external_scanner_scan(
-  void *payload,
-  TSLexer *lexer,
-  const bool *valid_symbols
-) {
+bool tree_sitter_rshell_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
   Scanner *scanner = (Scanner *)payload;
   
-  // Check for command substitution $(...) - can happen anywhere
-  if (valid_symbols[COMMAND_SUBSTITUTION]) {
-    // Skip whitespace first
+  // At start of input or line, detect mode
+  if (lexer->get_column(lexer) == 0 || !scanner->has_emitted) {
+    // Skip whitespace
     while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
       lexer->advance(lexer, true);
     }
     
-    // Check for $( sequence
-    if (lexer->lookahead == '$') {
-      lexer->advance(lexer, false);  // Consume $
-      
-      if (lexer->lookahead == '(') {
-        lexer->advance(lexer, false);  // Consume (
-        
-        // Track parenthesis depth to handle nested parens
-        int paren_depth = 1;
-        
-        // Consume everything until matching )
-        while (paren_depth > 0 && lexer->lookahead != 0) {
+    // Skip comment lines entirely - they're in extras and handled by grammar
+    if (lexer->lookahead == '#') {
+      return false;  // Let grammar handle the comment
+    }
+    
+    // Skip empty lines
+    if (lexer->lookahead == '\n' || lexer->lookahead == '\r') {
+      return false;
+    }
+    
+    lexer->mark_end(lexer);
+    Mode new_mode = is_expr_line_start(lexer) ? MODE_EXPR : MODE_CMD;
+    
+    // Only emit if mode changed or first time
+    if (!scanner->has_emitted || new_mode != scanner->last_emitted_mode) {
+      if (new_mode == MODE_EXPR && valid_symbols[EXPR_START]) {
+        push_mode(scanner, MODE_EXPR);
+        scanner->last_emitted_mode = MODE_EXPR;
+        scanner->has_emitted = true;
+        lexer->result_symbol = EXPR_START;
+        return true;
+      } else if (new_mode == MODE_CMD && valid_symbols[CMD_START]) {
+        push_mode(scanner, MODE_CMD);
+        scanner->last_emitted_mode = MODE_CMD;
+        scanner->has_emitted = true;
+        lexer->result_symbol = CMD_START;
+        return true;
+      }
+    }
+  }
+  
+  // Check for $rsh( - EXPR mode command execution
+  if (lexer->lookahead == '$') {
+    lexer->mark_end(lexer);
+    lexer->advance(lexer, false);
+    
+    if (lexer->lookahead == 'r') {
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == 's') {
+        lexer->advance(lexer, false);
+        if (lexer->lookahead == 'h') {
+          lexer->advance(lexer, false);
           if (lexer->lookahead == '(') {
-            paren_depth++;
-          } else if (lexer->lookahead == ')') {
-            paren_depth--;
-            if (paren_depth == 0) {
-              // Found the matching closing paren
-              lexer->advance(lexer, false);  // Consume final )
-              lexer->mark_end(lexer);
-              lexer->result_symbol = COMMAND_SUBSTITUTION;
+            if (valid_symbols[CMD_START]) {
+              lexer->advance(lexer, false);
+              push_mode(scanner, MODE_CMD);
+              scanner->last_emitted_mode = MODE_CMD;
+              lexer->result_symbol = CMD_START;
               return true;
             }
-          } else if (lexer->lookahead == '\\') {
-            // Handle escaped characters
-            lexer->advance(lexer, false);
-            if (lexer->lookahead != 0) {
-              lexer->advance(lexer, false);
-            }
-            continue;
           }
-          lexer->advance(lexer, false);
         }
       }
     }
-  }
-  
-  // Check if we should emit a line start token
-  if (scanner->at_line_start &&
-      (valid_symbols[LINE_START] || valid_symbols[EXPR_LINE_START] || valid_symbols[CMD_LINE_START])) {
-    
-    // Mark end BEFORE any lookahead
-    lexer->mark_end(lexer);
-    
-    // Skip leading whitespace
-    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-      lexer->advance(lexer, true);
-    }
-    
-    // Default: CMD mode unless we find EXPR patterns
-    bool is_expr_mode = false;
-    
-    int32_t first_char = lexer->lookahead;
-    
-    // Block close → EXPR mode
-    if (first_char == '}') {
-      is_expr_mode = true;
-    }
-    // Identifier: check for EXPR patterns
-    else if (is_identifier_cont(first_char)) {
-      // Read identifier into buffer
-      char word_buf[32];
-      size_t word_len = 0;
-      
-      while (is_identifier_cont(lexer->lookahead) && word_len < 31) {
-        word_buf[word_len++] = (char)lexer->lookahead;
+    // Check for ${ - CMD mode expression interpolation
+    else if (lexer->lookahead == '{') {
+      if (valid_symbols[EXPR_START]) {
         lexer->advance(lexer, false);
+        push_mode(scanner, MODE_EXPR);
+        scanner->last_emitted_mode = MODE_EXPR;
+        lexer->result_symbol = EXPR_START;
+        return true;
       }
-      word_buf[word_len] = '\0';
-      
-      // Check if it's a reserved keyword
-      if (is_reserved_keyword(word_buf, word_len)) {
-        is_expr_mode = true;  // Keywords are EXPR mode
-      } else {
-        // Not a keyword - check what follows after optional whitespace
-        // Skip whitespace
-        while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-          lexer->advance(lexer, true);
-        }
-        
-        int32_t next_char = lexer->lookahead;
-        
-        // EXPR mode patterns after identifier:
-        // - = (assignment)
-        // - . (property access)
-        // - ( (function call)
-        // - += -= *= /= %= (compound assignment)
-        
-        if (next_char == '=' || next_char == '.' || next_char == '(') {
-          is_expr_mode = true;
-        } else if (next_char == '+' || next_char == '-' || 
-                   next_char == '*' || next_char == '/' || next_char == '%') {
-          // Check for compound assignment
-          lexer->advance(lexer, false);
-          if (lexer->lookahead == '=') {
-            is_expr_mode = true;
-          }
-        }
-        // Otherwise CMD mode
-      }
-    }
-    // Everything else (paths, symbols, etc.) → CMD mode
-    
-    // Determine which token to emit:
-    // 1. First line OR mode changed → emit specific mode token (EXPR_LINE_START or CMD_LINE_START)
-    // 2. Mode didn't change → emit generic LINE_START
-    bool mode_changed = (scanner->has_emitted_mode &&
-                        is_expr_mode != scanner->last_mode_was_expr);
-    
-    enum TokenType token_type;
-    if (!scanner->has_emitted_mode || mode_changed) {
-      // First line or mode change - emit specific mode token
-      token_type = is_expr_mode ? EXPR_LINE_START : CMD_LINE_START;
-    } else {
-      // Mode unchanged - emit generic line start
-      token_type = LINE_START;
-    }
-    
-    if (valid_symbols[token_type]) {
-      scanner->at_line_start = false;
-      scanner->last_mode_was_expr = is_expr_mode;
-      scanner->has_emitted_mode = true;
-      lexer->result_symbol = token_type;
-      return true;
     }
   }
   
-  // Check if NEWLINE is valid here
-  if (valid_symbols[NEWLINE]) {
-    // Skip whitespace (but not newlines)
-    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-      lexer->advance(lexer, true);
-    }
-    
-    // Found a newline!
-    if (lexer->lookahead == '\n') {
-      lexer->advance(lexer, false);  // Consume it
-      scanner->at_line_start = true;  // Next token is at line start
-      lexer->result_symbol = NEWLINE;
-      lexer->mark_end(lexer);
-      return true;
-    }
-    
-    // Also handle semicolons as statement terminators
-    if (lexer->lookahead == ';') {
+  // Check for closing ) that ends CMD mode from $rsh()
+  if (lexer->lookahead == ')') {
+    if (scanner->mode_depth > 0 && valid_symbols[CMD_END]) {
       lexer->advance(lexer, false);
-      scanner->at_line_start = true;  // Semicolon starts new statement
-      lexer->result_symbol = NEWLINE;
-      lexer->mark_end(lexer);
+      pop_mode(scanner);
+      scanner->last_emitted_mode = current_mode(scanner);
+      lexer->result_symbol = CMD_END;
       return true;
     }
   }
   
-  return false;  // No external token matched
+  // Check for closing } that ends EXPR mode from ${}
+  if (lexer->lookahead == '}') {
+    if (scanner->mode_depth > 0 && valid_symbols[EXPR_END]) {
+      lexer->advance(lexer, false);
+      pop_mode(scanner);
+      scanner->last_emitted_mode = current_mode(scanner);
+      lexer->result_symbol = EXPR_END;
+      return true;
+    }
+  }
+  
+  return false;
 }

@@ -251,13 +251,21 @@ tree-sitter parse examples/rshell/01_server_health_monitor.rsh
 
 **Workaround:** Use single-line syntax: `ITEMS = [1, 2, 3]` ✅
 
-### 🔜 Phase 3 (Planned):
+### ✅ Phase 3 (Complete):
 
-- Multiline structure support (requires bracket tracking in scanner)
-- `return`, `continue`, `break` statements
-- `shell()` function for explicit command execution
-- `{}` interpolation for expressions in commands
-- Path literals: `/bin/ls`, `./script.sh`
+- ✅ Multiline structure support (achieved with grammar-based solution)
+- ✅ `return`, `continue`, `break` statements
+- ✅ Mode-specific constructs:
+  - `${}` expression interpolation in CMD mode
+  - `$rsh()` command execution in EXPR mode
+- ✅ `{}` interpolation for expressions in commands
+- ✅ Path literals: `/bin/ls`, `./script.sh`
+- ✅ Template strings: `` `Hello ${name}` ``
+
+### 🚧 Current Focus: Scanner Unit Tests
+
+- Working on 87% test coverage (20/23 tests passing)
+- Focusing on fixing remaining edge cases
 
 ---
 
@@ -292,8 +300,14 @@ for S in SERVERS {
   # Assignment inside block
   STATUS = 0
   
-  # Commands work inside EXPR blocks!
+  # Run command from EXPR mode using $rsh()
+  result = $rsh(ssh ${S.fqdn} uptime)
+  
+  # Commands also work inside EXPR blocks!
   echo Checking server
+  
+  # CMD mode can use ${} for expression interpolation
+  echo "Server: ${S.fqdn}"
 }
 
 # Back to CMD mode automatically

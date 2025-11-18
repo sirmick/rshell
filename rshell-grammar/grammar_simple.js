@@ -6,14 +6,12 @@
 module.exports = grammar({
   name: 'rshell',
 
-  // 6 external tokens from scanner for mode boundaries
+  // Only 4 external tokens from scanner for mode boundaries!
   externals: $ => [
-    $.cmd_start,       // 0: Entering CMD mode
-    $.cmd_end,         // 1: Exiting CMD mode
-    $.expr_start,      // 2: Entering EXPR mode
-    $.expr_end,        // 3: Exiting EXPR mode
-    $.error_in_cmd,    // 4: Syntax error in CMD mode
-    $.error_in_expr,   // 5: Syntax error in EXPR mode
+    $.cmd_start,      // 0: Entering CMD mode ($rsh()
+    $.cmd_end,        // 1: Exiting CMD mode )
+    $.expr_start,     // 2: Entering EXPR mode ${
+    $.expr_end,       // 3: Exiting EXPR mode }
   ],
 
   extras: $ => [
@@ -24,31 +22,31 @@ module.exports = grammar({
   conflicts: $ => [
     [$.assignment, $.command],
     [$.property_access],
-    [$.cmd_section],
-    [$.expr_section],
   ],
 
   rules: {
     // ===== TOP LEVEL =====
-    program: $ => repeat(choice(
+    program: $ => repeat($._item),
+
+    _item: $ => choice(
       $.expr_section,
       $.cmd_section,
       $.comment,
-    )),
+    ),
 
     // ===== MODE SECTIONS =====
     
-    // Expression mode section (line or ${ interpolation)
+    // Expression mode section
     expr_section: $ => prec.left(seq(
       $.expr_start,
-      repeat($._expr_content),
+      repeat1($._expr_content),
       optional($.expr_end)
     )),
 
-    // Command mode section (line or $rsh() or $())
+    // Command mode section
     cmd_section: $ => prec.left(seq(
       $.cmd_start,
-      repeat($._cmd_content),
+      repeat1($._cmd_content),
       optional($.cmd_end)
     )),
 
@@ -108,11 +106,7 @@ module.exports = grammar({
 
     block: $ => seq(
       '{',
-      repeat(choice(
-        $.expr_section,
-        $.cmd_section,
-        $.comment,
-      )),
+      repeat($._item),
       '}'
     ),
 
@@ -125,7 +119,7 @@ module.exports = grammar({
       $.binary_expression,
       $.unary_expression,
       $.parenthesized,
-      $.expr_cmd_execution,  // $rsh() in EXPR mode
+      $.rsh_execution,  // $rsh() in EXPR mode
       $.array,
       $.object,
       $.function_call,
@@ -178,7 +172,7 @@ module.exports = grammar({
       field('object', choice(
         $.identifier,
         $.variable_reference,
-        $.expr_cmd_execution,
+        $.rsh_execution,
         $.parenthesized,
       )),
       repeat1(seq('.', field('property', $.identifier)))
@@ -222,12 +216,14 @@ module.exports = grammar({
       ')'
     )),
 
-    // $rsh() - command execution from EXPR mode (grammar handles the parsing)
-    expr_cmd_execution: $ => seq(
+    // $rsh() - command execution from EXPR mode
+    rsh_execution: $ => seq(
       '$rsh',
       '(',
-      repeat($._cmd_content),
+      // Scanner will emit CMD_START here
+      optional($.cmd_section),
       ')'
+      // Scanner will emit EXPR_START here to return to EXPR
     ),
 
     // ===== COMMAND MODE CONTENT =====
@@ -254,8 +250,8 @@ module.exports = grammar({
       $.word,
       $.string,
       $.variable_reference,
-      $.cmd_expr_interpolation,  // ${} in CMD mode
-      $.cmd_substitution,        // $() in CMD mode
+      $.expr_interpolation,  // ${} in CMD mode
+      $.cmd_substitution,    // $() in CMD mode
     ),
 
     command_flag: $ => /\-\-?[a-zA-Z0-9\-_]+/,
@@ -273,19 +269,22 @@ module.exports = grammar({
       repeat1(seq('|', $.command))
     )),
 
-    // ${} - expression interpolation in CMD mode (mode switches)
-    cmd_expr_interpolation: $ => seq(
+    // ${} - expression interpolation in CMD mode
+    expr_interpolation: $ => seq(
       '${',
-      repeat($._expr_content),
+      // Scanner will emit EXPR_START here
+      optional($.expr_section),
       '}'
+      // Scanner will emit CMD_START here to return to CMD
     ),
 
-    // $() - bash-style subshell in CMD mode (no mode switch, context-free)
+    // $() - command substitution in CMD mode  
     cmd_substitution: $ => seq(
       '$(',
-      optional(choice(
+      repeat(choice(
         $.command,
-        $.pipeline
+        $.pipeline,
+        '|'
       )),
       ')'
     ),
