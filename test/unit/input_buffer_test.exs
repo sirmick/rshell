@@ -74,77 +74,70 @@ defmodule RShell.InputBufferTest do
     end
   end
 
-  describe "ready_to_parse?/1 - for loops" do
-    test "incomplete for loop without do" do
-      refute InputBuffer.ready_to_parse?("for i in 1 2 3")
+  describe "ready_to_parse?/1 - for loops (RShell syntax)" do
+    test "for loop without braces is syntactically complete (will be caught as parser error)" do
+      # InputBuffer only checks brace balance, not RShell syntax semantics
+      # The parser will catch this as a syntax error (missing required braces)
+      assert InputBuffer.ready_to_parse?("for (i in items)")
     end
 
-    test "incomplete for loop with semicolon but no do" do
-      refute InputBuffer.ready_to_parse?("for i in 1 2 3;")
+    test "incomplete for loop with opening brace but no closing brace" do
+      refute InputBuffer.ready_to_parse?("for (i in items) {")
     end
 
-    test "complete for loop with do and done" do
-      assert InputBuffer.ready_to_parse?("for i in 1 2 3; do echo $i; done")
+    test "complete for loop with braces" do
+      assert InputBuffer.ready_to_parse?("for (i in items) { echo $i }")
     end
 
-    test "incomplete for loop with do but no done" do
-      refute InputBuffer.ready_to_parse?("for i in 1 2 3; do echo $i")
+    test "incomplete for loop with body but no closing brace" do
+      refute InputBuffer.ready_to_parse?("for (i in items) { echo $i")
     end
 
     test "complete multi-line for loop" do
       input = """
-      for i in 1 2 3
-      do
+      for (i in items) {
         echo $i
-      done
+      }
       """
 
       assert InputBuffer.ready_to_parse?(input)
     end
   end
 
-  describe "ready_to_parse?/1 - while loops" do
-    test "incomplete while loop without do" do
-      refute InputBuffer.ready_to_parse?("while true")
+  describe "ready_to_parse?/1 - while loops (RShell syntax)" do
+    test "while loop without braces is syntactically complete (will be caught as parser error)" do
+      # InputBuffer only checks brace balance, not RShell syntax semantics
+      assert InputBuffer.ready_to_parse?("while (true)")
     end
 
-    test "complete while loop with do and done" do
-      assert InputBuffer.ready_to_parse?("while true; do echo hi; done")
+    test "complete while loop with braces" do
+      assert InputBuffer.ready_to_parse?("while (true) { echo hi }")
     end
 
-    test "incomplete while loop with do but no done" do
-      refute InputBuffer.ready_to_parse?("while true; do echo hi")
-    end
-  end
-
-  describe "ready_to_parse?/1 - until loops" do
-    test "incomplete until loop without do" do
-      refute InputBuffer.ready_to_parse?("until false")
-    end
-
-    test "complete until loop with do and done" do
-      assert InputBuffer.ready_to_parse?("until false; do echo hi; done")
+    test "incomplete while loop with opening brace but no closing" do
+      refute InputBuffer.ready_to_parse?("while (true) { echo hi")
     end
   end
 
-  describe "ready_to_parse?/1 - if statements" do
-    test "incomplete if without then" do
-      refute InputBuffer.ready_to_parse?("if true")
+  describe "ready_to_parse?/1 - if statements (RShell syntax)" do
+    test "if without braces is syntactically complete (will be caught as parser error)" do
+      # InputBuffer only checks brace balance, not RShell syntax semantics
+      assert InputBuffer.ready_to_parse?("if (true)")
     end
 
-    test "incomplete if with then but no fi" do
-      refute InputBuffer.ready_to_parse?("if true; then echo hi")
+    test "incomplete if with opening brace but no closing" do
+      refute InputBuffer.ready_to_parse?("if (true) { echo hi")
     end
 
-    test "complete if statement with then and fi" do
-      assert InputBuffer.ready_to_parse?("if true; then echo hi; fi")
+    test "complete if statement with braces" do
+      assert InputBuffer.ready_to_parse?("if (true) { echo hi }")
     end
 
     test "complete multi-line if statement" do
       input = """
-      if [ -f file ]; then
+      if (condition) {
         echo exists
-      fi
+      }
       """
 
       assert InputBuffer.ready_to_parse?(input)
@@ -152,11 +145,11 @@ defmodule RShell.InputBufferTest do
 
     test "complete if-else statement" do
       input = """
-      if [ -f file ]; then
+      if (condition) {
         echo exists
-      else
+      } else {
         echo missing
-      fi
+      }
       """
 
       assert InputBuffer.ready_to_parse?(input)
@@ -164,59 +157,52 @@ defmodule RShell.InputBufferTest do
 
     test "complete if-elif-else statement" do
       input = """
-      if [ -f file ]; then
-        echo file
-      elif [ -d file ]; then
-        echo dir
-      else
-        echo missing
-      fi
+      if (cond1) {
+        echo first
+      } elif (cond2) {
+        echo second
+      } else {
+        echo third
+      }
       """
 
       assert InputBuffer.ready_to_parse?(input)
     end
   end
 
-  describe "ready_to_parse?/1 - case statements" do
-    test "incomplete case without esac" do
-      refute InputBuffer.ready_to_parse?("case $var in")
-    end
-
-    test "complete case statement with esac" do
-      assert InputBuffer.ready_to_parse?("case $var in a) echo a ;; esac")
-    end
-
-    test "complete multi-line case statement" do
-      input = """
-      case $var in
-        a)
-          echo a
-          ;;
-        b)
-          echo b
-          ;;
-      esac
-      """
-
-      assert InputBuffer.ready_to_parse?(input)
-    end
-  end
-
-  describe "ready_to_parse?/1 - nested structures" do
+  describe "ready_to_parse?/1 - nested structures (RShell syntax)" do
     test "nested for loops - incomplete inner" do
-      refute InputBuffer.ready_to_parse?("for i in 1; do for j in 2")
+      refute InputBuffer.ready_to_parse?("for (i in a) { for (j in b) {")
     end
 
     test "nested for loops - complete" do
-      assert InputBuffer.ready_to_parse?("for i in 1; do for j in 2; do echo $i$j; done; done")
+      assert InputBuffer.ready_to_parse?("for (i in a) { for (j in b) { echo $i$j } }")
     end
 
     test "for loop inside if - incomplete" do
-      refute InputBuffer.ready_to_parse?("if true; then for i in 1")
+      refute InputBuffer.ready_to_parse?("if (true) { for (i in items) {")
     end
 
     test "for loop inside if - complete" do
-      assert InputBuffer.ready_to_parse?("if true; then for i in 1; do echo $i; done; fi")
+      assert InputBuffer.ready_to_parse?("if (true) { for (i in items) { echo $i } }")
+    end
+  end
+
+  describe "ready_to_parse?/1 - object literals (RShell syntax)" do
+    test "complete object literal" do
+      assert InputBuffer.ready_to_parse?("X = { y: 1, z: 2 }")
+    end
+
+    test "incomplete object literal - missing closing brace" do
+      refute InputBuffer.ready_to_parse?("X = { y: 1")
+    end
+
+    test "nested object literals - complete" do
+      assert InputBuffer.ready_to_parse?("X = { a: { b: 1 } }")
+    end
+
+    test "nested object literals - incomplete" do
+      refute InputBuffer.ready_to_parse?("X = { a: { b: 1 }")
     end
   end
 
@@ -237,12 +223,12 @@ defmodule RShell.InputBufferTest do
       assert InputBuffer.continuation_type("cat <<EOF\ndata") == :heredoc_continuation
     end
 
-    test "returns :structure_continuation for open for loop" do
-      assert InputBuffer.continuation_type("for i in 1 2 3") == :structure_continuation
+    test "returns :structure_continuation for open brace" do
+      assert InputBuffer.continuation_type("if (true) {") == :structure_continuation
     end
 
-    test "returns :structure_continuation for open if" do
-      assert InputBuffer.continuation_type("if true") == :structure_continuation
+    test "returns :structure_continuation for incomplete for loop" do
+      assert InputBuffer.continuation_type("for (i in items) {") == :structure_continuation
     end
   end
 
@@ -269,6 +255,14 @@ defmodule RShell.InputBufferTest do
 
     test "multiple commands on one line are complete" do
       assert InputBuffer.ready_to_parse?("echo a; echo b; echo c")
+    end
+
+    test "braces inside quotes don't affect brace counting" do
+      assert InputBuffer.ready_to_parse?("echo '{ not a brace }'")
+    end
+
+    test "braces inside double quotes don't affect brace counting" do
+      assert InputBuffer.ready_to_parse?("echo \"{ also not a brace }\"")
     end
   end
 end
