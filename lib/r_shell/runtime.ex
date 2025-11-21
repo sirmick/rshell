@@ -216,18 +216,27 @@ defmodule RShell.Runtime do
 
   # Execute AST nodes (exported for ExecutionPipeline)
   def do_execute_node(node, context, session_id) do
-    new_context = %{context | command_count: context.command_count + 1}
-
     case node do
       # RShell wraps commands in CmdLine nodes - extract the inner command/pipeline/list
       %Types.CmdLine{children: children} when is_list(children) and children != [] ->
         # CmdLine contains a single child (command, pipeline, or list)
         [inner_node | _] = children
-        # Execute the inner node without incrementing command_count again
-        do_execute_node(inner_node, %{new_context | command_count: context.command_count}, session_id)
+        # Execute the inner node directly - it will increment command_count
+        do_execute_node(inner_node, context, session_id)
+
+      # All other node types increment command_count
+      _ ->
+        new_context = %{context | command_count: context.command_count + 1}
+        execute_node_by_type(node, new_context, session_id)
+    end
+  end
+
+  # Execute node based on its type (after command_count increment)
+  defp execute_node_by_type(node, context, session_id) do
+    case node do
 
       %Types.Command{} = cmd ->
-        execute_command(cmd, new_context, session_id)
+        execute_command(cmd, context, session_id)
 
       %Types.Pipeline{} = _pipeline ->
         # TODO: Implement pipeline execution
@@ -235,7 +244,7 @@ defmodule RShell.Runtime do
 
       %Types.Assignment{} = assignment ->
         # RShell-style assignment: X = value
-        execute_rshell_assignment(assignment, new_context, session_id)
+        execute_rshell_assignment(assignment, context, session_id)
 
       %Types.IfStatement{} = _stmt ->
         # TODO: Implement RShell if statement execution
