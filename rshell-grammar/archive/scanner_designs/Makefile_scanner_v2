@@ -1,0 +1,28 @@
+# Makefile for Scanner V2 Unit Tests
+
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c99 -I../src
+LDFLAGS = 
+
+# Targets
+TEST_BIN = test_scanner_v2_unit
+TEST_SRC = test_scanner_v2_unit.c
+SCANNER_SRC = ../src/scanner_v2.c
+
+.PHONY: all clean test
+
+all: test
+
+$(TEST_BIN): $(TEST_SRC)
+	$(CC) $(CFLAGS) -o $(TEST_BIN) $(TEST_SRC) $(LDFLAGS)
+
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
+clean:
+	rm -f $(TEST_BIN)
+
+help:
+	@echo "Available targets:"
+	@echo "  make test  - Build and run scanner unit tests"
+	@echo "  make clean - Remove test binary"

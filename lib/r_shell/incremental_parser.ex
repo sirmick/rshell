@@ -156,7 +156,7 @@ defmodule RShell.IncrementalParser do
 
   @impl true
   def init(%{session_id: session_id, buffer_size: buffer_size, broadcast: broadcast}) do
-    case BashParser.new_parser_with_size(buffer_size) do
+    case RShell.Grammar.new_parser_with_size(buffer_size) do
       {:ok, resource} ->
         Logger.debug(
           "IncrementalParser started for session=#{inspect(session_id)} buffer_size=#{buffer_size}"
@@ -182,7 +182,7 @@ defmodule RShell.IncrementalParser do
   def handle_call({:append_fragment, fragment}, _from, state) do
     # Wrap entire parsing in try/catch to ensure we ALWAYS send a response
     try do
-      case BashParser.parse_incremental(state.resource, fragment) do
+      case RShell.Grammar.parse_incremental(state.resource, fragment) do
         {:ok, ast_map} ->
           # Convert to typed struct
           typed_ast = Types.from_map(ast_map)
@@ -243,7 +243,7 @@ defmodule RShell.IncrementalParser do
 
   @impl true
   def handle_call(:reset, _from, state) do
-    :ok = BashParser.reset_parser(state.resource)
+    :ok = RShell.Grammar.reset_parser(state.resource)
     Logger.debug("Parser state reset for session=#{inspect(state.session_id)}")
     # Reset command count and last executable row
     {:reply, :ok, %{state | command_count: 0, last_executable_row: -1}}
@@ -258,7 +258,7 @@ defmodule RShell.IncrementalParser do
 
   @impl true
   def handle_call(:get_current_ast, _from, state) do
-    case BashParser.get_current_ast(state.resource) do
+    case RShell.Grammar.get_current_ast(state.resource) do
       {:ok, ast_map} ->
         typed_ast = Types.from_map(ast_map)
         {:reply, {:ok, typed_ast}, state}
@@ -270,19 +270,19 @@ defmodule RShell.IncrementalParser do
 
   @impl true
   def handle_call(:has_errors, _from, state) do
-    result = BashParser.has_errors(state.resource)
+    result = RShell.Grammar.has_errors(state.resource)
     {:reply, result, state}
   end
 
   @impl true
   def handle_call(:get_buffer_size, _from, state) do
-    result = BashParser.get_buffer_size(state.resource)
+    result = RShell.Grammar.get_buffer_size(state.resource)
     {:reply, result, state}
   end
 
   @impl true
   def handle_call(:get_accumulated_input, _from, state) do
-    result = BashParser.get_accumulated_input(state.resource)
+    result = RShell.Grammar.get_accumulated_input(state.resource)
     {:reply, result, state}
   end
 
@@ -305,7 +305,7 @@ defmodule RShell.IncrementalParser do
 
   defp check_and_broadcast_executable_nodes(typed_ast, ast_map, state) do
     # Check if tree has errors - if so, nothing is executable yet
-    has_errors = BashParser.has_errors(state.resource)
+    has_errors = RShell.Grammar.has_errors(state.resource)
 
     Logger.debug("check_and_broadcast_executable_nodes: has_errors=#{has_errors}")
 
@@ -325,7 +325,7 @@ defmodule RShell.IncrementalParser do
           _ -> []
         end
 
-      accumulated_input = BashParser.get_accumulated_input(state.resource)
+      accumulated_input = RShell.Grammar.get_accumulated_input(state.resource)
 
       # Zip together maps and typed structs for processing
       children_pairs = Enum.zip(children_maps, children_typed)
