@@ -1,89 +1,105 @@
 /**
- * RShell Grammar - Simplified with only 6 scanner tokens
- * The scanner emits mode boundaries, grammar handles everything else
+ * RShell Grammar V3 - Clean Dual-Mode Implementation
+ * 
+ * Mode detection happens in the grammar, not the scanner.
+ * Scanner only provides structural tokens (NEWLINE, BLOCK_START).
+ * 
+ * EXPR mode: Keywords (if/for/while) or assignments (X = ...)
+ * CMD mode: Everything else (shell commands, pipelines)
  */
 
 module.exports = grammar({
   name: 'rshell',
 
-  // 6 external tokens from scanner for mode boundaries
   externals: $ => [
-    $.cmd_start,       // 0: Entering CMD mode
-    $.cmd_end,         // 1: Exiting CMD mode
-    $.expr_start,      // 2: Entering EXPR mode
-    $.expr_end,        // 3: Exiting EXPR mode
-    $.error_in_cmd,    // 4: Syntax error in CMD mode
-    $.error_in_expr,   // 5: Syntax error in EXPR mode
+    $.newline,       // Line boundary from scanner
+    $.block_start,   // { in EXPR mode from scanner
   ],
 
   extras: $ => [
     $.comment,
-    /\s/,  // All whitespace including newlines
+    /[ \t\r]/,  // Whitespace (NOT newlines - scanner handles those)
   ],
 
   conflicts: $ => [
     [$.assignment, $.command],
+    [$.expression, $.command_name],
     [$.property_access],
-    [$.cmd_section],
-    [$.expr_section],
+    [$.literal, $.command_name],  // String can be literal or command name
+    [$.command_argument, $.raw_argument],  // raw_argument can contain variable_reference
   ],
 
   rules: {
     // ===== TOP LEVEL =====
+    
     program: $ => repeat(choice(
-      $.expr_section,
-      $.cmd_section,
-      $.comment,
+      seq($._line, optional($.newline)),
+      $.newline,  // Empty lines
     )),
 
-    // ===== MODE SECTIONS =====
-    
-    // Expression mode section (line or ${ interpolation)
-    expr_section: $ => prec.left(seq(
-      $.expr_start,
-      repeat($._expr_content),
-      optional($.expr_end)
-    )),
-
-    // Command mode section (line or $rsh() or $())
-    cmd_section: $ => prec.left(seq(
-      $.cmd_start,
-      repeat($._cmd_content),
-      optional($.cmd_end)
-    )),
-
-    // ===== EXPRESSION MODE CONTENT =====
-    
-    _expr_content: $ => choice(
-      $.assignment,
-      $.control_flow,
-      $.expression,
+    _line: $ => choice(
+      seq(
+        $._statement,
+        repeat(seq(';', $._statement))
+      ),
       $.comment,
     ),
 
-    // Assignments
+    // ===== MODE DETECTION IN GRAMMAR =====
+    
+    // EXPR line: starts with keyword or assignment pattern
+    expr_line: $ => choice(
+      $.assignment,
+      $.control_flow,
+      $.return_statement,
+      $.break_statement,
+      $.continue_statement,
+      $.expression,  // Standalone expression (function calls, etc.)
+    ),
+    
+    // CMD line: shell commands and pipelines
+    cmd_line: $ => choice(
+      $.pipeline,
+      $.command,
+    ),
+
+    // Semicolon-separated statements on one line
+    _statement: $ => choice(
+      $.expr_line,
+      $.cmd_line,
+    ),
+
+    // ===== EXPRESSION MODE =====
+    
     assignment: $ => seq(
       field('name', $.identifier),
       field('operator', choice('=', '+=', '-=', '*=', '/=', '%=')),
       field('value', $.expression)
     ),
 
-    // Control flow
     control_flow: $ => choice(
       $.if_statement,
       $.for_statement,
       $.while_statement,
-      $.return_statement,
-      $.break_statement,
-      $.continue_statement,
     ),
 
     if_statement: $ => seq(
       'if',
-      '(',
-      field('condition', $.expression),
-      ')',
-      field('body', $.block)
+      field('condition', $.parenthesized),
+      field('body', $.expr_block),
+      repeat(field('alternative', $.elif_clause)),
+      optional(field('alternative', $.else_clause)),
+    ),
+
+    elif_clause: $ => seq(
+      'elif',
+      field('condition', $.parenthesized),
+      field('body', $.expr_block)
+    ),
+
+    else_clause: $ => seq(
+      'else',
+      field('body', $.expr_block)
     ),
 
     for_statement: $ => seq(
@@ -91,32 +107,34 @@ module.exports = grammar({
       field('variable', $.identifier),
       'in',
       field('iterable', $.expression),
-      field('body', $.block)
+      field('body', $.expr_block)
     ),
 
     while_statement: $ => seq(
       'while',
-      '(',
-      field('condition', $.expression),
-      ')',
-      field('body', $.block)
+      field('condition', $.parenthesized),
+      field('body', $.expr_block)
     ),
 
-    return_statement: $ => prec.right(seq('return', optional($.expression))),
+    // EXPR block: Uses scanner's block_start token, then mixed content
+    // Aliased as 'block' for test compatibility
+    expr_block: $ => alias(seq(
+      $.block_start,  // Scanner emits this for { in EXPR context
+      repeat(choice(
+        seq($._line, optional($.newline)),
+        $.newline,
+      )),
+      '}'
+    ), $.block),
+
+    return_statement: $ => prec.right(seq(
+      'return', 
+      optional($.expression)
+    )),
+    
     break_statement: $ => 'break',
     continue_statement: $ => 'continue',
 
-    block: $ => seq(
-      '{',
-      repeat(choice(
-        $.expr_section,
-        $.cmd_section,
-        $.comment,
-      )),
-      '}'
-    ),
-
-    // Expressions
     expression: $ => choice(
       $.literal,
       $.identifier,
@@ -125,10 +143,10 @@ module.exports = grammar({
       $.binary_expression,
       $.unary_expression,
       $.parenthesized,
-      $.expr_cmd_execution,  // $rsh() in EXPR mode
       $.array,
       $.object,
       $.function_call,
+      $.cmd_execution,  // $rsh(...)
     ),
 
     literal: $ => choice(
@@ -137,7 +155,7 @@ module.exports = grammar({
       $.boolean,
     ),
 
-    number: $ => /\-?\d+(\.\d+)?/,
+    number: $ => /-?\d+(\.\d+)?/,
     
     string: $ => choice(
       seq('"', repeat(choice(/[^"\\]+/, /\\./)), '"'),
@@ -148,21 +166,37 @@ module.exports = grammar({
 
     array: $ => seq(
       '[',
+      optional($.newline),  // Allow newline after [
       optional(seq(
         $.expression,
-        repeat(seq(',', $.expression)),
-        optional(',')
+        repeat(seq(
+          optional($.newline),  // Allow newline before comma
+          ',',
+          optional($.newline),  // Allow newline after comma
+          $.expression
+        )),
+        optional(','),
+        optional($.newline)  // Allow trailing newline before ]
       )),
+      optional($.newline),
       ']'
     ),
 
     object: $ => seq(
       '{',
+      optional($.newline),  // Allow newline after {
       optional(seq(
         $.object_entry,
-        repeat(seq(',', $.object_entry)),
-        optional(',')
+        repeat(seq(
+          optional($.newline),  // Allow newline before comma
+          ',',
+          optional($.newline),  // Allow newline after comma
+          $.object_entry
+        )),
+        optional(','),
+        optional($.newline)  // Allow trailing newline before }
       )),
+      optional($.newline),
       '}'
     ),
 
@@ -174,15 +208,18 @@ module.exports = grammar({
 
     variable_reference: $ => seq('$', $.identifier),
 
-    property_access: $ => prec.left(1, seq(
-      field('object', choice(
-        $.identifier,
-        $.variable_reference,
-        $.expr_cmd_execution,
-        $.parenthesized,
+    property_access: $ => alias(
+      prec.left(1, seq(
+        field('object', choice(
+          $.identifier,
+          $.variable_reference,
+          $.cmd_execution,
+          $.parenthesized,
+        )),
+        repeat1(seq('.', field('property', $.identifier)))
       )),
-      repeat1(seq('.', field('property', $.identifier)))
-    )),
+      $.property_chain
+    ),
 
     binary_expression: $ => choice(
       // Arithmetic
@@ -200,7 +237,7 @@ module.exports = grammar({
       prec.left(1, seq($.expression, '==', $.expression)),
       prec.left(1, seq($.expression, '!=', $.expression)),
       
-      // Logical - both word and symbol forms
+      // Logical
       prec.left(0, seq($.expression, choice('and', '&&'), $.expression)),
       prec.left(0, seq($.expression, choice('or', '||'), $.expression)),
     ),
@@ -210,7 +247,10 @@ module.exports = grammar({
       prec(4, seq('-', $.expression)),
     ),
 
-    parenthesized: $ => seq('(', $.expression, ')'),
+    parenthesized: $ => alias(
+      seq('(', $.expression, ')'),
+      $.parenthesized_expression
+    ),
 
     function_call: $ => prec(10, seq(
       field('name', $.identifier),
@@ -222,23 +262,20 @@ module.exports = grammar({
       ')'
     )),
 
-    // $rsh() - command execution from EXPR mode (grammar handles the parsing)
-    expr_cmd_execution: $ => seq(
+    // Command execution from EXPR mode
+    cmd_execution: $ => seq(
       '$rsh',
       '(',
-      repeat($._cmd_content),
+      optional(choice(
+        $.pipeline,
+        $.command
+      )),
       ')'
     ),
 
-    // ===== COMMAND MODE CONTENT =====
+    // ===== COMMAND MODE =====
 
-    _cmd_content: $ => choice(
-      $.command,
-      $.pipeline,
-      $.comment,
-    ),
-
-    command: $ => prec.left(1, seq(
+    command: $ => prec.left(0, seq(
       field('name', $.command_name),
       repeat(field('argument', $.command_argument))
     )),
@@ -249,23 +286,32 @@ module.exports = grammar({
       $.string,
     ),
 
-    command_argument: $ => choice(
+    command_argument: $ => prec.left(choice(
       $.command_flag,
+      $.raw_argument,        // Higher priority - matches complex patterns first
       $.word,
       $.string,
       $.variable_reference,
-      $.cmd_expr_interpolation,  // ${} in CMD mode
-      $.cmd_substitution,        // $() in CMD mode
-    ),
+      $.expr_interpolation,  // ${expr}
+      $.cmd_substitution,    // $()
+    )),
 
-    command_flag: $ => /\-\-?[a-zA-Z0-9\-_]+/,
+    command_flag: $ => /--?[a-zA-Z0-9\-_]+/,
     
     word: $ => /[a-zA-Z0-9_\-\.]+/,
+    
+    // Raw argument: Can contain special chars (: / =) and ${} interpolations
+    // Matches patterns like: https://${HOST}:${PORT}/api
+    raw_argument: $ => prec.left(repeat1(choice(
+      /[a-zA-Z0-9_\-\.\/:=@%&+]+/,  // Raw text (no $ or whitespace)
+      $.expr_interpolation,          // ${...} embedded
+      $.variable_reference,          // $VAR embedded
+    ))),
 
     path: $ => choice(
-      /\/[a-zA-Z0-9_\-\.\/]+/,        // Absolute paths
-      /\.\.?\/[a-zA-Z0-9_\-\.\/]+/,   // Relative paths
-      /~\/[a-zA-Z0-9_\-\.\/]*/,        // Home paths
+      /\/[a-zA-Z0-9_\-\.\/]+/,              // Absolute paths: /bin/ls
+      /\.\.?\/[a-zA-Z0-9_\-\.\/]*/,         // Relative paths: ./script or ../dir
+      /~\/[a-zA-Z0-9_\-\.\/]*/,             // Home paths: ~/file
     ),
 
     pipeline: $ => prec(2, seq(
@@ -273,14 +319,14 @@ module.exports = grammar({
       repeat1(seq('|', $.command))
     )),
 
-    // ${} - expression interpolation in CMD mode (mode switches)
-    cmd_expr_interpolation: $ => seq(
+    // Expression interpolation in CMD mode
+    expr_interpolation: $ => seq(
       '${',
-      repeat($._expr_content),
+      $.expression,
       '}'
     ),
 
-    // $() - bash-style subshell in CMD mode (no mode switch, context-free)
+    // Bash-style command substitution
     cmd_substitution: $ => seq(
       '$(',
       optional(choice(

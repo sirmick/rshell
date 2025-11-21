@@ -10,6 +10,10 @@
         {
           "type": "expression",
           "named": true
+        },
+        {
+          "type": "newline",
+          "named": true
         }
       ]
     }
@@ -94,7 +98,7 @@
       "required": false,
       "types": [
         {
-          "type": "cmd_section",
+          "type": "cmd_line",
           "named": true
         },
         {
@@ -102,7 +106,11 @@
           "named": true
         },
         {
-          "type": "expr_section",
+          "type": "expr_line",
+          "named": true
+        },
+        {
+          "type": "newline",
           "named": true
         }
       ]
@@ -114,54 +122,34 @@
     "fields": {}
   },
   {
-    "type": "cmd_expr_interpolation",
+    "type": "cmd_execution",
     "named": true,
     "fields": {},
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": false,
       "types": [
         {
-          "type": "assignment",
+          "type": "command",
           "named": true
         },
         {
-          "type": "comment",
-          "named": true
-        },
-        {
-          "type": "control_flow",
-          "named": true
-        },
-        {
-          "type": "expression",
+          "type": "pipeline",
           "named": true
         }
       ]
     }
   },
   {
-    "type": "cmd_section",
+    "type": "cmd_line",
     "named": true,
     "fields": {},
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
         {
-          "type": "cmd_end",
-          "named": true
-        },
-        {
-          "type": "cmd_start",
-          "named": true
-        },
-        {
           "type": "command",
-          "named": true
-        },
-        {
-          "type": "comment",
           "named": true
         },
         {
@@ -225,15 +213,19 @@
       "required": true,
       "types": [
         {
-          "type": "cmd_expr_interpolation",
-          "named": true
-        },
-        {
           "type": "cmd_substitution",
           "named": true
         },
         {
           "type": "command_flag",
+          "named": true
+        },
+        {
+          "type": "expr_interpolation",
+          "named": true
+        },
+        {
+          "type": "raw_argument",
           "named": true
         },
         {
@@ -283,23 +275,11 @@
       "required": true,
       "types": [
         {
-          "type": "break_statement",
-          "named": true
-        },
-        {
-          "type": "continue_statement",
-          "named": true
-        },
-        {
           "type": "for_statement",
           "named": true
         },
         {
           "type": "if_statement",
-          "named": true
-        },
-        {
-          "type": "return_statement",
           "named": true
         },
         {
@@ -310,30 +290,49 @@
     }
   },
   {
-    "type": "expr_cmd_execution",
+    "type": "elif_clause",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "command",
-          "named": true
-        },
-        {
-          "type": "comment",
-          "named": true
-        },
-        {
-          "type": "pipeline",
-          "named": true
-        }
-      ]
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expr_block",
+            "named": true
+          }
+        ]
+      },
+      "condition": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "parenthesized",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
-    "type": "expr_section",
+    "type": "else_clause",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expr_block",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "expr_block",
     "named": true,
     "fields": {},
     "children": {
@@ -341,11 +340,45 @@
       "required": true,
       "types": [
         {
+          "type": "block",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "expr_interpolation",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "expr_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
           "type": "assignment",
           "named": true
         },
         {
-          "type": "comment",
+          "type": "break_statement",
+          "named": true
+        },
+        {
+          "type": "continue_statement",
           "named": true
         },
         {
@@ -353,15 +386,11 @@
           "named": true
         },
         {
-          "type": "expr_end",
-          "named": true
-        },
-        {
-          "type": "expr_start",
-          "named": true
-        },
-        {
           "type": "expression",
+          "named": true
+        },
+        {
+          "type": "return_statement",
           "named": true
         }
       ]
@@ -384,7 +413,7 @@
           "named": true
         },
         {
-          "type": "expr_cmd_execution",
+          "type": "cmd_execution",
           "named": true
         },
         {
@@ -431,7 +460,7 @@
         "required": true,
         "types": [
           {
-            "type": "block",
+            "type": "expr_block",
             "named": true
           }
         ]
@@ -488,12 +517,26 @@
     "type": "if_statement",
     "named": true,
     "fields": {
+      "alternative": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "elif_clause",
+            "named": true
+          },
+          {
+            "type": "else_clause",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "block",
+            "type": "expr_block",
             "named": true
           }
         ]
@@ -503,7 +546,7 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "parenthesized",
             "named": true
           }
         ]
@@ -542,6 +585,10 @@
       "required": false,
       "types": [
         {
+          "type": "newline",
+          "named": true
+        },
+        {
           "type": "object_entry",
           "named": true
         }
@@ -579,11 +626,66 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": true,
       "types": [
         {
-          "type": "expression",
+          "type": "parenthesized_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "parenthesized_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "array",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "cmd_execution",
+          "named": true
+        },
+        {
+          "type": "function_call",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "literal",
+          "named": true
+        },
+        {
+          "type": "object",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "property_access",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "variable_reference",
           "named": true
         }
       ]
@@ -618,7 +720,7 @@
       "required": false,
       "types": [
         {
-          "type": "cmd_section",
+          "type": "cmd_line",
           "named": true
         },
         {
@@ -626,7 +728,11 @@
           "named": true
         },
         {
-          "type": "expr_section",
+          "type": "expr_line",
+          "named": true
+        },
+        {
+          "type": "newline",
           "named": true
         }
       ]
@@ -641,26 +747,30 @@
         "required": true,
         "types": [
           {
-            "type": "expr_cmd_execution",
-            "named": true
-          },
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "parenthesized",
-            "named": true
-          },
-          {
-            "type": "variable_reference",
+            "type": "property_chain",
             "named": true
           }
         ]
-      },
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "property_chain",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "property_chain",
+    "named": true,
+    "fields": {
       "property": {
         "multiple": true,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "identifier",
@@ -668,6 +778,47 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "command",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "pipeline",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "raw_argument",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "expr_interpolation",
+          "named": true
+        },
+        {
+          "type": "variable_reference",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -729,7 +880,7 @@
         "required": true,
         "types": [
           {
-            "type": "block",
+            "type": "expr_block",
             "named": true
           }
         ]
@@ -739,7 +890,7 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "parenthesized",
             "named": true
           }
         ]
@@ -843,6 +994,10 @@
     "named": false
   },
   {
+    "type": ";",
+    "named": false
+  },
+  {
     "type": "<",
     "named": false
   },
@@ -883,14 +1038,6 @@
     "named": true
   },
   {
-    "type": "cmd_end",
-    "named": true
-  },
-  {
-    "type": "cmd_start",
-    "named": true
-  },
-  {
     "type": "command_flag",
     "named": true
   },
@@ -903,12 +1050,12 @@
     "named": true
   },
   {
-    "type": "expr_end",
-    "named": true
+    "type": "elif",
+    "named": false
   },
   {
-    "type": "expr_start",
-    "named": true
+    "type": "else",
+    "named": false
   },
   {
     "type": "false",
@@ -929,6 +1076,10 @@
   {
     "type": "in",
     "named": false
+  },
+  {
+    "type": "newline",
+    "named": true
   },
   {
     "type": "not",

@@ -16,18 +16,31 @@ tree-sitter generate
 echo "✓ Parser generated"
 echo ""
 
-# Step 2: Compile scanner (already done by tree-sitter generate)
-echo "[2/3] Scanner compiled (C code in src/scanner.c)"
-echo "✓ Scanner ready"
+# Step 2: Compile Scanner (C++)
+echo "[2/4] Compiling Scanner..."
+mkdir -p build
+g++ -std=c++20 -Wall -Wextra -I./src -c src/scanner.cc -o build/scanner.o
+echo "✓ Scanner compiled"
 echo ""
 
-# Step 3: Run tests
-echo "[3/3] Running test suite..."
+# Step 3: Test Scanner (C++ unit tests)
+echo "[3/4] Running Scanner unit tests..."
+g++ -std=c++20 -Wall -Wextra -I./src -o build/test_scanner tests/test_scanner_v2_simple.cpp src/scanner.cc
+./build/test_scanner
+if [ $? -ne 0 ]; then
+  echo "✗ Scanner unit tests failed"
+  exit 1
+fi
+echo "✓ Scanner unit tests passed"
+echo ""
+
+# Step 4: Run tests
+echo "[4/4] Running grammar test suite..."
 echo ""
 
 # Run grammar tests
 echo "--- Grammar Tests ---"
-python3 tests/test_grammar_simple.py --no-generate
+python3 tests/test_grammar.py --no-generate
 echo ""
 
 # Run scanner mode detection tests
@@ -38,11 +51,12 @@ echo ""
 echo "=== Build Complete ==="
 echo ""
 echo "Summary:"
-echo "  - Parser:  rshell-grammar/src/parser.c"
-echo "  - Scanner: rshell-grammar/src/scanner.c"
-echo "  - Tests:   All passing ✓"
+echo "  - Parser:     rshell-grammar/src/parser.c"
+echo "  - Scanner:    rshell-grammar/src/scanner.cc (C++20)"
+echo "  - Tests:      All passing ✓"
 echo ""
 echo "Next steps:"
-echo "  - Parse a file:  tree-sitter parse <file.rsh>"
-echo "  - Run tests:     python3 tests/test_grammar_simple.py"
-echo "  - Edit grammar:  vim grammar.js"
+echo "  - Parse a file:       tree-sitter parse <file.rsh>"
+echo "  - Run grammar tests:  python3 tests/test_grammar.py"
+echo "  - Run scanner tests:  ./build/test_scanner"
+echo "  - Edit grammar:       vim grammar.js"

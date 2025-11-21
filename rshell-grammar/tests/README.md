@@ -6,21 +6,21 @@ Test suite for the RShell tree-sitter grammar.
 
 ```bash
 # Run all tests
-python3 rshell-grammar/tests/test_grammar_simple.py
+python3 rshell-grammar/tests/test_grammar.py
 
 # Run specific category
-python3 rshell-grammar/tests/test_grammar_simple.py --filter commands
+python3 rshell-grammar/tests/test_grammar.py --filter commands
 
 # Verbose output (show parse trees)
-python3 rshell-grammar/tests/test_grammar_simple.py --verbose
+python3 rshell-grammar/tests/test_grammar.py --verbose
 
 # Skip grammar generation (faster)
-python3 rshell-grammar/tests/test_grammar_simple.py --no-generate
+python3 rshell-grammar/tests/test_grammar.py --no-generate
 ```
 
 ## Test Files
 
-- **`test_grammar_simple.py`** - Main test harness (22 test cases)
+- **`test_grammar.py`** - Main test harness (22 test cases)
   - Assignments (4 tests)
   - Lists (4 tests)
   - Maps (4 tests)
