@@ -235,7 +235,7 @@ TEST_CASES = {
         },
         {
             "name": "For loop",
-            "code": "for S in SERVERS {\n  echo test\n}",
+            "code": "for (S in SERVERS) {\n  echo test\n}",
             "expect": ["for_statement", "block", "command"],
         },
         {
@@ -276,7 +276,7 @@ TEST_CASES = {
         },
         {
             "name": "Continue in loop",
-            "code": "for X in LIST {\n  if (X > 5) {\n    continue\n  }\n}",
+            "code": "for (X in LIST) {\n  if (X > 5) {\n    continue\n  }\n}",
             "expect": ["for_statement", "if_statement", "continue_statement"],
         },
         {
@@ -290,12 +290,12 @@ TEST_CASES = {
     "nested_control_flow": [
         {
             "name": "If inside for loop",
-            "code": "for X in LIST {\n  if (X > 5) {\n    Y = 1\n  }\n}",
+            "code": "for (X in LIST) {\n  if (X > 5) {\n    Y = 1\n  }\n}",
             "expect": ["for_statement", "if_statement", "block", "assignment"],
         },
         {
             "name": "For inside if statement",
-            "code": "if (COUNT > 0) {\n  for ITEM in ITEMS {\n    echo test\n  }\n}",
+            "code": "if (COUNT > 0) {\n  for (ITEM in ITEMS) {\n    echo test\n  }\n}",
             "expect": ["if_statement", "for_statement", "command", "block"],
         },
         {
@@ -407,7 +407,7 @@ TEST_CASES = {
         },
         {
             "name": "Pipeline in for loop",
-            "code": "for F in FILES {\n  cat $F | grep pattern\n}",
+            "code": "for (F in FILES) {\n  cat $F | grep pattern\n}",
             "expect": ["for_statement", "pipeline", "command"],
         },
     ],
@@ -513,7 +513,7 @@ TEST_CASES = {
         },
         {
             "name": "Nested in for loop",
-            "code": 'for S in SERVERS {\n  result = $rsh(echo ${S.fqdn})\n}',
+            "code": 'for (S in SERVERS) {\n  result = $rsh(echo ${S.fqdn})\n}',
             "expect": ["for_statement", "assignment", "cmd_execution", "expr_interpolation", "property_access"],
         },
     ],

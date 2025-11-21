@@ -41,7 +41,7 @@ defmodule RShell.IncrementalParser do
   require Logger
 
   alias RShell.PubSub
-  alias BashParser.AST.Types
+  alias BashParser.AST.RShellTypes, as: Types
 
   # 10MB
   @default_buffer_size 10 * 1024 * 1024
@@ -394,24 +394,22 @@ defmodule RShell.IncrementalParser do
 
   defp is_executable_node?(typed_node) do
     # A node is executable if it's one of the executable types
-    # Pattern match on struct types instead of string comparison
+    # RShell AST has different node types than bash
     case typed_node do
-      %Types.Command{} -> true
+      # RShell-specific executable nodes
+      %Types.CmdLine{} -> true
+      %Types.ExprLine{} -> true
+      %Types.Assignment{} -> true
+      %Types.ControlFlow{} -> true
       %Types.Pipeline{} -> true
-      %Types.List{} -> true
-      %Types.Subshell{} -> true
-      %Types.CompoundStatement{} -> true
+      %Types.Command{} -> true
+      %Types.CmdExecution{} -> true
       %Types.ForStatement{} -> true
       %Types.WhileStatement{} -> true
       %Types.IfStatement{} -> true
-      %Types.CaseStatement{} -> true
-      %Types.FunctionDefinition{} -> true
-      %Types.DeclarationCommand{} -> true
-      # Simple variable assignments like X=12
-      %Types.VariableAssignment{} -> true
-      %Types.UnsetCommand{} -> true
-      %Types.TestCommand{} -> true
-      %Types.CStyleForStatement{} -> true
+      %Types.ReturnStatement{} -> true
+      %Types.BreakStatement{} -> true
+      %Types.ContinueStatement{} -> true
       _ -> false
     end
   end

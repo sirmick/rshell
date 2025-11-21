@@ -104,9 +104,11 @@ module.exports = grammar({
 
     for_statement: $ => seq(
       'for',
+      '(',
       field('variable', $.identifier),
       'in',
       field('iterable', $.expression),
+      ')',
       field('body', $.expr_block)
     ),
 

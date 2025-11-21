@@ -296,6 +296,10 @@
           "value": "for"
         },
         {
+          "type": "STRING",
+          "value": "("
+        },
+        {
           "type": "FIELD",
           "name": "variable",
           "content": {
@@ -314,6 +318,10 @@
             "type": "SYMBOL",
             "name": "expression"
           }
+        },
+        {
+          "type": "STRING",
+          "value": ")"
         },
         {
           "type": "FIELD",
