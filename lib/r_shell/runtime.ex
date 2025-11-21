@@ -26,6 +26,7 @@ defmodule RShell.Runtime do
 
   alias RShell.PubSub
   alias RShell.Builtins
+  alias RShell.ExprEvaluator
   alias BashParser.AST.RShellTypes, as: Types
 
   # Default variable attributes (reserved for future use)
@@ -222,6 +223,11 @@ defmodule RShell.Runtime do
         # Transparent pass-through - don't increment command_count for wrapper
         do_execute_node(inner_node, context, session_id)
 
+      # RShell wraps expressions in ExprLine nodes - extract the inner assignment/expression
+      %Types.ExprLine{children: [inner_node | _]} ->
+        # Transparent pass-through - don't increment command_count for wrapper
+        do_execute_node(inner_node, context, session_id)
+
       # Increment command_count first, then execute and preserve result context
       %Types.Command{} = cmd ->
         context
@@ -343,10 +349,11 @@ defmodule RShell.Runtime do
   end
 
   # Execute RShell-style assignment: X = value
+  # Uses ExprEvaluator to convert AST directly to native Elixir types (NO JSON!)
   defp execute_rshell_assignment(
          %Types.Assignment{name: name_node, value: value_node},
          context,
-         _session_id
+         session_id
        ) do
     # Extract variable name from identifier
     var_name =
@@ -356,57 +363,20 @@ defmodule RShell.Runtime do
         _ -> ""
       end
 
-    # Extract value - may be literal or expression
-    value_result = extract_value_from_node(value_node, context)
+    # NEW: Use ExprEvaluator to convert AST to native value
+    native_value = ExprEvaluator.evaluate(value_node, context)
 
-    # Update environment
-    new_env = Map.put(context.env, var_name, value_result)
+    # Update environment with native value
+    new_env = Map.put(context.env, var_name, native_value)
+
+    # Broadcast variable_set event
+    PubSub.broadcast(session_id, :context, {:variable_set, %{
+      name: var_name,
+      value: native_value
+    }})
+
     # Assignments produce NO output
     %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
-  end
-
-  # Extract value from RShell value nodes (literals, expressions, etc.)
-  defp extract_value_from_node(%Types.Number{source_info: %{text: text}}, _context) do
-    case Integer.parse(text) do
-      {int, ""} -> int
-      _ ->
-        case Float.parse(text) do
-          {float, ""} -> float
-          _ -> text
-        end
-    end
-  end
-
-  defp extract_value_from_node(%Types.String{source_info: %{text: text}}, _context) do
-    # Remove quotes from string literals
-    if String.starts_with?(text, "\"") and String.ends_with?(text, "\"") do
-      String.slice(text, 1..-2//1)
-    else
-      text
-    end
-  end
-
-  defp extract_value_from_node(%Types.Boolean{source_info: %{text: text}}, _context) do
-    text == "true"
-  end
-
-  defp extract_value_from_node(%Types.Array{children: children}, context) when is_list(children) do
-    Enum.map(children, &extract_value_from_node(&1, context))
-  end
-
-  defp extract_value_from_node(%Types.Object{children: children}, context) when is_list(children) do
-    Enum.reduce(children, %{}, fn
-      %Types.ObjectEntry{key: key_node, value: value_node}, acc ->
-        key = extract_text_from_node(key_node, context)
-        value = extract_value_from_node(value_node, context)
-        Map.put(acc, key, value)
-      _, acc -> acc
-    end)
-  end
-
-  defp extract_value_from_node(node, context) do
-    # Fallback to text extraction for other node types
-    extract_text_from_node(node, context)
   end
 
   # Extract command name from CommandName node by traversing children
@@ -430,27 +400,78 @@ defmodule RShell.Runtime do
 
   defp extract_command_name(_), do: {:error, :unknown_name_type}
 
-  # Extract arguments from argument nodes with context for variable expansion
+  # Extract arguments from argument nodes with context for variable/expression expansion
+  # Returns NATIVE values (not strings!) to preserve types
   defp extract_arguments(nil, _context), do: {:ok, []}
   defp extract_arguments([], _context), do: {:ok, []}
 
   defp extract_arguments(args_nodes, context) when is_list(args_nodes) do
     args =
       args_nodes
-      |> Enum.map(&extract_text_from_node(&1, context))
-      |> Enum.reject(&(&1 == ""))
+      |> Enum.map(&extract_argument_value(&1, context))
+      |> Enum.reject(&is_nil/1)
 
     {:ok, args}
   end
 
-  # Extract text from any node - simplified for RShell
-  # RShell nodes have simple source_info.text fields
-  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text),
-    do: text
+  # Extract argument value - returns NATIVE type (not string!)
+  defp extract_argument_value(%Types.CommandArgument{children: children}, context) when is_list(children) do
+    # CommandArgument can contain multiple parts - collect and join/convert
+    parts = Enum.map(children, &extract_argument_value(&1, context))
 
+    # Filter out nils and convert to strings for joining
+    non_nil_parts = Enum.reject(parts, &is_nil/1)
+
+    case non_nil_parts do
+      [] -> ""
+      [single] -> convert_to_string(single)
+      multiple ->
+        # Convert all parts to strings and join
+        multiple
+        |> Enum.map(&convert_to_string/1)
+        |> Enum.join("")
+    end
+  end
+
+  # Variable reference: Look up native value in context and convert to string
+  defp extract_argument_value(%Types.VariableReference{children: [identifier | _]}, context) do
+    var_name = case identifier do
+      %Types.Identifier{source_info: %{text: text}} -> text
+      %{source_info: %{text: text}} -> text
+      _ -> ""
+    end
+
+    # Look up value and convert to string (echo needs strings)
+    value = Map.get(context.env, var_name, "")
+    convert_to_string(value)
+  end
+
+  # Expression interpolation: Evaluate expression and convert to string
+  defp extract_argument_value(%Types.ExprInterpolation{children: [expr | _]}, context) do
+    # Use ExprEvaluator to get native value, then convert to string
+    value = ExprEvaluator.evaluate(expr, context)
+    convert_to_string(value)
+  end
+
+  # Raw argument with children (can contain variables/interpolations)
+  defp extract_argument_value(%Types.RawArgument{children: children}, context) when is_list(children) do
+    parts = Enum.map(children, &extract_argument_value(&1, context))
+
+    # Join all parts (already converted to strings)
+    parts
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&convert_to_string/1)
+    |> Enum.join("")
+  end
+
+  # Simple text nodes - return as string
+  defp extract_argument_value(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
+  defp extract_argument_value(_, _context), do: ""
+
+  # DEPRECATED: extract_text_from_node - kept for backward compatibility
+  # New code should use extract_argument_value which returns native types
+  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
   defp extract_text_from_node(_, _context), do: ""
-
-  # 1-arity fallback
   defp extract_text_from_node(%{source_info: %{text: text}}) when is_binary(text), do: text
   defp extract_text_from_node(_), do: ""
 
