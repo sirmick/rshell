@@ -38,9 +38,14 @@ defmodule RShell.Runtime.ExecutionPipeline do
 
   # Execute the node, capturing success or error
   defp run_execution(%{node: node, context: ctx, session_id: sid} = pipeline) do
+    require Logger
     try do
       # Delegate to actual execution logic (imported from Runtime module)
       new_context = RShell.Runtime.do_execute_node(node, ctx, sid)
+
+      # DEBUG: Log what do_execute_node returned
+      Logger.debug("ExecutionPipeline.run_execution: do_execute_node returned context.exit_code=#{new_context.exit_code}")
+
       %{pipeline | result: {:ok, new_context}}
     rescue
       e ->

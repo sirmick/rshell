@@ -218,32 +218,22 @@ defmodule RShell.Runtime do
   def do_execute_node(node, context, session_id) do
     case node do
       # RShell wraps commands in CmdLine nodes - extract the inner command/pipeline/list
-      %Types.CmdLine{children: children} when is_list(children) and children != [] ->
-        # CmdLine contains a single child (command, pipeline, or list)
-        [inner_node | _] = children
-        # Execute the inner node directly - it will increment command_count
+      %Types.CmdLine{children: [inner_node | _]} ->
+        # Transparent pass-through - don't increment command_count for wrapper
         do_execute_node(inner_node, context, session_id)
 
-      # All other node types increment command_count
-      _ ->
-        new_context = %{context | command_count: context.command_count + 1}
-        execute_node_by_type(node, new_context, session_id)
-    end
-  end
-
-  # Execute node based on its type (after command_count increment)
-  defp execute_node_by_type(node, context, session_id) do
-    case node do
-
+      # Increment command_count first, then execute and preserve result context
       %Types.Command{} = cmd ->
-        execute_command(cmd, context, session_id)
+        context
+        |> increment_command_count()
+        |> then(&execute_command(cmd, &1, session_id))
 
       %Types.Pipeline{} = _pipeline ->
         # TODO: Implement pipeline execution
         raise "Pipeline execution not yet implemented"
 
       %Types.Assignment{} = assignment ->
-        # RShell-style assignment: X = value
+        # Assignments don't increment command_count
         execute_rshell_assignment(assignment, context, session_id)
 
       %Types.IfStatement{} = _stmt ->
@@ -262,6 +252,11 @@ defmodule RShell.Runtime do
         node_type = other.__struct__ |> Module.split() |> List.last()
         raise "Execution not implemented for #{node_type}"
     end
+  end
+
+  # Helper: Increment command count
+  defp increment_command_count(context) do
+    %{context | command_count: context.command_count + 1}
   end
 
   # Legacy name for internal use
@@ -287,7 +282,7 @@ defmodule RShell.Runtime do
           execute_external_command(text, context, session_id)
         end
 
-      {:error, _reason} ->
+      {:error, reason} ->
         # Couldn't parse command, fall back to text-based execution
         execute_external_command(text, context, session_id)
     end
@@ -314,24 +309,21 @@ defmodule RShell.Runtime do
   defp convert_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
 
   # Execute a builtin command
-  defp execute_builtin(name, args, stdin, context, session_id) do
+  defp execute_builtin(name, args, stdin, context, _session_id) do
+    alias RShell.BuiltinResult
+
     case Builtins.execute(name, args, stdin, context) do
       {new_context, stdout, stderr, exit_code} ->
-        # Materialize output if it's a stream (preserves native types!)
-        stdout_list = materialize_output(stdout)
-        stderr_list = materialize_output(stderr)
+        # Wrap POSIX-style tuple in struct for easier transport
+        result = BuiltinResult.new(new_context, stdout, stderr, exit_code)
 
-        # Store ONLY in last_output (no accumulated output/errors)
-        %{
-          new_context
-          | exit_code: exit_code,
-            last_output: %{stdout: stdout_list, stderr: stderr_list}
-        }
+        # Materialize and update context (ensures exit code propagates)
+        BuiltinResult.materialize_and_update(result)
 
       {:error, :not_a_builtin} ->
         # Should not happen since we checked is_builtin?, but handle gracefully
         Logger.warning("Builtin '#{name}' not found despite passing is_builtin? check")
-        execute_external_command("#{name} #{Enum.join(args, " ")}", context, session_id)
+        raise "External command execution not yet implemented"
     end
   end
 

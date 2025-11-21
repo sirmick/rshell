@@ -117,11 +117,6 @@
     }
   },
   {
-    "type": "boolean",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "cmd_execution",
     "named": true,
     "fields": {},
@@ -561,10 +556,6 @@
       "multiple": false,
       "required": true,
       "types": [
-        {
-          "type": "boolean",
-          "named": true
-        },
         {
           "type": "number",
           "named": true
@@ -1058,10 +1049,6 @@
     "named": false
   },
   {
-    "type": "false",
-    "named": false
-  },
-  {
     "type": "for",
     "named": false
   },
@@ -1095,10 +1082,6 @@
   },
   {
     "type": "return",
-    "named": false
-  },
-  {
-    "type": "true",
     "named": false
   },
   {

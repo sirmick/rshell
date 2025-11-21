@@ -154,7 +154,8 @@ module.exports = grammar({
     literal: $ => choice(
       $.number,
       $.string,
-      $.boolean,
+      // Note: boolean removed - true/false are now parsed as regular identifiers/commands
+      // Future: Add $true/$false as read-only variables for expression context
     ),
 
     number: $ => /-?\d+(\.\d+)?/,
@@ -163,8 +164,6 @@ module.exports = grammar({
       seq('"', repeat(choice(/[^"\\]+/, /\\./)), '"'),
       seq("'", repeat(choice(/[^'\\]+/, /\\./)), "'"),
     ),
-    
-    boolean: $ => choice('true', 'false'),
 
     array: $ => seq(
       '[',

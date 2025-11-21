@@ -501,10 +501,6 @@
         {
           "type": "SYMBOL",
           "name": "string"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "boolean"
         }
       ]
     },
@@ -572,19 +568,6 @@
               "value": "'"
             }
           ]
-        }
-      ]
-    },
-    "boolean": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "true"
-        },
-        {
-          "type": "STRING",
-          "value": "false"
         }
       ]
     },

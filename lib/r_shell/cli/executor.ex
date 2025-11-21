@@ -118,7 +118,9 @@ defmodule RShell.CLI.Executor do
     executable_nodes = find_executable_nodes(ast)
 
     # Execute each node synchronously
-    Enum.reduce(executable_nodes, nil, fn node, _acc ->
+    # CRITICAL: Return the LAST result, but keep executing all nodes
+    # (Previous bug: ignored accumulator, so last result was always returned)
+    Enum.reduce(executable_nodes, nil, fn node, _prev_result ->
       case Runtime.execute_node(runtime_pid, node) do
         {:ok, context} ->
           # Build execution result from context
@@ -170,9 +172,10 @@ defmodule RShell.CLI.Executor do
     {context.exit_code, [], [], context}
   end
 
-  defp extract_execution_data(result, runtime_pid) do
-    context = Runtime.get_context(runtime_pid)
-    exit_code = Map.get(result, :exit_code, context.exit_code)
+  defp extract_execution_data(result, _runtime_pid) do
+    # Use context from execution_result - it already has correct exit_code
+    context = Map.get(result, :context)
+    exit_code = Map.get(result, :exit_code, 0)
     stdout = Map.get(result, :stdout, [])
     stderr = Map.get(result, :stderr, [])
     {exit_code, stdout, stderr, context}
