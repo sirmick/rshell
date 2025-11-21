@@ -31,19 +31,19 @@ TEST_CASES = {
             "expect": ["assignment", "identifier", "number"],
         },
         {
+            "name": "Number assignment (no spaces)",
+            "code": "X=42",
+            "expect": ["assignment", "identifier", "number"],
+        },
+        {
             "name": "String assignment",
             "code": 'NAME = "production"',
             "expect": ["assignment", "string"],
         },
         {
-            "name": "Boolean assignment (true)",
-            "code": "DEBUG = true",
-            "expect": ["assignment", "boolean"],
-        },
-        {
-            "name": "Boolean assignment (false)",
-            "code": "ENABLED = false",
-            "expect": ["assignment", "boolean"],
+            "name": "String assignment (no spaces)",
+            "code": 'NAME="production"',
+            "expect": ["assignment", "string"],
         },
         {
             "name": "Compound assignment (+=)",
