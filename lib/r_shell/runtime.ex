@@ -26,7 +26,7 @@ defmodule RShell.Runtime do
 
   alias RShell.PubSub
   alias RShell.Builtins
-  alias BashParser.AST.Types
+  alias BashParser.AST.RShellTypes, as: Types
 
   # Default variable attributes (reserved for future use)
   # @default_attributes %{
@@ -219,20 +219,35 @@ defmodule RShell.Runtime do
     new_context = %{context | command_count: context.command_count + 1}
 
     case node do
+      # RShell wraps commands in CmdLine nodes - extract the inner command/pipeline/list
+      %Types.CmdLine{children: children} when is_list(children) and children != [] ->
+        # CmdLine contains a single child (command, pipeline, or list)
+        [inner_node | _] = children
+        # Execute the inner node without incrementing command_count again
+        do_execute_node(inner_node, %{new_context | command_count: context.command_count}, session_id)
+
       %Types.Command{} = cmd ->
         execute_command(cmd, new_context, session_id)
 
-      %Types.VariableAssignment{} = assignment ->
-        execute_variable_assignment(assignment, new_context, session_id)
+      %Types.Pipeline{} = _pipeline ->
+        # TODO: Implement pipeline execution
+        raise "Pipeline execution not yet implemented"
 
-      %Types.IfStatement{} = stmt ->
-        execute_if_statement(stmt, new_context, session_id)
+      %Types.Assignment{} = assignment ->
+        # RShell-style assignment: X = value
+        execute_rshell_assignment(assignment, new_context, session_id)
 
-      %Types.ForStatement{} = stmt ->
-        execute_for_statement(stmt, new_context, session_id)
+      %Types.IfStatement{} = _stmt ->
+        # TODO: Implement RShell if statement execution
+        raise "If statement execution not yet implemented for RShell"
 
-      %Types.WhileStatement{} = stmt ->
-        execute_while_statement(stmt, new_context, session_id)
+      %Types.ForStatement{} = _stmt ->
+        # TODO: Implement RShell for loop execution
+        raise "For loop execution not yet implemented for RShell"
+
+      %Types.WhileStatement{} = _stmt ->
+        # TODO: Implement RShell while loop execution
+        raise "While loop execution not yet implemented for RShell"
 
       other ->
         node_type = other.__struct__ |> Module.split() |> List.last()
@@ -268,56 +283,6 @@ defmodule RShell.Runtime do
         execute_external_command(text, context, session_id)
     end
   end
-
-  # Execute variable assignment: X=value
-  defp execute_variable_assignment(
-         %Types.VariableAssignment{name: name_node, value: value_node},
-         context,
-         _session_id
-       ) do
-    # Extract variable name
-    var_name =
-      case name_node do
-        %Types.VariableName{source_info: %{text: text}} -> text
-        _ -> ""
-      end
-
-    # Extract value - may be string or native type from variable expansion
-    value_result = extract_value_text(value_node, context)
-
-    # If already a native type (from $VAR expansion), use directly
-    # Otherwise parse as JSON/string
-    parsed_value =
-      if is_binary(value_result) do
-        case RShell.EnvJSON.parse(value_result) do
-          {:ok, parsed} -> parsed
-          # Not JSON, keep as string
-          {:error, _} -> value_result
-        end
-      else
-        # Already a native type from variable expansion
-        value_result
-      end
-
-    # Update environment
-    new_env = Map.put(context.env, var_name, parsed_value)
-    # Variable assignments produce NO output - clear last_output
-    %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
-  end
-
-  # Extract value text with smart JSON/expansion detection
-  defp extract_value_text(%{source_info: %{text: text}} = node, context)
-       when is_binary(text) and text != "" do
-    # If it looks like JSON (starts with { or [), preserve raw text for parsing
-    if String.starts_with?(text, "{") or String.starts_with?(text, "[") do
-      text
-    else
-      # Otherwise, extract with context for variable expansion
-      extract_text_from_node(node, context)
-    end
-  end
-
-  defp extract_value_text(node, context), do: extract_text_from_node(node, context)
 
   # Convert native values to strings for external commands
   defp convert_to_string(value) when is_binary(value), do: value
@@ -376,6 +341,73 @@ defmodule RShell.Runtime do
     end
   end
 
+  # Execute RShell-style assignment: X = value
+  defp execute_rshell_assignment(
+         %Types.Assignment{name: name_node, value: value_node},
+         context,
+         _session_id
+       ) do
+    # Extract variable name from identifier
+    var_name =
+      case name_node do
+        %Types.Identifier{source_info: %{text: text}} -> text
+        %{source_info: %{text: text}} -> text
+        _ -> ""
+      end
+
+    # Extract value - may be literal or expression
+    value_result = extract_value_from_node(value_node, context)
+
+    # Update environment
+    new_env = Map.put(context.env, var_name, value_result)
+    # Assignments produce NO output
+    %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
+  end
+
+  # Extract value from RShell value nodes (literals, expressions, etc.)
+  defp extract_value_from_node(%Types.Number{source_info: %{text: text}}, _context) do
+    case Integer.parse(text) do
+      {int, ""} -> int
+      _ ->
+        case Float.parse(text) do
+          {float, ""} -> float
+          _ -> text
+        end
+    end
+  end
+
+  defp extract_value_from_node(%Types.String{source_info: %{text: text}}, _context) do
+    # Remove quotes from string literals
+    if String.starts_with?(text, "\"") and String.ends_with?(text, "\"") do
+      String.slice(text, 1..-2//1)
+    else
+      text
+    end
+  end
+
+  defp extract_value_from_node(%Types.Boolean{source_info: %{text: text}}, _context) do
+    text == "true"
+  end
+
+  defp extract_value_from_node(%Types.Array{children: children}, context) when is_list(children) do
+    Enum.map(children, &extract_value_from_node(&1, context))
+  end
+
+  defp extract_value_from_node(%Types.Object{children: children}, context) when is_list(children) do
+    Enum.reduce(children, %{}, fn
+      %Types.ObjectEntry{key: key_node, value: value_node}, acc ->
+        key = extract_text_from_node(key_node, context)
+        value = extract_value_from_node(value_node, context)
+        Map.put(acc, key, value)
+      _, acc -> acc
+    end)
+  end
+
+  defp extract_value_from_node(node, context) do
+    # Fallback to text extraction for other node types
+    extract_text_from_node(node, context)
+  end
+
   # Extract command name from CommandName node by traversing children
   defp extract_command_name(%Types.CommandName{children: children}) when is_list(children) do
     # CommandName contains Word children
@@ -410,121 +442,16 @@ defmodule RShell.Runtime do
     {:ok, args}
   end
 
-  # Extract text from any node by traversing the typed structure
-  # All 2-arity versions (with context) grouped together
-  defp extract_text_from_node(%Types.String{children: children}, context)
-       when is_list(children) do
-    # For String nodes, extract the content inside the quotes
-    # This allows JSON values like '{"x":1}' to be parsed correctly
-    children
-    |> Enum.map(&extract_text_from_node(&1, context))
-    |> Enum.map(&convert_to_string/1)
-    |> Enum.join("")
-  end
-
-  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}, _context)
-       when is_binary(text) do
-    # RawString nodes (single quotes in bash) preserve everything literally
-    # Strip the outer single quotes for JSON parsing: 'value' -> value
-    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and
-         String.length(text) >= 2 do
-      String.slice(text, 1..-2//-1)
-    else
-      text
-    end
-  end
-
-  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}, _context),
-    do: text
-
-  defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context)
-       when is_list(children) do
-    # Extract variable expression (may include bracket notation)
-    var_expr =
-      children
-      |> Enum.map(&extract_variable_name/1)
-      |> Enum.join("")
-
-    # Check if it has bracket notation: VAR["key"] or VAR[0]
-    if String.contains?(var_expr, "[") do
-      result = parse_bracket_access(var_expr, context)
-      # Return native value directly (NO string conversion for builtins!)
-      result
-    else
-      # Simple variable lookup - return native value
-      case Map.get(context.env || %{}, var_expr) do
-        nil -> ""
-        # Return native value (list, map, number, etc.)
-        value -> value
-      end
-    end
-  end
-
-  defp extract_text_from_node(%Types.VariableName{source_info: %{text: text}}, _context), do: text
-
-  defp extract_text_from_node(%Types.Word{source_info: %{text: text}}, _context), do: text
-
-  defp extract_text_from_node(%Types.Concatenation{children: children}, context)
-       when is_list(children) do
-    children
-    |> Enum.map(&extract_text_from_node(&1, context))
-    # Convert native values to strings for concatenation
-    |> Enum.map(&convert_to_string/1)
-    |> Enum.join("")
-  end
-
+  # Extract text from any node - simplified for RShell
+  # RShell nodes have simple source_info.text fields
   defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text),
     do: text
 
   defp extract_text_from_node(_, _context), do: ""
 
-  # All 1-arity versions (without context) grouped together - fallbacks
-  defp extract_text_from_node(%Types.String{children: children}) when is_list(children) do
-    # For String nodes, extract the content inside the quotes
-    children
-    |> Enum.map(&extract_text_from_node/1)
-    |> Enum.join("")
-  end
-
-  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}})
-       when is_binary(text) do
-    # RawString nodes (single quotes in bash) - strip outer quotes
-    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and
-         String.length(text) >= 2 do
-      String.slice(text, 1..-2//-1)
-    else
-      text
-    end
-  end
-
-  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}), do: text
-
-  defp extract_text_from_node(%Types.SimpleExpansion{children: children})
-       when is_list(children) do
-    # Return the expansion text as-is (e.g., "$VAR")
-    children
-    |> Enum.map(&extract_text_from_node/1)
-    |> Enum.join("")
-    |> then(&"$#{&1}")
-  end
-
-  defp extract_text_from_node(%Types.VariableName{source_info: %{text: text}}), do: text
-
-  defp extract_text_from_node(%Types.Word{source_info: %{text: text}}), do: text
-
-  defp extract_text_from_node(%Types.Concatenation{children: children}) when is_list(children) do
-    children
-    |> Enum.map(&extract_text_from_node/1)
-    |> Enum.join("")
-  end
-
+  # 1-arity fallback
   defp extract_text_from_node(%{source_info: %{text: text}}) when is_binary(text), do: text
-
   defp extract_text_from_node(_), do: ""
-
-  # Extract variable name from VariableName node (helper for variable expansion)
-  defp extract_variable_name(%Types.VariableName{source_info: %{text: text}}), do: text
-  defp extract_variable_name(_), do: ""
 
   # =============================================================================
   # Bracket Notation Support for Environment Variables (using Warpath JSONPath)
@@ -763,20 +690,12 @@ defmodule RShell.Runtime do
 
   defp execute_command_list(_, context, _session_id), do: context
 
-  # Execute DoGroup, CompoundStatement, or single node
-  defp execute_do_group_or_node(%Types.DoGroup{children: children}, context, session_id) do
+  # Execute body nodes - RShell uses lists of children directly
+  defp execute_body_nodes(children, context, session_id) when is_list(children) do
     execute_command_list(children, context, session_id)
   end
 
-  defp execute_do_group_or_node(%Types.CompoundStatement{children: children}, context, session_id) do
-    execute_command_list(children, context, session_id)
-  end
-
-  defp execute_do_group_or_node(node, context, session_id) when is_struct(node) do
-    simple_execute(node, context, session_id)
-  end
-
-  defp execute_do_group_or_node(_, context, _session_id), do: context
+  defp execute_body_nodes(_, context, _session_id), do: context
 
   # Extract iteration values from for statement value nodes with native type support
   defp extract_loop_values(nil, _context), do: []
@@ -813,7 +732,27 @@ defmodule RShell.Runtime do
   # Control Flow Execution Functions
   # =============================================================================
 
+  # TEMPORARILY DISABLED: Bash-specific control flow helpers
+  # TODO: Reimplement for RShell's brace-based syntax
+  # See RSHELL_HARD_CUTOVER_PLAN.md for details
+
+  @doc false
+  defp __bash_control_flow_disabled__ do
+    """
+    The following bash control flow functions have been temporarily disabled
+    because they use bash-specific node structures (DoGroup, CompoundStatement, etc.)
+    that don't exist in RShell's brace-based syntax.
+
+    These need to be reimplemented to work with RShell's:
+    - IfStatement (with body as direct children list)
+    - ForStatement (with in-clause and brace body)
+    - WhileStatement (with condition and brace body)
+    - ElifClause and ElseClause (different structure)
+    """
+  end
+
   # Execute if statement with elif/else support
+  if false do
   defp execute_if_statement(
          %Types.IfStatement{condition: condition_nodes, children: children},
          context,
@@ -917,11 +856,12 @@ defmodule RShell.Runtime do
 
     if condition_context.exit_code == 0 do
       # Condition succeeded - execute body and continue
-      body_context = execute_do_group_or_node(body, condition_context, session_id)
+      body_context = execute_body_nodes(body, condition_context, session_id)
       execute_while_loop(condition_nodes, body, body_context, session_id)
     else
       # Condition failed - exit loop
       condition_context
     end
   end
+  end  # End of if false block for disabled bash control flow
 end

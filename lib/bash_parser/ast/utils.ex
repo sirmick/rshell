@@ -1,6 +1,6 @@
 defmodule BashParser.AST.Utils do
   @moduledoc """
-  Shared AST utilities for working with typed Bash AST nodes.
+  Shared AST utilities for working with typed AST nodes (bash and RShell).
 
   Provides common operations:
   - Node type checking (executable?, node type extraction)
@@ -9,6 +9,7 @@ defmodule BashParser.AST.Utils do
   """
 
   alias BashParser.AST.Types
+  alias BashParser.AST.RShellTypes
 
   @doc """
   Check if an AST node is executable.
@@ -24,11 +25,15 @@ defmodule BashParser.AST.Utils do
       iex> BashParser.AST.Utils.executable?(%Types.Command{})
       true
 
+      iex> BashParser.AST.Utils.executable?(%RShellTypes.CmdLine{})
+      true
+
       iex> BashParser.AST.Utils.executable?(%Types.Comment{})
       false
   """
   def executable?(typed_node) do
     case typed_node do
+      # Bash types
       %Types.Command{} -> true
       %Types.Pipeline{} -> true
       %Types.List{} -> true
@@ -44,6 +49,17 @@ defmodule BashParser.AST.Utils do
       %Types.UnsetCommand{} -> true
       %Types.TestCommand{} -> true
       %Types.CStyleForStatement{} -> true
+
+      # RShell types
+      %RShellTypes.CmdLine{} -> true
+      %RShellTypes.ExprLine{} -> true
+      %RShellTypes.Command{} -> true
+      %RShellTypes.Pipeline{} -> true
+      %RShellTypes.Assignment{} -> true
+      %RShellTypes.ForStatement{} -> true
+      %RShellTypes.WhileStatement{} -> true
+      %RShellTypes.IfStatement{} -> true
+
       _ -> false
     end
   end
