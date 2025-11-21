@@ -1,21 +1,31 @@
-## 🎉 LATEST STATUS (2025-11-21 23:27 PST)
+## 🎉 LATEST STATUS (2025-11-21 10:45 PST)
 
-### ✅ MAJOR MILESTONE: Echo Commands Working! 🚀
+### ✅ MAJOR MILESTONE: Native Type Flow & Grammar Fix Complete! 🚀
 
 **Latest Accomplishments:**
+- ✅ **Grammar Fix**: Both `X=42` and `X = 42` syntax now work perfectly
+  - Fixed assignment vs command ambiguity with precedence tuning
+  - Modified `raw_argument` pattern to prevent `=` at start
+  - Restricted `expr_line` to avoid bare identifiers as expressions
+  - **Grammar tests: 100% pass rate (88/88 tests)** ⬆️ from 97.7%
+- ✅ **ExprEvaluator Implementation**: Native AST → Elixir type conversion
+  - Supports: literals, arrays, objects, binary expressions, property access
+  - All 44 ExprEvaluator tests passing
+  - No JSON parsing needed for assignments!
+- ✅ **Runtime Integration**: Assignments work with native types
+  - `X = 42`, `X = [1,2,3]`, `X = {"a": 1}` all working
+  - Expression evaluation: `X = 10 + 5`, `Y = X > 3`
+  - Property access: `HOST = SERVER.fqdn`
+
+**Previous Accomplishments:**
 - ✅ **CRITICAL FIX**: Added RShell node types to `BashParser.AST.Utils.executable?/1`
   - Now recognizes: `CmdLine`, `ExprLine`, `Command`, `Pipeline`, `Assignment`, control flow nodes
   - Commands were parsing correctly but `executable?` returned false → no execution
 - ✅ **Echo works!** `echo hello` now produces output correctly
 - ✅ Test improvements: 97 failures → 72 failures (25 tests fixed!)
-- ✅ Exit code propagation fix in progress (CmdLine unwrapping issue identified)
-
-**Previous Accomplishments:**
 - ✅ Fixed Runtime module alias: `BashParser.AST.Types` → `BashParser.AST.RShellTypes`
 - ✅ Added `CmdLine` node handler to unwrap RShell command wrapper
-- ✅ Added `Pipeline` and `Assignment` placeholders (raise errors)
 - ✅ Temporarily disabled bash-specific control flow execution (if/for/while)
-- ✅ Removed bash-specific node handlers (RawString, StringContent, SimpleExpansion, etc.)
 - ✅ CLI now compiles with only warnings (unused functions)
 - ✅ CLI starts successfully and accepts input
 
@@ -86,8 +96,9 @@
   - `if (cond) { }` - Braces required
   - `while (cond) { }` - Braces required  
   - `for (x in y) { }` - Parentheses and braces required
-- ✅ Grammar test coverage: 97.7% (86/88 tests passing)
+- ✅ Grammar test coverage: **100% (88/88 tests passing)** ⬆️ improved from 97.7%
 - ✅ All rshell-grammar tests passing
+- ✅ Assignment parsing fixed: Both `X=42` and `X = 42` syntax work
 
 ### Phase 3: InputBuffer Migration ✅ COMPLETE
 **Status**: InputBuffer fully migrated to RShell brace-based syntax
@@ -166,13 +177,14 @@ assert get_type(node) == "cmd_line"
 **Bash → RShell Syntax Changes**:
 | Bash Syntax | RShell Syntax | Notes |
 |-------------|---------------|-------|
-| `X=12` | `X = 12` | ⚠️ NOT IMPLEMENTED - Still needs Runtime support |
+| `X=12` | `X = 12` or `X=12` | ✅ **IMPLEMENTED** - Both syntaxes work! |
 | `if [ "$X" == "12" ]; then` | `if (X == 12) {` | ✅ Grammar ready |
 | `fi` | `}` | ✅ Grammar ready |
 | `for i in 1 2 3; do` | `for (i in [1,2,3]) {` | ✅ Grammar ready |
 | `done` | `}` | ✅ Grammar ready |
 | `while true; do` | `while (true) {` | ✅ Grammar ready |
-| `arr=(1 2 3)` | `arr = [1, 2, 3]` | ⚠️ NOT IMPLEMENTED |
+| `arr=(1 2 3)` | `arr = [1, 2, 3]` | ✅ **IMPLEMENTED** - Native array support! |
+| `map[key]=val` | `map = {"key": val}` | ✅ **IMPLEMENTED** - Native object support! |
 
 **Files to Update**:
 - `test/integration/control_flow_math_test.exs` (heavy bash syntax)
@@ -187,23 +199,29 @@ assert get_type(node) == "cmd_line"
 3. Variable assignments still use bash style (`env X=5`) for now
 4. Defer list/map literals until Runtime support is added
 
-### Step 7: Add RShell Node Execution to Runtime
-**Priority**: MEDIUM  
-**Estimated Time**: 2-3 days  
-**Status**: NOT STARTED
+### Step 7: Add RShell Node Execution to Runtime ✅ COMPLETE
+**Priority**: MEDIUM
+**Estimated Time**: 2-3 days
+**Status**: ✅ COMPLETE
 
-**Required Handlers**:
-1. `execute_rshell_assignment/3` - Handle `X = value` assignments
-2. `evaluate_rshell_expression/2` - Evaluate lists, maps, binary ops
-3. Expression evaluation for:
-   - `ListLiteral` - `[1, 2, 3]`
-   - `MapLiteral` - `{x: 1, y: 2}`
-   - `BooleanLiteral` - `true`, `false`
-   - `RshellBinaryExpression` - `X + Y`, `A > B`
-   - `Number` - `42`, `3.14`
+**Completed Handlers**:
+1. ✅ `execute_rshell_assignment/3` - Handles `X = value` assignments
+2. ✅ `ExprEvaluator` module - Evaluates lists, maps, binary ops
+3. ✅ Expression evaluation for:
+   - ✅ `Array` - `[1, 2, 3]`
+   - ✅ `Object` - `{"x": 1, "y": 2}`
+   - ✅ `Literal` (Number/String) - `42`, `3.14`, `"text"`
+   - ✅ `BinaryExpression` - `X + Y`, `A > B`, `X and Y`
+   - ✅ `UnaryExpression` - `not X`, `-Y`
+   - ✅ `PropertyAccess` - `SERVER.fqdn`, `CONFIG.db.host`
+   - ✅ `VariableReference` - `$X`, `$HOME`
+   - ✅ `ParenthesizedExpression` - `(5 + 3)`
 
-**Implementation Plan**:
-See lines 256-400 of this document for detailed implementation
+**Implementation Details**:
+- Created `lib/r_shell/expr_evaluator.ex` (296 lines)
+- All 44 ExprEvaluator tests passing
+- Native type flow - no JSON parsing needed
+- Documented in `EXPR_EVALUATOR_IMPLEMENTATION.md`
 
 ### Step 8: Rename RShellTypes → Types (AST Module)
 **Priority**: LOW  
@@ -256,7 +274,13 @@ See lines 256-400 of this document for detailed implementation
 | Integration Tests | ~180 | ~120 | ~60 | 🔄 IN PROGRESS |
 | **TOTAL** | **339** | **267** | **72** | **78.8%** |
 
-**Trend**: ⬆️⬆️ Rapidly Improving (was 97 → 84 → 72 failures)
+**Trend**: ⬆️⬆️⬆️ Rapidly Improving (was 97 → 84 → 72 failures)
+
+**New Capabilities**:
+- ✅ Grammar: 100% test coverage (88/88)
+- ✅ Assignment execution: Native type flow
+- ✅ Expression evaluation: 44/44 tests
+- ✅ Both `X=42` and `X = 42` syntax supported
 
 ---
 
@@ -360,7 +384,9 @@ git branch -D feature/rshell-hard-cutover
 4. **Node type mismatch**: RShell AST structure different from bash (cmd_line wrapping)
 5. **Test conversion showing results**: 25 tests fixed by adding RShell node type recognition
 6. **Exit code propagation tricky**: CmdLine unwrapping creates new context, losing state
-7. **JSON parsing may be redundant**: RShell has native map/array syntax `{k:v}`, `[1,2,3]`
+7. **JSON parsing eliminated**: RShell has native map/array syntax `{"k":v}`, `[1,2,3]` with ExprEvaluator
+8. **Assignment syntax flexibility**: Supporting both `X=42` and `X = 42` required careful precedence tuning
+9. **Grammar conflict resolution**: `prec.dynamic()` + `raw_argument` pattern tuning solved ambiguity
 
 ---
 
