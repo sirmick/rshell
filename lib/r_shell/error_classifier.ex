@@ -211,7 +211,7 @@ defmodule RShell.ErrorClassifier do
   @spec identify_incomplete_structure(term()) :: map() | nil
   def identify_incomplete_structure(%BashParser.AST.Types.IfStatement{} = node) do
     if is_if_incomplete?(node) do
-      %{type: :if_statement, expecting: "fi"}
+      %{type: :if_statement, expecting: "}"}
     else
       check_children_for_incomplete(node)
     end
@@ -219,17 +219,17 @@ defmodule RShell.ErrorClassifier do
 
   def identify_incomplete_structure(%BashParser.AST.Types.ForStatement{} = node) do
     if is_for_incomplete?(node) do
-      %{type: :for_statement, expecting: "done"}
+      %{type: :for_statement, expecting: "}"}
     else
       check_children_for_incomplete(node)
     end
   end
 
   def identify_incomplete_structure(%BashParser.AST.Types.WhileStatement{}),
-    do: %{type: :while_statement, expecting: "done"}
+    do: %{type: :while_statement, expecting: "}"}
 
   def identify_incomplete_structure(%BashParser.AST.Types.CaseStatement{}),
-    do: %{type: :case_statement, expecting: "esac"}
+    do: %{type: :case_statement, expecting: "}"}
 
   def identify_incomplete_structure(%BashParser.AST.Types.FunctionDefinition{}),
     do: %{type: :function_definition, expecting: "}"}
@@ -242,18 +242,18 @@ defmodule RShell.ErrorClassifier do
 
   def identify_incomplete_structure(_), do: nil
 
-  # Check if an IfStatement is incomplete
+  # Check if an IfStatement is incomplete (RShell uses } not fi)
   defp is_if_incomplete?(node) do
     # An IfStatement from tree-sitter is complete if it parsed successfully
-    # The only way it's incomplete is if the source text doesn't end with "fi"
+    # The only way it's incomplete is if the source text doesn't end with "}"
     source_text = node.source_info.text || ""
-    not String.ends_with?(String.trim(source_text), "fi")
+    not String.ends_with?(String.trim(source_text), "}")
   end
 
-  # Check if a ForStatement is incomplete
+  # Check if a ForStatement is incomplete (RShell uses } not done)
   defp is_for_incomplete?(node) do
     source_text = node.source_info.text || ""
-    not String.ends_with?(String.trim(source_text), "done")
+    not String.ends_with?(String.trim(source_text), "}")
   end
 
   # Helper to check children for incomplete structures

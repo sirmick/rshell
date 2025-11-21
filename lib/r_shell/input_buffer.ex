@@ -10,7 +10,7 @@ defmodule RShell.InputBuffer do
   - Line continuations (backslash-newline)
   - Unclosed quotes (single, double)
   - Unclosed heredocs
-  - Open control structures (for/while/if/case with missing closing keywords)
+  - Open control structures (unclosed braces { } for if/while/for blocks)
   """
 
   @doc """
@@ -27,10 +27,10 @@ defmodule RShell.InputBuffer do
       iex> RShell.InputBuffer.ready_to_parse?("echo hello\\\\")
       false
 
-      iex> RShell.InputBuffer.ready_to_parse?("for i in 1 2 3")
+      iex> RShell.InputBuffer.ready_to_parse?("if (true) {")
       false
 
-      iex> RShell.InputBuffer.ready_to_parse?("for i in 1 2 3; do echo $i; done")
+      iex> RShell.InputBuffer.ready_to_parse?("if (true) { echo hi }")
       true
   """
   @spec ready_to_parse?(String.t()) :: boolean()
@@ -157,65 +157,45 @@ defmodule RShell.InputBuffer do
   end
 
   defp has_open_control_structure?(input) do
-    # Use a stack to track nested structures
-    # Stack items: {:for | :while | :until | :if | :case}
+    # RShell uses brace-based syntax: if (...) { }, for (x in y) { }, while (...) { }
+    # Count opening and closing braces, accounting for quote context
 
-    # Tokenize input into words (simple split on whitespace)
-    # Strip trailing semicolons/punctuation from keywords
-    words =
+    # State: {brace_depth, in_single_quote, in_double_quote, escaped}
+    {brace_depth, _, _, _} =
       input
-      |> String.split(~r/\s+/)
-      |> Enum.map(&String.trim/1)
-      |> Enum.map(&String.trim_trailing(&1, ";"))
-      |> Enum.reject(&(&1 == ""))
+      |> String.graphemes()
+      |> Enum.reduce({0, false, false, false}, fn char, {depth, in_single, in_double, escaped} ->
+        cond do
+          escaped ->
+            # Previous char was backslash, skip this char
+            {depth, in_single, in_double, false}
 
-    final_stack =
-      Enum.reduce(words, [], fn word, stack ->
-        case word do
-          "for" ->
-            [:for | stack]
+          char == "\\" and not in_single ->
+            # Backslash escapes next char (except in single quotes)
+            {depth, in_single, in_double, true}
 
-          "while" ->
-            [:while | stack]
+          char == "'" and not in_double ->
+            # Toggle single quote
+            {depth, not in_single, in_double, false}
 
-          "until" ->
-            [:until | stack]
+          char == "\"" and not in_single ->
+            # Toggle double quote
+            {depth, in_single, not in_double, false}
 
-          "if" ->
-            [:if | stack]
+          char == "{" and not in_single and not in_double ->
+            # Opening brace (outside quotes)
+            {depth + 1, in_single, in_double, false}
 
-          "case" ->
-            [:case | stack]
+          char == "}" and not in_single and not in_double ->
+            # Closing brace (outside quotes)
+            {depth - 1, in_single, in_double, false}
 
-          "done" ->
-            # done closes for/while/until - pop first matching one
-            case stack do
-              [:for | rest] -> rest
-              [:while | rest] -> rest
-              [:until | rest] -> rest
-              _ -> stack
-            end
-
-          "fi" ->
-            # fi closes if
-            case stack do
-              [:if | rest] -> rest
-              _ -> stack
-            end
-
-          "esac" ->
-            # esac closes case
-            case stack do
-              [:case | rest] -> rest
-              _ -> stack
-            end
-
-          _ ->
-            stack
+          true ->
+            {depth, in_single, in_double, false}
         end
       end)
 
-    # If stack is not empty, we have open structures
-    length(final_stack) > 0
+    # If brace depth > 0, we have unclosed braces
+    brace_depth > 0
   end
 end

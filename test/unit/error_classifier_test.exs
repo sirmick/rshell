@@ -19,23 +19,23 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns :syntax_error for invalid syntax (if then fi)" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if then fi\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (then) { fi }\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.classify(typed_ast) == :syntax_error
     end
 
-    test "returns :incomplete for if without fi" do
+    test "returns :incomplete for if without closing brace" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.classify(typed_ast) == :incomplete
     end
 
-    test "returns :incomplete for for loop without done" do
+    test "returns :incomplete for for loop without closing brace" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "for i in 1 2 3; do\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "for (i in items) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.classify(typed_ast) == :incomplete
@@ -43,7 +43,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns :complete for complete for loop" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "for i in 1 2 3; do echo $i; done\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "for (i in items) { echo test }\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.classify(typed_ast) == :complete
@@ -53,7 +53,7 @@ defmodule RShell.ErrorClassifierTest do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
 
       # First line - incomplete
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) {\n")
       {:ok, ast1} = IncrementalParser.get_current_ast(parser)
       assert ErrorClassifier.classify(ast1) == :incomplete
 
@@ -63,7 +63,7 @@ defmodule RShell.ErrorClassifierTest do
       assert ErrorClassifier.classify(ast2) == :incomplete
 
       # Complete it
-      {:ok, _} = IncrementalParser.append_fragment(parser, "fi\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "}\n")
       {:ok, ast3} = IncrementalParser.get_current_ast(parser)
       assert ErrorClassifier.classify(ast3) == :complete
     end
@@ -81,7 +81,7 @@ defmodule RShell.ErrorClassifierTest do
       {:ok, parser2} =
         IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
 
-      {:ok, _} = IncrementalParser.append_fragment(parser2, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser2, "if (true) {\n")
       {:ok, ast2} = IncrementalParser.get_current_ast(parser2)
       assert ErrorClassifier.classify(ast2) == :incomplete
     end
@@ -98,7 +98,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns true for invalid syntax" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if then fi\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (then) { fi }\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.has_error_nodes?(typed_ast) == true
@@ -106,7 +106,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns false for incomplete but valid structure" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.has_error_nodes?(typed_ast) == false
@@ -124,7 +124,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns true for incomplete if statement" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.has_incomplete_structure?(typed_ast) == true
@@ -132,7 +132,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns false for complete if statement" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then echo hi; fi\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) { echo hi }\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.has_incomplete_structure?(typed_ast) == false
@@ -142,24 +142,24 @@ defmodule RShell.ErrorClassifierTest do
   describe "identify_incomplete_structure/1 with typed AST" do
     test "identifies incomplete if statement" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       info = ErrorClassifier.identify_incomplete_structure(typed_ast)
 
       assert info.type == :if_statement
-      assert info.expecting == "fi"
+      assert info.expecting == "}"
     end
 
     test "identifies incomplete for loop" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "for i in 1 2 3; do\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "for (i in items) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       info = ErrorClassifier.identify_incomplete_structure(typed_ast)
 
       assert info.type == :for_statement
-      assert info.expecting == "done"
+      assert info.expecting == "}"
     end
 
     test "returns nil for complete command" do
@@ -174,7 +174,7 @@ defmodule RShell.ErrorClassifierTest do
   describe "count_structure_nodes/1" do
     test "counts if statement" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then echo hi; fi\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) { echo hi }\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.count_structure_nodes(typed_ast) == 1
@@ -186,7 +186,7 @@ defmodule RShell.ErrorClassifierTest do
       {:ok, _} =
         IncrementalParser.append_fragment(
           parser,
-          "if true; then for i in 1; do echo $i; done; fi\n"
+          "if (true) { for (i in items) { echo test } }\n"
         )
 
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
@@ -215,7 +215,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "counts ERROR nodes in syntax error" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if then fi\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (then) { fi }\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       # Should have at least one ERROR node
@@ -224,7 +224,7 @@ defmodule RShell.ErrorClassifierTest do
 
     test "returns 0 for incomplete but valid structure" do
       {:ok, parser} = IncrementalParser.start_link(session_id: "test_#{:rand.uniform(1_000_000)}")
-      {:ok, _} = IncrementalParser.append_fragment(parser, "if true; then\n")
+      {:ok, _} = IncrementalParser.append_fragment(parser, "if (true) {\n")
       {:ok, typed_ast} = IncrementalParser.get_current_ast(parser)
 
       assert ErrorClassifier.count_error_nodes(typed_ast) == 0
