@@ -224,9 +224,38 @@ defmodule RShell.Runtime do
         do_execute_node(inner_node, context, session_id)
 
       # RShell wraps expressions in ExprLine nodes - extract the inner assignment/expression
-      %Types.ExprLine{children: [inner_node | _]} ->
-        # Transparent pass-through - don't increment command_count for wrapper
-        do_execute_node(inner_node, context, session_id)
+      %Types.ExprLine{children: children} = expr_line ->
+        require Logger
+        Logger.debug("ExprLine unwrapping: #{length(children)} children")
+        if children == [] do
+          Logger.debug("  ExprLine has EMPTY children!")
+          Logger.debug("  ExprLine source_info: #{inspect(expr_line.source_info)}")
+        end
+        Enum.each(children, fn child ->
+          Logger.debug("  child: #{inspect(child.__struct__)}")
+        end)
+        # Find the actual executable node (skip newlines and other wrappers)
+        inner_node = Enum.find(children, fn child ->
+          case child do
+            %Types.Newline{} -> false
+            %Types.CmdLine{} -> true
+            %Types.Command{} -> true
+            %Types.Assignment{} -> true
+            %Types.IfStatement{} -> true
+            %Types.ForStatement{} -> true
+            %Types.WhileStatement{} -> true
+            _ -> true  # Default to trying to execute
+          end
+        end)
+
+        case inner_node do
+          nil ->
+            Logger.debug("ExprLine: no executable child found, returning context unchanged")
+            context
+          node ->
+            Logger.debug("ExprLine: executing #{inspect(node.__struct__)}")
+            do_execute_node(node, context, session_id)
+        end
 
       # RShell wraps control flow in ControlFlow nodes - extract the inner statement
       %Types.ControlFlow{children: [inner_node | _]} ->
@@ -675,6 +704,7 @@ defmodule RShell.Runtime do
 
   # Execute a list of commands sequentially, threading context through each
   # Broadcasts execution results for each command
+  # Does NOT accumulate - just threads context. Accumulation is done by control flow functions.
   defp execute_command_list(nodes, context, session_id) when is_list(nodes) do
     Enum.reduce(nodes, context, fn node, acc_context ->
       start_time = System.monotonic_time(:microsecond)
@@ -871,14 +901,30 @@ defmodule RShell.Runtime do
 
   # Fallback: Direct expression evaluation (for Identifier and other expression nodes)
   defp evaluate_condition(expr, context, _session_id) do
-    result = ExprEvaluator.evaluate(expr, context)
+    require Logger
+    Logger.debug("evaluate_condition: evaluating #{inspect(expr.__struct__)}")
+
+    result = try do
+      ExprEvaluator.evaluate(expr, context)
+    rescue
+      e ->
+        Logger.error("ExprEvaluator.evaluate crashed: #{Exception.message(e)}")
+        Logger.error("  expr: #{inspect(expr, pretty: true)}")
+        Logger.error("  context.env: #{inspect(Map.keys(context.env))}")
+        reraise e, __STACKTRACE__
+    end
+
+    Logger.debug("  result: #{inspect(result)}")
 
     # Use ExprEvaluator's truthy? function for consistent truthiness evaluation
-    case result do
+    truthiness = case result do
       result when is_boolean(result) -> result
       val when val in [0, "", nil, false] -> false
       _ -> ExprEvaluator.truthy?(result)
     end
+
+    Logger.debug("  truthiness: #{inspect(truthiness)}")
+    truthiness
   end
 
   # Execute RShell for statement with native type support
@@ -903,13 +949,25 @@ defmodule RShell.Runtime do
         other -> [other]
       end
 
-    # Iterate over values
-    Enum.reduce(values, context, fn value, acc_context ->
+    # Iterate over values, accumulating output from all iterations
+    final_context = Enum.reduce(values, context, fn value, acc_context ->
       # Store native value in environment
       new_env = Map.put(acc_context.env, var_name, value)
-      loop_context = %{acc_context | env: new_env}
-      execute_block(body_node, loop_context, session_id)
+      # Clear last_output for this iteration
+      loop_context = %{acc_context | env: new_env, last_output: %{stdout: [], stderr: []}}
+      # Execute body and get result
+      result_context = execute_block(body_node, loop_context, session_id)
+
+      # Accumulate output from this iteration into acc_context
+      %{result_context |
+        last_output: %{
+          stdout: acc_context.last_output.stdout ++ result_context.last_output.stdout,
+          stderr: acc_context.last_output.stderr ++ result_context.last_output.stderr
+        }
+      }
     end)
+
+    final_context
   end
 
   # Execute RShell while statement
@@ -922,16 +980,26 @@ defmodule RShell.Runtime do
     execute_while_loop(condition_node, body_node, context, session_id)
   end
 
-  # Recursive while loop execution
-  defp execute_while_loop(condition_node, body_node, context, session_id) do
+  # Recursive while loop execution with output accumulation
+  defp execute_while_loop(condition_node, body_node, context, session_id, accumulated_output \\ %{stdout: [], stderr: []}) do
     # Evaluate condition
     if evaluate_condition(condition_node, context, session_id) do
       # Condition is true - execute body and continue
-      body_context = execute_block(body_node, context, session_id)
-      execute_while_loop(condition_node, body_node, body_context, session_id)
+      # Clear last_output for this iteration
+      clean_context = %{context | last_output: %{stdout: [], stderr: []}}
+      body_context = execute_block(body_node, clean_context, session_id)
+
+      # Accumulate output from this iteration
+      new_accumulated = %{
+        stdout: accumulated_output.stdout ++ body_context.last_output.stdout,
+        stderr: accumulated_output.stderr ++ body_context.last_output.stderr
+      }
+
+      # Continue loop with accumulated output
+      execute_while_loop(condition_node, body_node, body_context, session_id, new_accumulated)
     else
-      # Condition is false - exit loop
-      context
+      # Condition is false - return context with accumulated output
+      %{context | last_output: accumulated_output}
     end
   end
 
@@ -947,19 +1015,23 @@ defmodule RShell.Runtime do
     require Logger
     Logger.debug("execute_block ExprBlock: #{length(children)} children")
     # ExprBlock contains Block nodes as children (opening brace, content, closing brace)
-    # Only execute blocks that have actual content (not just brace tokens)
-    Enum.reduce(children, context, fn child, acc_context ->
+    # Find the middle Block that has actual content
+    content_block = Enum.find(children, fn child ->
       case child do
-        %Types.Block{children: block_children} when block_children != [] ->
-          Logger.debug("execute_block ExprBlock -> Block with #{length(block_children)} children")
-          # This block has content - execute it
-          execute_block(child, acc_context, session_id)
-        _ ->
-          Logger.debug("execute_block ExprBlock -> skipping empty child")
-          # Empty block or other node - skip
-          acc_context
+        %Types.Block{children: block_children} when block_children != [] -> true
+        _ -> false
       end
     end)
+
+    case content_block do
+      %Types.Block{children: block_children} ->
+        Logger.debug("execute_block ExprBlock -> found content Block with #{length(block_children)} children")
+        # Execute the content directly (don't recurse through execute_block)
+        execute_body_nodes(block_children, context, session_id)
+      _ ->
+        Logger.debug("execute_block ExprBlock -> no content found")
+        context
+    end
   end
 
   # Fallback for non-Block nodes

@@ -94,17 +94,64 @@ defmodule RShell.ExprEvaluator do
   # Expressions
   # ============================================================================
 
-  def evaluate(%Types.BinaryExpression{children: children}, context) do
-    case children do
-      [left, %{source_info: %{text: op}}, right] ->
-        left_val = evaluate(left, context)
-        right_val = evaluate(right, context)
-        apply_binary_operator(op, left_val, right_val)
+  def evaluate(%Types.BinaryExpression{source_info: source_info, children: children}, context) do
+    # The operator is in the source_info.text of the BinaryExpression node
+    # Extract it by finding non-whitespace characters that aren't part of operands
+    # OR look for operator nodes in children
+
+    # Try pattern: [left, operator_node, right] or [left, right] with operator in source_info
+    {op, left, right} = case children do
+      # Three children: [left, operator, right]
+      [left, %{source_info: %{text: op_text}}, right] when op_text in ["==", "!=", "<", "<=", ">", ">=", "&&", "||", "+", "-", "*", "/", "%"] ->
+        {op_text, left, right}
+
+      # Two children: operator must be extracted differently
+      [left, right] ->
+        # The operator might be in the BinaryExpression's own text
+        # Extract by looking at what's between the operands
+        op_text = extract_operator_from_text(source_info.text)
+        {op_text, left, right}
 
       _ ->
-        raise "Invalid binary expression structure"
+        {nil, nil, nil}
+    end
+
+    if op && left && right do
+      left_val = evaluate(left, context)
+      right_val = evaluate(right, context)
+      apply_binary_operator(op, left_val, right_val)
+    else
+      Logger.error("Invalid binary expression structure")
+      Logger.error("  source_info.text: #{inspect(source_info.text)}")
+      Logger.error("  children count: #{length(children)}")
+      Enum.with_index(children) |> Enum.each(fn {child, idx} ->
+        Logger.error("  child #{idx}: #{inspect(child.__struct__)}")
+      end)
+      raise "Invalid binary expression structure"
     end
   end
+
+  # Extract operator from binary expression text (e.g., "X == 5" -> "==")
+  defp extract_operator_from_text(text) when is_binary(text) do
+    cond do
+      String.contains?(text, "==") -> "=="
+      String.contains?(text, "!=") -> "!="
+      String.contains?(text, "<=") -> "<="
+      String.contains?(text, ">=") -> ">="
+      String.contains?(text, "&&") -> "&&"
+      String.contains?(text, "||") -> "||"
+      String.contains?(text, "<") -> "<"
+      String.contains?(text, ">") -> ">"
+      String.contains?(text, "+") -> "+"
+      String.contains?(text, "-") -> "-"
+      String.contains?(text, "*") -> "*"
+      String.contains?(text, "/") -> "/"
+      String.contains?(text, "%") -> "%"
+      true -> nil
+    end
+  end
+
+  defp extract_operator_from_text(_), do: nil
 
   def evaluate(%Types.UnaryExpression{children: children}, context) do
     case children do

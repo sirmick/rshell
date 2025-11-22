@@ -60,27 +60,16 @@ defmodule RShell.Runtime.ExecutionPipeline do
     %{pipeline | duration: duration}
   end
 
-  # Broadcast execution result if needed (Commands and Assignments only)
+  # Broadcast execution result for ALL executable nodes
+  # This ensures control flow nodes (if/for/while) propagate accumulated output
   defp broadcast_if_needed(pipeline) do
-    case {pipeline.node, pipeline.result} do
-      {%Types.Command{}, {:ok, ctx}} ->
+    case pipeline.result do
+      {:ok, ctx} ->
+        # Broadcast for any successful execution
         broadcast_success(pipeline, ctx)
 
-      {%RShellTypes.Command{}, {:ok, ctx}} ->
-        broadcast_success(pipeline, ctx)
-
-      {%Types.VariableAssignment{}, {:ok, ctx}} ->
-        broadcast_success(pipeline, ctx)
-
-      {%RShellTypes.Assignment{}, {:ok, ctx}} ->
-        broadcast_success(pipeline, ctx)
-
-      {_, {:error, error}} ->
+      {:error, error} ->
         broadcast_failure(pipeline, error)
-
-      _ ->
-        # Control flow nodes don't broadcast - their internal commands do
-        :ok
     end
 
     pipeline
