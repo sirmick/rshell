@@ -59,6 +59,7 @@ defmodule BashParser.AST.Utils do
       %RShellTypes.ForStatement{} -> true
       %RShellTypes.WhileStatement{} -> true
       %RShellTypes.IfStatement{} -> true
+      %RShellTypes.ControlFlow{} -> true
 
       _ -> false
     end

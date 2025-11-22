@@ -7,6 +7,7 @@ defmodule RShell.Runtime.ExecutionPipeline do
   """
 
   alias BashParser.AST.Types
+  alias BashParser.AST.RShellTypes, as: RShellTypes
   alias RShell.PubSub
 
   defstruct [
@@ -59,13 +60,19 @@ defmodule RShell.Runtime.ExecutionPipeline do
     %{pipeline | duration: duration}
   end
 
-  # Broadcast execution result if needed (Commands and VariableAssignments only)
+  # Broadcast execution result if needed (Commands and Assignments only)
   defp broadcast_if_needed(pipeline) do
     case {pipeline.node, pipeline.result} do
       {%Types.Command{}, {:ok, ctx}} ->
         broadcast_success(pipeline, ctx)
 
+      {%RShellTypes.Command{}, {:ok, ctx}} ->
+        broadcast_success(pipeline, ctx)
+
       {%Types.VariableAssignment{}, {:ok, ctx}} ->
+        broadcast_success(pipeline, ctx)
+
+      {%RShellTypes.Assignment{}, {:ok, ctx}} ->
         broadcast_success(pipeline, ctx)
 
       {_, {:error, error}} ->

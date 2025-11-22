@@ -25,7 +25,6 @@ module.exports = grammar({
     [$.assignment, $.command],
     [$.expression, $.command_name],
     [$.property_access],
-    [$.literal, $.command_name],  // String can be literal or command name
     [$.command_argument, $.raw_argument],  // raw_argument can contain variable_reference
     [$.expr_line, $.cmd_line],  // Top-level ambiguity between EXPR and CMD mode
   ],
@@ -288,7 +287,6 @@ module.exports = grammar({
     command_name: $ => choice(
       $.identifier,
       $.path,
-      $.string,
     ),
 
     command_argument: $ => prec.left(choice(

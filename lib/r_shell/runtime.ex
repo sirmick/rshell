@@ -228,6 +228,11 @@ defmodule RShell.Runtime do
         # Transparent pass-through - don't increment command_count for wrapper
         do_execute_node(inner_node, context, session_id)
 
+      # RShell wraps control flow in ControlFlow nodes - extract the inner statement
+      %Types.ControlFlow{children: [inner_node | _]} ->
+        # Transparent pass-through - don't increment command_count for wrapper
+        do_execute_node(inner_node, context, session_id)
+
       # Increment command_count first, then execute and preserve result context
       %Types.Command{} = cmd ->
         context
@@ -242,17 +247,21 @@ defmodule RShell.Runtime do
         # Assignments don't increment command_count
         execute_rshell_assignment(assignment, context, session_id)
 
-      %Types.IfStatement{} = _stmt ->
-        # TODO: Implement RShell if statement execution
-        raise "If statement execution not yet implemented for RShell"
+      %Types.IfStatement{} = stmt ->
+        # RShell if statement execution
+        execute_if_statement(stmt, context, session_id)
 
-      %Types.ForStatement{} = _stmt ->
-        # TODO: Implement RShell for loop execution
-        raise "For loop execution not yet implemented for RShell"
+      %Types.ForStatement{} = stmt ->
+        # RShell for loop execution
+        execute_for_statement(stmt, context, session_id)
 
-      %Types.WhileStatement{} = _stmt ->
-        # TODO: Implement RShell while loop execution
-        raise "While loop execution not yet implemented for RShell"
+      %Types.WhileStatement{} = stmt ->
+        # RShell while loop execution
+        execute_while_statement(stmt, context, session_id)
+
+      %Types.Newline{} ->
+        # Newlines are not executable - just return context unchanged
+        context
 
       other ->
         node_type = other.__struct__ |> Module.split() |> List.last()
@@ -714,7 +723,14 @@ defmodule RShell.Runtime do
 
   # Execute body nodes - RShell uses lists of children directly
   defp execute_body_nodes(children, context, session_id) when is_list(children) do
-    execute_command_list(children, context, session_id)
+    require Logger
+    Logger.debug("execute_body_nodes: #{length(children)} children")
+    Enum.each(children, fn child ->
+      Logger.debug("  child type: #{inspect(child.__struct__)}")
+    end)
+    result = execute_command_list(children, context, session_id)
+    Logger.debug("execute_body_nodes result: command_count=#{result.command_count}")
+    result
   end
 
   defp execute_body_nodes(_, context, _session_id), do: context
@@ -751,139 +767,210 @@ defmodule RShell.Runtime do
   end
 
   # =============================================================================
-  # Control Flow Execution Functions
+  # Control Flow Execution Functions (RShell Implementation)
   # =============================================================================
 
-  # TEMPORARILY DISABLED: Bash-specific control flow helpers
-  # TODO: Reimplement for RShell's brace-based syntax
-  # See RSHELL_HARD_CUTOVER_PLAN.md for details
-
-  @doc false
-  defp __bash_control_flow_disabled__ do
-    """
-    The following bash control flow functions have been temporarily disabled
-    because they use bash-specific node structures (DoGroup, CompoundStatement, etc.)
-    that don't exist in RShell's brace-based syntax.
-
-    These need to be reimplemented to work with RShell's:
-    - IfStatement (with body as direct children list)
-    - ForStatement (with in-clause and brace body)
-    - WhileStatement (with condition and brace body)
-    - ElifClause and ElseClause (different structure)
-    """
-  end
-
-  # Execute if statement with elif/else support
-  if false do
+  # Execute RShell if statement with elif/else support
+  # RShell structure: condition is Parenthesized node, body is Block, alternative is list
   defp execute_if_statement(
-         %Types.IfStatement{condition: condition_nodes, children: children},
+         %Types.IfStatement{condition: condition_node, body: body_node, alternative: alternatives},
          context,
          session_id
        ) do
-    # Execute condition commands
-    condition_context = execute_command_list(condition_nodes, context, session_id)
+    require Logger
+    Logger.debug("execute_if_statement called")
+    Logger.debug("  condition_node: #{inspect(condition_node.__struct__)}")
+    Logger.debug("  body_node: #{inspect(body_node.__struct__)}")
 
-    if condition_context.exit_code == 0 do
-      # Condition succeeded - execute then-body (first non-elif/else child)
-      then_body =
-        Enum.reject(children, fn child ->
-          match?(%Types.ElifClause{}, child) or match?(%Types.ElseClause{}, child)
-        end)
+    # Evaluate condition expression (returns boolean or uses exit code)
+    condition_result = evaluate_condition(condition_node, context, session_id)
+    Logger.debug("  condition_result: #{inspect(condition_result)}")
 
-      execute_command_list(then_body, condition_context, session_id)
+    if condition_result do
+      # Condition is true - execute then-body
+      Logger.debug("  executing if body")
+      result = execute_block(body_node, context, session_id)
+      Logger.debug("  if body executed, command_count: #{result.command_count}")
+      result
     else
-      # Condition failed - try elif clauses, then else clause
-      execute_elif_else_chain(children, condition_context, session_id)
+      # Condition is false - try alternatives (elif/else)
+      Logger.debug("  condition false, checking alternatives")
+      execute_alternatives(alternatives, context, session_id)
     end
   end
 
-  # Try elif clauses in order, then else clause
-  defp execute_elif_else_chain(children, context, session_id) do
-    # Get all elif clauses
-    elif_clauses = Enum.filter(children, &match?(%Types.ElifClause{}, &1))
+  # Execute elif/else alternatives
+  defp execute_alternatives([], context, _session_id) do
+    # No alternatives - return context unchanged
+    context
+  end
 
-    # Try each elif clause
-    case try_elif_clauses(elif_clauses, context, session_id) do
-      {:executed, new_context} ->
-        new_context
-
-      :no_match ->
-        # No elif matched, try else clause
-        case Enum.find(children, &match?(%Types.ElseClause{}, &1)) do
-          %Types.ElseClause{children: else_body} ->
-            execute_command_list(else_body, context, session_id)
-
-          nil ->
-            # No else clause - return context from condition
-            context
+  defp execute_alternatives([alt | rest], context, session_id) do
+    case alt do
+      %Types.ElifClause{condition: elif_cond, body: elif_body} ->
+        # Evaluate elif condition
+        if evaluate_condition(elif_cond, context, session_id) do
+          # This elif matched - execute body
+          execute_block(elif_body, context, session_id)
+        else
+          # Try next alternative
+          execute_alternatives(rest, context, session_id)
         end
+
+      %Types.ElseClause{body: else_body} ->
+        # Else clause always executes
+        execute_block(else_body, context, session_id)
+
+      _ ->
+        # Unknown alternative type - skip and continue
+        execute_alternatives(rest, context, session_id)
     end
   end
 
-  # Try elif clauses until one matches
-  defp try_elif_clauses([], _context, _session_id), do: :no_match
+  # Evaluate condition expression (from ParenthesizedExpression node)
+  defp evaluate_condition(%Types.ParenthesizedExpression{children: children}, context, session_id) when is_list(children) and length(children) > 0 do
+    # Find the actual expression (skip children with text "(" or ")")
+    expr = Enum.find(children, fn child ->
+      case child do
+        %{source_info: %{text: text}} when text in ["(", ")"] -> false
+        _ -> true
+      end
+    end)
 
-  defp try_elif_clauses([%Types.ElifClause{children: elif_children} | rest], context, session_id) do
-    # ElifClause.children contains both condition and body commands
-    # Need to separate them (similar to IfStatement structure)
-    # The condition commands come first, then the body commands
-
-    # For now, execute all children as condition+body in sequence
-    # TODO: Properly separate condition from body based on AST structure
-    elif_context = execute_command_list(elif_children, context, session_id)
-
-    if elif_context.exit_code == 0 do
-      # This elif matched - return executed context
-      {:executed, elif_context}
+    if expr do
+      evaluate_condition(expr, context, session_id)
     else
-      # Try next elif
-      try_elif_clauses(rest, context, session_id)
+      # No expression found - treat as false
+      false
     end
   end
 
-  # Execute for statement with native type support
+  # Also handle Parenthesized wrapper (aliased node)
+  defp evaluate_condition(%Types.Parenthesized{children: children}, context, session_id) when is_list(children) do
+    # Parenthesized contains 3 ParenthesizedExpression children: "(", content, ")"
+    # Find the middle child that has actual content
+    content_child = Enum.find(children, fn child ->
+      case child do
+        %Types.ParenthesizedExpression{children: inner_children} when inner_children != [] ->
+          # Check if it's not just a paren token
+          case child do
+            %{source_info: %{text: text}} when text in ["(", ")"] -> false
+            _ -> true
+          end
+        _ -> false
+      end
+    end)
+
+    if content_child do
+      evaluate_condition(content_child, context, session_id)
+    else
+      # No content found - treat as false
+      false
+    end
+  end
+
+  # Fallback: Direct expression evaluation (for Identifier and other expression nodes)
+  defp evaluate_condition(expr, context, _session_id) do
+    result = ExprEvaluator.evaluate(expr, context)
+
+    # Use ExprEvaluator's truthy? function for consistent truthiness evaluation
+    case result do
+      result when is_boolean(result) -> result
+      val when val in [0, "", nil, false] -> false
+      _ -> ExprEvaluator.truthy?(result)
+    end
+  end
+
+  # Execute RShell for statement with native type support
+  # RShell structure: variable is Identifier, iterable is expression, body is Block
   defp execute_for_statement(
-         %Types.ForStatement{variable: var_node, value: value_nodes, body: body},
+         %Types.ForStatement{variable: var_node, iterable: iterable_node, body: body_node},
          context,
          session_id
        ) do
     # Extract variable name
     var_name = extract_variable_name(var_node)
 
-    # Extract values with native type preservation
-    values = extract_loop_values(value_nodes, context)
+    # Evaluate iterable expression to get collection
+    iterable_value = ExprEvaluator.evaluate(iterable_node, context)
+
+    # Convert to list if needed
+    values =
+      case iterable_value do
+        list when is_list(list) -> list
+        map when is_map(map) -> [map]
+        string when is_binary(string) -> String.split(string, ~r/\s+/, trim: true)
+        other -> [other]
+      end
 
     # Iterate over values
     Enum.reduce(values, context, fn value, acc_context ->
       # Store native value in environment
       new_env = Map.put(acc_context.env, var_name, value)
       loop_context = %{acc_context | env: new_env}
-      execute_do_group_or_node(body, loop_context, session_id)
+      execute_block(body_node, loop_context, session_id)
     end)
   end
 
-  # Execute while statement
+  # Execute RShell while statement
+  # RShell structure: condition is Parenthesized, body is Block
   defp execute_while_statement(
-         %Types.WhileStatement{condition: condition_nodes, body: body},
+         %Types.WhileStatement{condition: condition_node, body: body_node},
          context,
          session_id
        ) do
-    execute_while_loop(condition_nodes, body, context, session_id)
+    execute_while_loop(condition_node, body_node, context, session_id)
   end
 
   # Recursive while loop execution
-  defp execute_while_loop(condition_nodes, body, context, session_id) do
-    # Execute condition
-    condition_context = execute_command_list(condition_nodes, context, session_id)
-
-    if condition_context.exit_code == 0 do
-      # Condition succeeded - execute body and continue
-      body_context = execute_body_nodes(body, condition_context, session_id)
-      execute_while_loop(condition_nodes, body, body_context, session_id)
+  defp execute_while_loop(condition_node, body_node, context, session_id) do
+    # Evaluate condition
+    if evaluate_condition(condition_node, context, session_id) do
+      # Condition is true - execute body and continue
+      body_context = execute_block(body_node, context, session_id)
+      execute_while_loop(condition_node, body_node, body_context, session_id)
     else
-      # Condition failed - exit loop
-      condition_context
+      # Condition is false - exit loop
+      context
     end
   end
-  end  # End of if false block for disabled bash control flow
+
+  # Execute a Block node (contains children list)
+  defp execute_block(%Types.Block{children: children}, context, session_id) do
+    require Logger
+    Logger.debug("execute_block Block: #{length(children)} children, types: #{inspect(Enum.map(children, &(&1.__struct__)))}")
+    execute_body_nodes(children, context, session_id)
+  end
+
+  # Execute an ExprBlock node (wrapper around Block nodes)
+  defp execute_block(%Types.ExprBlock{children: children}, context, session_id) do
+    require Logger
+    Logger.debug("execute_block ExprBlock: #{length(children)} children")
+    # ExprBlock contains Block nodes as children (opening brace, content, closing brace)
+    # Only execute blocks that have actual content (not just brace tokens)
+    Enum.reduce(children, context, fn child, acc_context ->
+      case child do
+        %Types.Block{children: block_children} when block_children != [] ->
+          Logger.debug("execute_block ExprBlock -> Block with #{length(block_children)} children")
+          # This block has content - execute it
+          execute_block(child, acc_context, session_id)
+        _ ->
+          Logger.debug("execute_block ExprBlock -> skipping empty child")
+          # Empty block or other node - skip
+          acc_context
+      end
+    end)
+  end
+
+  # Fallback for non-Block nodes
+  defp execute_block(node, context, session_id) when is_struct(node) do
+    simple_execute(node, context, session_id)
+  end
+
+  defp execute_block(_, context, _session_id), do: context
+
+  # Extract variable name from Identifier node
+  defp extract_variable_name(%Types.Identifier{source_info: %{text: text}}), do: text
+  defp extract_variable_name(%{source_info: %{text: text}}), do: text
+  defp extract_variable_name(_), do: ""
 end

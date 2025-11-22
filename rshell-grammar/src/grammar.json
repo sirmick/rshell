@@ -1412,10 +1412,6 @@
         {
           "type": "SYMBOL",
           "name": "path"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "string"
         }
       ]
     },
@@ -1644,10 +1640,6 @@
     ],
     [
       "property_access"
-    ],
-    [
-      "literal",
-      "command_name"
     ],
     [
       "command_argument",
