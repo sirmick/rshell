@@ -472,10 +472,14 @@ defmodule RShell.CLI do
     Enum.each(children, fn node ->
       if ASTUtils.executable?(node) do
         case Runtime.execute_node(runtime, node) do
-          {:ok, context} ->
+          {:ok, _context} ->
+            # Get output from FrameStack instead of context
+            runtime_state = :sys.get_state(runtime)
+            frame_output = RShell.Runtime.FrameStack.get_output(runtime_state.frame_stack)
+
             # Display output
-            stdout = Utils.format_output(context.last_output.stdout)
-            stderr = Utils.format_output(context.last_output.stderr)
+            stdout = Utils.format_output(frame_output.stdout)
+            stderr = Utils.format_output(frame_output.stderr)
             if stdout != "", do: IO.write(stdout)
             if stderr != "", do: IO.write(:stderr, stderr)
 

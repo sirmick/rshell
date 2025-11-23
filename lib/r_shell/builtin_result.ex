@@ -59,22 +59,20 @@ defmodule RShell.BuiltinResult do
   end
 
   @doc """
-  Materialize streams and update context with output and exit code.
+  Materialize streams and return materialized output with context.
 
-  This is the key function that ensures exit codes propagate correctly.
+  Now returns {context, stdout, stderr} tuple instead of updating context.last_output.
+  Output should be added to FrameStack by caller.
   """
   def materialize_and_update(%__MODULE__{} = result) do
     stdout_list = materialize_output(result.stdout)
     stderr_list = materialize_output(result.stderr)
 
-    # CRITICAL: Update context with BOTH output AND exit code from result
-    new_context = %{
-      result.context
-      | exit_code: result.exit_code,
-        last_output: %{stdout: stdout_list, stderr: stderr_list}
-    }
+    # Update context with ONLY exit code (no last_output!)
+    new_context = %{result.context | exit_code: result.exit_code}
 
-    new_context
+    # Return tuple for caller to add to FrameStack
+    {new_context, stdout_list, stderr_list}
   end
 
   # Materialize output - convert Stream to list of native terms

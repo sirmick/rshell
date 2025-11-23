@@ -28,6 +28,7 @@ defmodule RShell.Runtime do
   alias RShell.Builtins
   alias RShell.ExprEvaluator
   alias RShell.Runtime.FrameStack
+  alias RShell.Runtime.ExecutionState
   alias BashParser.AST.RShellTypes, as: Types
 
   # Default variable attributes (reserved for future use)
@@ -110,9 +111,7 @@ defmodule RShell.Runtime do
       env_meta: %{},
       cwd: cwd,
       exit_code: 0,
-      command_count: 0,
-      # Only current command output (lists of native terms)
-      last_output: %{stdout: [], stderr: []}
+      command_count: 0
     }
 
     # NEW: Initialize frame stack alongside existing context
@@ -141,8 +140,17 @@ defmodule RShell.Runtime do
   @impl true
   def handle_call({:execute_node, node}, _from, state) do
     try do
-      {result, new_context} = execute_node_internal(node, state.context, state.session_id)
-      {:reply, result, %{state | context: new_context}}
+      # Create ExecutionState from runtime state
+      exec_state = ExecutionState.from_runtime_state(state)
+
+      # Execute with new state
+      new_exec_state = execute_node_internal(node, exec_state)
+
+      # Extract updates and apply to runtime state
+      updates = ExecutionState.to_runtime_updates(new_exec_state)
+      new_state = Map.merge(state, updates)
+
+      {:reply, {:ok, new_exec_state.context}, new_state}
     rescue
       e ->
         # Broadcast failure publicly (same as handle_info)
@@ -197,8 +205,7 @@ defmodule RShell.Runtime do
       env_meta: %{},
       cwd: state.initial_cwd,
       exit_code: 0,
-      command_count: 0,
-      last_output: %{stdout: [], stderr: []}
+      command_count: 0
     }
 
     # NEW: Reinitialize frame stack on reset
@@ -226,19 +233,34 @@ defmodule RShell.Runtime do
 
   # Private Helpers
 
-  defp execute_node_internal(node, context, session_id) do
-    # Use ExecutionPipeline for clean execution and broadcasting
-    new_context = RShell.Runtime.ExecutionPipeline.execute(node, context, session_id)
-    {{:ok, new_context}, new_context}
+  defp execute_node_internal(node, exec_state) do
+    # Execute directly with state instead of going through ExecutionPipeline
+    # ExecutionPipeline was designed for context-only flow and doesn't preserve frame_stack
+    new_state = do_execute_node_with_state(node, exec_state)
+
+    # Return updated execution state
+    new_state
   end
 
   # Execute AST nodes (exported for ExecutionPipeline)
+  # Legacy version for ExecutionPipeline compatibility
   def do_execute_node(node, context, session_id) do
+    exec_state = %ExecutionState{
+      context: context,
+      frame_stack: FrameStack.new(output_mode: :isolate, context: context),
+      session_id: session_id
+    }
+    new_state = do_execute_node_with_state(node, exec_state)
+    new_state.context
+  end
+
+  # New version: Execute AST nodes with ExecutionState
+  defp do_execute_node_with_state(node, state) do
     case node do
       # RShell wraps commands in CmdLine nodes - extract the inner command/pipeline/list
       %Types.CmdLine{children: [inner_node | _]} ->
         # Transparent pass-through - don't increment command_count for wrapper
-        do_execute_node(inner_node, context, session_id)
+        do_execute_node_with_state(inner_node, state)
 
       # RShell wraps expressions in ExprLine nodes - extract the inner assignment/expression
       %Types.ExprLine{children: children} = expr_line ->
@@ -267,23 +289,23 @@ defmodule RShell.Runtime do
 
         case inner_node do
           nil ->
-            Logger.debug("ExprLine: no executable child found, returning context unchanged")
-            context
+            Logger.debug("ExprLine: no executable child found, returning state unchanged")
+            state
           node ->
             Logger.debug("ExprLine: executing #{inspect(node.__struct__)}")
-            do_execute_node(node, context, session_id)
+            do_execute_node_with_state(node, state)
         end
 
       # RShell wraps control flow in ControlFlow nodes - extract the inner statement
       %Types.ControlFlow{children: [inner_node | _]} ->
         # Transparent pass-through - don't increment command_count for wrapper
-        do_execute_node(inner_node, context, session_id)
+        do_execute_node_with_state(inner_node, state)
 
-      # Increment command_count first, then execute and preserve result context
+      # Increment command_count first, then execute and preserve result state
       %Types.Command{} = cmd ->
-        context
-        |> increment_command_count()
-        |> then(&execute_command(cmd, &1, session_id))
+        incremented_context = increment_command_count(state.context)
+        incremented_state = %{state | context: incremented_context}
+        execute_command(cmd, incremented_state)
 
       %Types.Pipeline{} = _pipeline ->
         # TODO: Implement pipeline execution
@@ -291,23 +313,24 @@ defmodule RShell.Runtime do
 
       %Types.Assignment{} = assignment ->
         # Assignments don't increment command_count
-        execute_rshell_assignment(assignment, context, session_id)
+        new_context = execute_rshell_assignment(assignment, state.context, state.session_id)
+        %{state | context: new_context}
 
       %Types.IfStatement{} = stmt ->
         # RShell if statement execution
-        execute_if_statement(stmt, context, session_id)
+        execute_if_statement(stmt, state)
 
       %Types.ForStatement{} = stmt ->
         # RShell for loop execution
-        execute_for_statement(stmt, context, session_id)
+        execute_for_statement(stmt, state)
 
       %Types.WhileStatement{} = stmt ->
         # RShell while loop execution
-        execute_while_statement(stmt, context, session_id)
+        execute_while_statement(stmt, state)
 
       %Types.Newline{} ->
-        # Newlines are not executable - just return context unchanged
-        context
+        # Newlines are not executable - just return state unchanged
+        state
 
       other ->
         node_type = other.__struct__ |> Module.split() |> List.last()
@@ -320,32 +343,37 @@ defmodule RShell.Runtime do
     %{context | command_count: context.command_count + 1}
   end
 
-  # Legacy name for internal use
-  defp simple_execute(node, context, session_id) do
-    do_execute_node(node, context, session_id)
+  # State-based execution helper
+  # ALL execution functions follow this pattern: take ExecutionState, return ExecutionState
+  @spec simple_execute_with_state(Types.t(), ExecutionState.t()) :: ExecutionState.t()
+  defp simple_execute_with_state(node, state) do
+    do_execute_node_with_state(node, state)
   end
 
-  defp execute_command(%Types.Command{source_info: source_info} = cmd, context, session_id) do
+  @spec execute_command(Types.Command.t(), ExecutionState.t()) :: ExecutionState.t()
+  defp execute_command(%Types.Command{source_info: source_info} = cmd, state) do
     text = source_info.text || ""
 
     # Extract command name and arguments with context for variable expansion
-    case extract_command_parts(cmd, context) do
+    case extract_command_parts(cmd, state.context) do
       {:ok, command_name, args} ->
         # Check if it's a builtin command
         if Builtins.is_builtin?(command_name) do
-          # Pass native args directly to builtins
-          execute_builtin(command_name, args, "", context, session_id)
+          # Pass native args directly to builtins (returns updated state)
+          execute_builtin(command_name, args, "", state)
         else
           # For external commands, convert native values to JSON
           _json_args = Enum.map(args, &convert_to_string/1)
           # TODO: Use json_args when implementing external command execution
           # Execute as external command
-          execute_external_command(text, context, session_id)
+          new_context = execute_external_command(text, state.context, state.session_id)
+          %{state | context: new_context}
         end
 
       {:error, _reason} ->
         # Couldn't parse command, fall back to text-based execution
-        execute_external_command(text, context, session_id)
+        new_context = execute_external_command(text, state.context, state.session_id)
+        %{state | context: new_context}
     end
   end
 
@@ -369,17 +397,32 @@ defmodule RShell.Runtime do
   defp convert_to_string(nil), do: ""
   defp convert_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
 
-  # Execute a builtin command
-  defp execute_builtin(name, args, stdin, context, _session_id) do
+  # Execute a builtin command - now returns ExecutionState with frame_stack updated
+  defp execute_builtin(name, args, stdin, state) do
     alias RShell.BuiltinResult
 
-    case Builtins.execute(name, args, stdin, context) do
-      {new_context, stdout, stderr, exit_code} ->
-        # Wrap POSIX-style tuple in struct for easier transport
+    case Builtins.execute(name, args, stdin, state) do
+      {new_context, stdout, stderr, exit_code} when is_map(new_context) and not is_struct(new_context) ->
+        # Backward compat: context returned
         result = BuiltinResult.new(new_context, stdout, stderr, exit_code)
+        {updated_context, stdout_list, stderr_list} = BuiltinResult.materialize_and_update(result)
 
-        # Materialize and update context (ensures exit code propagates)
-        BuiltinResult.materialize_and_update(result)
+        # Add output to FrameStack
+        updated_stack = FrameStack.add_output(state.frame_stack, stdout_list, stderr_list)
+
+        # Return updated state
+        %{state | context: updated_context, frame_stack: updated_stack}
+
+      {%ExecutionState{} = new_state, stdout, stderr, exit_code} ->
+        # New: ExecutionState returned
+        result = BuiltinResult.new(new_state.context, stdout, stderr, exit_code)
+        {updated_context, stdout_list, stderr_list} = BuiltinResult.materialize_and_update(result)
+
+        # Add output to FrameStack from new_state
+        updated_stack = FrameStack.add_output(new_state.frame_stack, stdout_list, stderr_list)
+
+        # Return updated state with both context and frame_stack
+        %{new_state | context: updated_context, frame_stack: updated_stack}
 
       {:error, :not_a_builtin} ->
         # Should not happen since we checked is_builtin?, but handle gracefully
@@ -430,8 +473,8 @@ defmodule RShell.Runtime do
       value: native_value
     }})
 
-    # Assignments produce NO output
-    %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
+    # Assignments produce NO output (update env only)
+    %{context | env: new_env}
   end
 
   # Extract command name from CommandName node by traversing children
@@ -657,135 +700,129 @@ defmodule RShell.Runtime do
   # Control Flow Helper Functions
   # =============================================================================
 
-  # Execute a list of commands sequentially, threading context through each
+  # Execute a list of commands sequentially - ExecutionState version with FrameStack
   # Broadcasts execution results for each command
-  # Returns tuple {final_context, accumulated_output} for use by loops
-  defp execute_command_list(nodes, context, session_id, accumulate \\ false) when is_list(nodes) do
+  defp execute_command_list(nodes, state, accumulate) when is_list(nodes) do
     if accumulate do
-      # Accumulate output across all commands (for loops)
-      {final_context, accumulated} = Enum.reduce(nodes, {context, %{stdout: [], stderr: []}}, fn node, {acc_context, acc_output} ->
+      # Accumulate output in FrameStack (for loops)
+      Enum.reduce(nodes, state, fn node, acc_state ->
         start_time = System.monotonic_time(:microsecond)
 
         # Execute the node
         try do
-          new_context = simple_execute(node, acc_context, session_id)
+          new_state = simple_execute_with_state(node, acc_state)
           duration = System.monotonic_time(:microsecond) - start_time
 
-          # Accumulate output from this command
-          new_accumulated = %{
-            stdout: acc_output.stdout ++ new_context.last_output.stdout,
-            stderr: acc_output.stderr ++ new_context.last_output.stderr
-          }
+          # Get output from FrameStack (already added by execute_builtin)
+          frame_output = FrameStack.get_output(new_state.frame_stack)
 
           # Broadcast with the command's own output
           broadcast_execution_success_with_output(
             node,
-            new_context,
-            acc_context,
+            new_state.context,
+            acc_state.context,
             duration,
-            new_context.last_output.stdout,
-            new_context.last_output.stderr,
-            session_id
+            frame_output.stdout,
+            frame_output.stderr,
+            new_state.session_id
           )
 
-          {new_context, new_accumulated}
+          new_state
         rescue
           e ->
             _duration = System.monotonic_time(:microsecond) - start_time
 
-            # Get any output that was produced before error (from context)
-            stdout = acc_context.last_output.stdout
-            stderr = acc_context.last_output.stderr
+            # Get any output that was produced before error (from FrameStack)
+            frame_output = FrameStack.get_output(acc_state.frame_stack)
 
             broadcast_execution_failure_with_output(
               e,
               node,
-              stdout,
-              stderr,
-              acc_context.exit_code,
-              session_id
+              frame_output.stdout,
+              frame_output.stderr,
+              acc_state.context.exit_code,
+              acc_state.session_id
             )
 
-            # Continue with unchanged context
-            {acc_context, acc_output}
+            # Continue with unchanged state
+            acc_state
         end
       end)
-
-      # Return context with accumulated output
-      %{final_context | last_output: accumulated}
     else
-      # Normal mode - just thread context without accumulating
-      Enum.reduce(nodes, context, fn node, acc_context ->
+      # Normal mode - just thread state without special accumulation logic
+      Enum.reduce(nodes, state, fn node, acc_state ->
         start_time = System.monotonic_time(:microsecond)
 
         # Execute the node
         try do
-          new_context = simple_execute(node, acc_context, session_id)
+          new_state = simple_execute_with_state(node, acc_state)
           duration = System.monotonic_time(:microsecond) - start_time
 
-          # Output is now in context.last_output (no process dictionary!)
+          # Get output from FrameStack
+          frame_output = FrameStack.get_output(new_state.frame_stack)
+
+          # Broadcast with output
           broadcast_execution_success_with_output(
             node,
-            new_context,
-            acc_context,
+            new_state.context,
+            acc_state.context,
             duration,
-            new_context.last_output.stdout,
-            new_context.last_output.stderr,
-            session_id
+            frame_output.stdout,
+            frame_output.stderr,
+            new_state.session_id
           )
 
-          new_context
+          new_state
         rescue
           e ->
             _duration = System.monotonic_time(:microsecond) - start_time
 
-            # Get any output that was produced before error (from context)
-            stdout = acc_context.last_output.stdout
-            stderr = acc_context.last_output.stderr
+            # Get any output that was produced before error (from FrameStack)
+            frame_output = FrameStack.get_output(acc_state.frame_stack)
 
             broadcast_execution_failure_with_output(
               e,
               node,
-              stdout,
-              stderr,
-              acc_context.exit_code,
-              session_id
+              frame_output.stdout,
+              frame_output.stderr,
+              acc_state.context.exit_code,
+              acc_state.session_id
             )
 
-            # Continue with unchanged context
-            acc_context
+            # Continue with unchanged state
+            acc_state
         end
       end)
     end
   end
 
-  defp execute_command_list(_, context, _session_id, _accumulate), do: context
+  defp execute_command_list(_, state, _accumulate), do: state
 
-  # Execute body nodes - RShell uses lists of children directly
+  # Execute body nodes - RShell uses lists of children directly - ExecutionState version
   # accumulate: whether to accumulate output across all commands (needed for loops)
-  defp execute_body_nodes(children, context, session_id, accumulate \\ false) when is_list(children) do
+  defp execute_body_nodes(children, state, accumulate) when is_list(children) do
     require Logger
     Logger.debug("execute_body_nodes: #{length(children)} children, accumulate=#{accumulate}")
     Enum.each(children, fn child ->
       Logger.debug("  child type: #{inspect(child.__struct__)}")
     end)
-    result = execute_command_list(children, context, session_id, accumulate)
-    Logger.debug("execute_body_nodes result: command_count=#{result.command_count}")
-    result
+    result_state = execute_command_list(children, state, accumulate)
+    Logger.debug("execute_body_nodes result: command_count=#{result_state.context.command_count}")
+    result_state
   end
 
-  defp execute_body_nodes(_, context, _session_id, _accumulate), do: context
+  defp execute_body_nodes(_, state, _accumulate), do: state
 
   # =============================================================================
   # Control Flow Execution Functions (RShell Implementation)
   # =============================================================================
 
-  # Execute RShell if statement with elif/else support
+  # Execute RShell if statement with elif/else support (ExecutionState version)
   # RShell structure: condition is Parenthesized node, body is Block, alternative is list
+  @spec execute_if_statement(Types.IfStatement.t(), ExecutionState.t()) :: ExecutionState.t()
   defp execute_if_statement(
          %Types.IfStatement{condition: condition_node, body: body_node, alternative: alternatives},
-         context,
-         session_id
+         state
        ) do
     require Logger
     Logger.debug("execute_if_statement called")
@@ -793,47 +830,47 @@ defmodule RShell.Runtime do
     Logger.debug("  body_node: #{inspect(body_node.__struct__)}")
 
     # Evaluate condition expression (returns boolean or uses exit code)
-    condition_result = evaluate_condition(condition_node, context, session_id)
+    condition_result = evaluate_condition(condition_node, state.context, state.session_id)
     Logger.debug("  condition_result: #{inspect(condition_result)}")
 
     if condition_result do
       # Condition is true - execute then-body
       Logger.debug("  executing if body")
-      result = execute_block(body_node, context, session_id, false)
-      Logger.debug("  if body executed, command_count: #{result.command_count}")
-      result
+      result_state = execute_block(body_node, state, false)
+      Logger.debug("  if body executed, command_count: #{result_state.context.command_count}")
+      result_state
     else
       # Condition is false - try alternatives (elif/else)
       Logger.debug("  condition false, checking alternatives")
-      execute_alternatives(alternatives, context, session_id)
+      execute_alternatives(alternatives, state)
     end
   end
 
-  # Execute elif/else alternatives
-  defp execute_alternatives([], context, _session_id) do
-    # No alternatives - return context unchanged
-    context
+  # Execute elif/else alternatives (ExecutionState version)
+  defp execute_alternatives([], state) do
+    # No alternatives - return state unchanged
+    state
   end
 
-  defp execute_alternatives([alt | rest], context, session_id) do
+  defp execute_alternatives([alt | rest], state) do
     case alt do
       %Types.ElifClause{condition: elif_cond, body: elif_body} ->
         # Evaluate elif condition
-        if evaluate_condition(elif_cond, context, session_id) do
+        if evaluate_condition(elif_cond, state.context, state.session_id) do
           # This elif matched - execute body
-          execute_block(elif_body, context, session_id, false)
+          execute_block(elif_body, state, false)
         else
           # Try next alternative
-          execute_alternatives(rest, context, session_id)
+          execute_alternatives(rest, state)
         end
 
       %Types.ElseClause{body: else_body} ->
         # Else clause always executes
-        execute_block(else_body, context, session_id, false)
+        execute_block(else_body, state, false)
 
       _ ->
         # Unknown alternative type - skip and continue
-        execute_alternatives(rest, context, session_id)
+        execute_alternatives(rest, state)
     end
   end
 
@@ -907,18 +944,18 @@ defmodule RShell.Runtime do
     truthiness
   end
 
-  # Execute RShell for statement with frame-based accumulation
+  # Execute RShell for statement with actual FrameStack (ExecutionState version)
   # RShell structure: variable is Identifier, iterable is expression, body is Block
+  @spec execute_for_statement(Types.ForStatement.t(), ExecutionState.t()) :: ExecutionState.t()
   defp execute_for_statement(
          %Types.ForStatement{variable: var_node, iterable: iterable_node, body: body_node},
-         context,
-         session_id
+         state
        ) do
     # Extract variable name
     var_name = extract_variable_name(var_node)
 
     # Evaluate iterable expression to get collection
-    iterable_value = ExprEvaluator.evaluate(iterable_node, context)
+    iterable_value = ExprEvaluator.evaluate(iterable_node, state.context)
 
     # Convert to list if needed
     values =
@@ -929,89 +966,80 @@ defmodule RShell.Runtime do
         other -> [other]
       end
 
-    # Push loop frame (conceptually): Initialize with empty accumulation
-    loop_context = %{context | last_output: %{stdout: [], stderr: []}}
+    # Push loop frame onto FrameStack with :accumulate mode
+    new_frame_stack = FrameStack.push_frame(state.frame_stack, :loop, :accumulate, %{type: :for, variable: var_name})
+    loop_state = %{state | frame_stack: new_frame_stack}
 
-    # Iterate over values with frame-based accumulation
-    final_context = Enum.reduce(values, loop_context, fn value, acc_context ->
-      # Save accumulated output so far
-      accumulated_so_far = acc_context.last_output
+    # Iterate over values with actual frame-based accumulation
+    final_state = Enum.reduce(values, loop_state, fn value, acc_state ->
+      # Store native value in environment (using FrameStack)
+      new_env = Map.put(acc_state.context.env, var_name, value)
+      iteration_context = %{acc_state.context | env: new_env}
+      iteration_state = %{acc_state | context: iteration_context}
 
-      # Store native value in environment and clear last_output for this iteration
-      new_env = Map.put(acc_context.env, var_name, value)
-      iteration_context = %{acc_context | env: new_env, last_output: %{stdout: [], stderr: []}}
-
-      # Execute body
-      result_context = execute_block(body_node, iteration_context, session_id, false)
-
-      # Accumulate output from this iteration
-      %{result_context |
-        last_output: %{
-          stdout: accumulated_so_far.stdout ++ result_context.last_output.stdout,
-          stderr: accumulated_so_far.stderr ++ result_context.last_output.stderr
-        }
-      }
+      # Execute body with accumulate=true so commands add to the frame
+      execute_block(body_node, iteration_state, true)
     end)
 
-    # Pop frame (conceptually): Return with accumulated output in context.last_output
-    final_context
+    # Pop frame and get accumulated output
+    {popped_stack, accumulated_output} = FrameStack.pop_frame(final_state.frame_stack)
+
+    # Add accumulated output to parent frame (so it's visible to caller)
+    updated_stack = FrameStack.add_output(popped_stack, accumulated_output.stdout, accumulated_output.stderr)
+
+    %{final_state | frame_stack: updated_stack}
   end
 
-  # Execute RShell while statement
+  # Execute RShell while statement (ExecutionState version with actual FrameStack)
   # RShell structure: condition is Parenthesized, body is Block
+  @spec execute_while_statement(Types.WhileStatement.t(), ExecutionState.t()) :: ExecutionState.t()
   defp execute_while_statement(
          %Types.WhileStatement{condition: condition_node, body: body_node},
-         context,
-         session_id
+         state
        ) do
-    # Push loop frame onto stack (conceptually - stored in context.last_output)
-    # Start with empty accumulation
-    loop_context = %{context | last_output: %{stdout: [], stderr: []}}
+    # Push loop frame onto FrameStack with :accumulate mode
+    new_frame_stack = FrameStack.push_frame(state.frame_stack, :loop, :accumulate, %{type: :while})
+    loop_state = %{state | frame_stack: new_frame_stack}
 
-    # Execute while loop with frame-based accumulation
-    execute_while_loop_with_frames(condition_node, body_node, loop_context, session_id)
+    # Execute while loop with actual frame-based accumulation
+    final_state = execute_while_loop_with_frames(condition_node, body_node, loop_state)
+
+    # Pop frame and get accumulated output
+    {popped_stack, accumulated_output} = FrameStack.pop_frame(final_state.frame_stack)
+
+    # Add accumulated output to parent frame (so it's visible to caller)
+    updated_stack = FrameStack.add_output(popped_stack, accumulated_output.stdout, accumulated_output.stderr)
+
+    %{final_state | frame_stack: updated_stack}
   end
 
-  # Frame-based while loop execution - accumulates output in context.last_output
-  # This simulates a loop frame with :accumulate mode
-  defp execute_while_loop_with_frames(condition_node, body_node, context, session_id) do
+  # Frame-based while loop execution - uses actual FrameStack operations
+  defp execute_while_loop_with_frames(condition_node, body_node, state) do
     # Evaluate condition
-    if evaluate_condition(condition_node, context, session_id) do
+    if evaluate_condition(condition_node, state.context, state.session_id) do
       # Condition is true - execute body
-      # Save accumulated output so far
-      accumulated_so_far = context.last_output
+      body_state = execute_block(body_node, state, true)
 
-      # Clear last_output for this iteration
-      clean_context = %{context | last_output: %{stdout: [], stderr: []}}
-      body_context = execute_block(body_node, clean_context, session_id, true)
-
-      # Accumulate output from this iteration
-      accumulated_context = %{body_context |
-        last_output: %{
-          stdout: accumulated_so_far.stdout ++ body_context.last_output.stdout,
-          stderr: accumulated_so_far.stderr ++ body_context.last_output.stderr
-        }
-      }
-
-      # Continue loop with accumulated output
-      execute_while_loop_with_frames(condition_node, body_node, accumulated_context, session_id)
+      # Continue loop (accumulated output is in frame_stack)
+      execute_while_loop_with_frames(condition_node, body_node, body_state)
     else
-      # Condition is false - return final context with accumulated output
-      # Frame popped (conceptually) - accumulated output remains in context.last_output
-      context
+      # Condition is false - return final state
+      # Accumulated output will be popped by caller
+      state
     end
   end
 
-  # Execute a Block node (contains children list)
+  # Execute a Block node (contains children list) - ExecutionState version
   # accumulate: whether to accumulate output across all commands in the block
-  defp execute_block(%Types.Block{children: children}, context, session_id, accumulate) do
+  @spec execute_block(Types.t(), ExecutionState.t(), boolean()) :: ExecutionState.t()
+  defp execute_block(%Types.Block{children: children}, state, accumulate) do
     require Logger
     Logger.debug("execute_block Block: #{length(children)} children, accumulate=#{accumulate}")
-    execute_body_nodes(children, context, session_id, accumulate)
+    execute_body_nodes(children, state, accumulate)
   end
 
-  # Execute an ExprBlock node (wrapper around Block nodes)
-  defp execute_block(%Types.ExprBlock{children: children}, context, session_id, accumulate) do
+  # Execute an ExprBlock node (wrapper around Block nodes) - ExecutionState version
+  defp execute_block(%Types.ExprBlock{children: children}, state, accumulate) do
     require Logger
     Logger.debug("execute_block ExprBlock: #{length(children)} children, accumulate=#{accumulate}")
     # ExprBlock contains Block nodes as children (opening brace, content, closing brace)
@@ -1027,19 +1055,19 @@ defmodule RShell.Runtime do
       %Types.Block{children: block_children} ->
         Logger.debug("execute_block ExprBlock -> found content Block with #{length(block_children)} children")
         # Execute the content directly (don't recurse through execute_block)
-        execute_body_nodes(block_children, context, session_id, accumulate)
+        execute_body_nodes(block_children, state, accumulate)
       _ ->
         Logger.debug("execute_block ExprBlock -> no content found")
-        context
+        state
     end
   end
 
-  # Fallback for non-Block nodes
-  defp execute_block(node, context, session_id, _accumulate) when is_struct(node) do
-    simple_execute(node, context, session_id)
+  # Fallback for non-Block nodes - ExecutionState version
+  defp execute_block(node, state, _accumulate) when is_struct(node) do
+    simple_execute_with_state(node, state)
   end
 
-  defp execute_block(_, context, _session_id, _accumulate), do: context
+  defp execute_block(_, state, _accumulate), do: state
 
   # Extract variable name from Identifier node
   defp extract_variable_name(%Types.Identifier{source_info: %{text: text}}), do: text

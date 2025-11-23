@@ -78,6 +78,8 @@ defmodule RShell.Runtime.ExecutionPipeline do
   defp extract_context(%{context: ctx}), do: ctx
 
   # Broadcast successful execution
+  # NOTE: Output is now in FrameStack, not context.last_output
+  # But for now, we'll broadcast empty arrays since we don't have access to ExecutionState here
   defp broadcast_success(pipeline, new_context) do
     result = %{
       status: :success,
@@ -86,8 +88,8 @@ defmodule RShell.Runtime.ExecutionPipeline do
       node_text: get_node_text(pipeline.node),
       node_line: get_node_line(pipeline.node),
       exit_code: new_context.exit_code,
-      stdout: new_context.last_output.stdout,
-      stderr: new_context.last_output.stderr,
+      stdout: [],  # Output is in FrameStack, not accessible here
+      stderr: [],  # Output is in FrameStack, not accessible here
       context: %{
         env: new_context.env,
         cwd: new_context.cwd,
