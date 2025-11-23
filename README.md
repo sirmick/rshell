@@ -520,6 +520,15 @@ The project uses `tree-sitter-bash` from the vendor directory, which provides:
 - Position tracking for all nodes
 - Support for complex Bash constructs
 
+## Documentation
+
+For comprehensive documentation, see:
+
+- **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation map
+- **[START_HERE.md](START_HERE.md)** - Developer onboarding guide
+- **[TEST_GUIDE.md](TEST_GUIDE.md)** - Testing patterns and best practices
+- **Design Docs**: [ARCHITECTURE_DESIGN.md](ARCHITECTURE_DESIGN.md), [BUILTIN_DESIGN.md](BUILTIN_DESIGN.md), [CONTROL_FLOW_DESIGN.md](CONTROL_FLOW_DESIGN.md), and more
+
 ## License
 
 MIT License - see LICENSE file for details.
