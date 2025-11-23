@@ -134,4 +134,65 @@ defmodule RShell.Runtime.FrameStack do
   def output_mode(stack) do
     current_frame(stack).output_mode
   end
+
+  @doc """
+  Get a variable value by searching up the scope chain.
+
+  Searches frames from top to bottom (current → parent → ... → global),
+  then falls back to global_context.env.
+
+  ## Examples
+
+      iex> stack = RShell.Runtime.FrameStack.new(context: %{env: %{"GLOBAL" => "value"}})
+      iex> RShell.Runtime.FrameStack.get_variable(stack, "GLOBAL")
+      "value"
+
+      iex> stack = RShell.Runtime.FrameStack.new()
+      iex> stack = RShell.Runtime.FrameStack.set_variable(stack, "X", 42)
+      iex> RShell.Runtime.FrameStack.get_variable(stack, "X")
+      42
+  """
+  @spec get_variable(t(), String.t()) :: term()
+  def get_variable(%__MODULE__{frames: frames, global_context: context}, name) do
+    # Search frames from top to bottom (current -> parent -> ... -> global)
+    Enum.find_value(frames, fn frame ->
+      Map.get(frame.scope, name)
+    end) || Map.get(context.env || %{}, name)
+  end
+
+  @doc """
+  Set a variable in the current frame's scope.
+
+  ## Examples
+
+      iex> stack = RShell.Runtime.FrameStack.new()
+      iex> stack = RShell.Runtime.FrameStack.set_variable(stack, "X", 42)
+      iex> RShell.Runtime.FrameStack.get_variable(stack, "X")
+      42
+  """
+  @spec set_variable(t(), String.t(), term()) :: t()
+  def set_variable(%__MODULE__{frames: [current | rest]} = stack, name, value) do
+    # Set in current frame's scope
+    new_scope = Map.put(current.scope, name, value)
+    updated_frame = %{current | scope: new_scope}
+    %{stack | frames: [updated_frame | rest]}
+  end
+
+  @doc """
+  Update a variable in the global environment.
+
+  This is used for assignments that should persist across frames.
+
+  ## Examples
+
+      iex> stack = RShell.Runtime.FrameStack.new()
+      iex> stack = RShell.Runtime.FrameStack.update_global_env(stack, "PATH", "/usr/bin")
+      iex> stack.global_context.env["PATH"]
+      "/usr/bin"
+  """
+  @spec update_global_env(t(), String.t(), term()) :: t()
+  def update_global_env(%__MODULE__{global_context: context} = stack, name, value) do
+    new_env = Map.put(context.env || %{}, name, value)
+    %{stack | global_context: %{context | env: new_env}}
+  end
 end

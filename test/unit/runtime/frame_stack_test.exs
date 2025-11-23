@@ -124,4 +124,84 @@ defmodule RShell.Runtime.FrameStackTest do
       assert FrameStack.output_mode(stack) == :accumulate
     end
   end
+
+  describe "FrameStack.get_variable/2 and set_variable/3" do
+    test "sets and gets variables in current frame" do
+      stack = FrameStack.new()
+      stack = FrameStack.set_variable(stack, "X", 42)
+
+      assert FrameStack.get_variable(stack, "X") == 42
+    end
+
+    test "returns nil for undefined variables" do
+      stack = FrameStack.new()
+      assert FrameStack.get_variable(stack, "UNDEFINED") == nil
+    end
+
+    test "variable shadowing works across frames" do
+      stack = FrameStack.new()
+      stack = FrameStack.update_global_env(stack, "X", 10)
+
+      # Push new frame and shadow X
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      stack = FrameStack.set_variable(stack, "X", 20)
+
+      # Current frame sees shadowed value
+      assert FrameStack.get_variable(stack, "X") == 20
+
+      # Pop frame - back to global value
+      {stack, _output} = FrameStack.pop_frame(stack)
+      assert FrameStack.get_variable(stack, "X") == 10
+    end
+
+    test "looks up variables in parent frames" do
+      stack = FrameStack.new()
+      stack = FrameStack.update_global_env(stack, "GLOBAL", "value")
+
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      stack = FrameStack.set_variable(stack, "LOCAL", "local_value")
+
+      # Can see both local and global
+      assert FrameStack.get_variable(stack, "LOCAL") == "local_value"
+      assert FrameStack.get_variable(stack, "GLOBAL") == "value"
+    end
+
+    test "nested frames search up the chain" do
+      stack = FrameStack.new()
+      stack = FrameStack.update_global_env(stack, "A", 1)
+
+      # First loop frame
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      stack = FrameStack.set_variable(stack, "B", 2)
+
+      # Second loop frame (nested)
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      stack = FrameStack.set_variable(stack, "C", 3)
+
+      # Can see all variables from nested frame
+      assert FrameStack.get_variable(stack, "A") == 1  # global
+      assert FrameStack.get_variable(stack, "B") == 2  # parent frame
+      assert FrameStack.get_variable(stack, "C") == 3  # current frame
+    end
+  end
+
+  describe "FrameStack.update_global_env/3" do
+    test "updates global environment" do
+      stack = FrameStack.new()
+      stack = FrameStack.update_global_env(stack, "PATH", "/usr/bin")
+
+      assert stack.global_context.env["PATH"] == "/usr/bin"
+    end
+
+    test "global variables visible from all frames" do
+      stack = FrameStack.new()
+      stack = FrameStack.update_global_env(stack, "GLOBAL", "value")
+
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      assert FrameStack.get_variable(stack, "GLOBAL") == "value"
+
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      assert FrameStack.get_variable(stack, "GLOBAL") == "value"
+    end
+  end
 end
