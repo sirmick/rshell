@@ -117,11 +117,6 @@
     }
   },
   {
-    "type": "boolean",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "cmd_execution",
     "named": true,
     "fields": {},
@@ -258,10 +253,6 @@
         {
           "type": "path",
           "named": true
-        },
-        {
-          "type": "string",
-          "named": true
         }
       ]
     }
@@ -378,6 +369,10 @@
           "named": true
         },
         {
+          "type": "cmd_execution",
+          "named": true
+        },
+        {
           "type": "continue_statement",
           "named": true
         },
@@ -386,7 +381,7 @@
           "named": true
         },
         {
-          "type": "expression",
+          "type": "function_call",
           "named": true
         },
         {
@@ -561,10 +556,6 @@
       "multiple": false,
       "required": true,
       "types": [
-        {
-          "type": "boolean",
-          "named": true
-        },
         {
           "type": "number",
           "named": true
@@ -747,7 +738,19 @@
         "required": true,
         "types": [
           {
-            "type": "property_chain",
+            "type": "cmd_execution",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "variable_reference",
             "named": true
           }
         ]
@@ -770,7 +773,7 @@
     "fields": {
       "property": {
         "multiple": true,
-        "required": false,
+        "required": true,
         "types": [
           {
             "type": "identifier",
@@ -778,28 +781,6 @@
           }
         ]
       }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "command",
-          "named": true
-        },
-        {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "parenthesized_expression",
-          "named": true
-        },
-        {
-          "type": "pipeline",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -1058,10 +1039,6 @@
     "named": false
   },
   {
-    "type": "false",
-    "named": false
-  },
-  {
     "type": "for",
     "named": false
   },
@@ -1095,10 +1072,6 @@
   },
   {
     "type": "return",
-    "named": false
-  },
-  {
-    "type": "true",
     "named": false
   },
   {

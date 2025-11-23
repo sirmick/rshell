@@ -12,13 +12,13 @@ defmodule RShell.Builtins do
   Builtin receives either ParsedOptions (success) or ParseError (failure):
   ```elixir
   @shell_echo_opts :parsed
-  def shell_echo(%ParsedOptions{} = opts, stdin, context) do
+  def shell_echo(%ParsedOptions{} = opts, stdin, state) do
     # opts.options = %{no_newline: true, ...}
     # opts.arguments = ["hello", "world"]
     # opts.argv = ["-n", "hello", "world"]
   end
 
-  def shell_echo(%ParseError{} = error, stdin, context) do
+  def shell_echo(%ParseError{} = error, stdin, state) do
     # error.reason = "Unknown option: -z"
     # error.argv = ["-z", "hello"]
   end
@@ -28,14 +28,14 @@ defmodule RShell.Builtins do
   Builtin receives raw argv list:
   ```elixir
   @shell_source_opts :argv
-  def shell_source(argv, stdin, context) when is_list(argv) do
+  def shell_source(argv, stdin, state) when is_list(argv) do
     # Custom parsing logic
   end
   ```
 
   ## Return Value
   A tuple with:
-  - `new_context`: Updated context (unchanged for pure builtins)
+  - `new_state`: Updated ExecutionState (or just context for backward compat)
   - `stdout`: Output stream (always Stream.t())
   - `stderr`: Error stream (always Stream.t())
   - `exit_code`: Integer exit code (0 for success)
@@ -43,6 +43,7 @@ defmodule RShell.Builtins do
 
   use RShell.Builtins.Helpers
   alias RShell.Builtins.Utils
+  alias RShell.Runtime.ExecutionState
 
   defmodule ParsedOptions do
     @moduledoc "Represents successfully parsed builtin options"
@@ -76,21 +77,40 @@ defmodule RShell.Builtins do
       iex> RShell.Builtins.execute("unknown", [], "", %{})
       {:error, :not_a_builtin}
   """
-  def execute(name, argv, stdin, context) do
+  def execute(name, argv, stdin, context_or_state) do
+    # Normalize to state (backward compatible)
+    state = case context_or_state do
+      %ExecutionState{} = s -> s
+      context when is_map(context) ->
+        # Create minimal state from context
+        %ExecutionState{
+          context: context,
+          frame_stack: RShell.Runtime.FrameStack.new(output_mode: :isolate, context: context),
+          session_id: Map.get(context, :session_id, "unknown")
+        }
+    end
+
     # Check if this is a namespaced command (e.g., "math:add")
-    case String.split(name, ":", parts: 2) do
+    result = case String.split(name, ":", parts: 2) do
       [namespace, command] ->
         # Namespaced command - route to appropriate module
-        execute_namespaced(namespace, command, argv, stdin, context)
+        execute_namespaced(namespace, command, argv, stdin, state)
 
       [_single_name] ->
         # Non-namespaced command - execute from this module
-        execute_local(name, argv, stdin, context)
+        execute_local(name, argv, stdin, state)
+    end
+
+    # Extract context for backward compatibility
+    case result do
+      {%ExecutionState{} = new_state, stdout, stderr, exit_code} ->
+        {new_state.context, stdout, stderr, exit_code}
+      other -> other
     end
   end
 
   # Execute a command from this module (non-namespaced)
-  defp execute_local(name, argv, stdin, context) do
+  defp execute_local(name, argv, stdin, state) do
     function_name = String.to_atom("shell_#{name}")
 
     if function_exported?(__MODULE__, function_name, 3) do
@@ -100,7 +120,7 @@ defmodule RShell.Builtins do
       case mode do
         :argv ->
           # Raw argv mode - pass list directly
-          apply(__MODULE__, function_name, [argv, stdin, context])
+          apply(__MODULE__, function_name, [argv, stdin, state])
 
         :parsed ->
           # Parsed mode - parse options from docstring
@@ -109,11 +129,11 @@ defmodule RShell.Builtins do
           case RShell.Builtins.OptionParser.parse(argv, option_specs) do
             {:ok, opts, args} ->
               parsed = %ParsedOptions{options: opts, arguments: args, argv: argv}
-              apply(__MODULE__, function_name, [parsed, stdin, context])
+              apply(__MODULE__, function_name, [parsed, stdin, state])
 
             {:error, reason} ->
               error = %ParseError{reason: reason, argv: argv}
-              apply(__MODULE__, function_name, [error, stdin, context])
+              apply(__MODULE__, function_name, [error, stdin, state])
           end
 
         nil ->
@@ -126,7 +146,7 @@ defmodule RShell.Builtins do
   end
 
   # Execute a namespaced command (e.g., "math:add" -> RShell.Builtins.Math.shell_add/3)
-  defp execute_namespaced(namespace, command, argv, stdin, context) do
+  defp execute_namespaced(namespace, command, argv, stdin, state) do
     # Convert namespace to module name: "math" -> RShell.Builtins.Math
     module_name = namespace_to_module(namespace)
 
@@ -139,7 +159,7 @@ defmodule RShell.Builtins do
 
         case mode do
           :argv ->
-            apply(module_name, function_name, [argv, stdin, context])
+            apply(module_name, function_name, [argv, stdin, state])
 
           :parsed ->
             option_specs = apply(module_name, :__builtin_options__, [String.to_atom(command)])
@@ -147,11 +167,11 @@ defmodule RShell.Builtins do
             case RShell.Builtins.OptionParser.parse(argv, option_specs) do
               {:ok, opts, args} ->
                 parsed = %ParsedOptions{options: opts, arguments: args, argv: argv}
-                apply(module_name, function_name, [parsed, stdin, context])
+                apply(module_name, function_name, [parsed, stdin, state])
 
               {:error, reason} ->
                 error = %ParseError{reason: reason, argv: argv}
-                apply(module_name, function_name, [error, stdin, context])
+                apply(module_name, function_name, [error, stdin, state])
             end
 
           nil ->
@@ -235,13 +255,13 @@ defmodule RShell.Builtins do
       echo -e "line1\\nline2"
   """
   @shell_echo_opts :parsed
-  def shell_echo(%ParseError{reason: reason}, _stdin, context) do
+  def shell_echo(%ParseError{reason: reason}, _stdin, state) do
     help_text = get_builtin_help("echo")
     stderr = "echo: #{reason}\n\n#{help_text}"
-    {context, Utils.stream(""), Utils.stream(stderr), 1}
+    {state, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
-  def shell_echo(%ParsedOptions{} = opts, _stdin, context) do
+  def shell_echo(%ParsedOptions{} = opts, _stdin, state) do
     args = opts.arguments
 
     # Handle -e/-E mutual exclusion: -E overrides -e
@@ -266,7 +286,7 @@ defmodule RShell.Builtins do
         end
       end)
 
-    {context, Utils.stream(output), Utils.stream(""), 0}
+    {state, Utils.stream(output), Utils.stream(""), 0}
   end
 
   @doc """
@@ -280,8 +300,8 @@ defmodule RShell.Builtins do
       true
   """
   @shell_true_opts :argv
-  def shell_true(_argv, _stdin, context) do
-    {context, Utils.stream(""), Utils.stream(""), 0}
+  def shell_true(_argv, _stdin, state) do
+    {state, Utils.stream(""), Utils.stream(""), 0}
   end
 
   @doc """
@@ -295,8 +315,8 @@ defmodule RShell.Builtins do
       false
   """
   @shell_false_opts :argv
-  def shell_false(_argv, _stdin, context) do
-    {context, Utils.stream(""), Utils.stream(""), 1}
+  def shell_false(_argv, _stdin, state) do
+    {state, Utils.stream(""), Utils.stream(""), 1}
   end
 
   @doc """
@@ -310,8 +330,8 @@ defmodule RShell.Builtins do
       pwd
   """
   @shell_pwd_opts :argv
-  def shell_pwd(_argv, _stdin, context) do
-    {context, Utils.stream(context.cwd <> "\n"), Utils.stream(""), 0}
+  def shell_pwd(_argv, _stdin, state) do
+    {state, Utils.stream(state.context.cwd <> "\n"), Utils.stream(""), 0}
   end
 
   @doc """
@@ -341,31 +361,32 @@ defmodule RShell.Builtins do
       cd -P /path/with/symlink
   """
   @shell_cd_opts :parsed
-  def shell_cd(%ParseError{reason: reason}, _stdin, context) do
+  def shell_cd(%ParseError{reason: reason}, _stdin, state) do
     help_text = get_builtin_help("cd")
     stderr = "cd: #{reason}\n\n#{help_text}"
-    {context, Utils.stream(""), Utils.stream(stderr), 1}
+    {state, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
-  def shell_cd(%ParsedOptions{} = opts, _stdin, context) do
+  def shell_cd(%ParsedOptions{} = opts, _stdin, state) do
     args = opts.arguments
 
     target_dir =
       case args do
         [] ->
           # No argument - try to go to HOME
-          Map.get(context.env || %{}, "HOME", context.cwd)
+          Map.get(state.context.env || %{}, "HOME", state.context.cwd)
 
         [dir | _] ->
           # Physical mode is a hint for future implementation
           # Currently we always use Path.expand which resolves symlinks
           _physical = opts.options.physical
-          resolve_path(dir, context.cwd)
+          resolve_path(dir, state.context.cwd)
       end
 
     # Always update context (no mode check - just execute)
-    new_context = %{context | cwd: target_dir}
-    {new_context, Utils.stream(""), Utils.stream(""), 0}
+    new_context = %{state.context | cwd: target_dir}
+    new_state = %{state | context: new_context}
+    {new_state, Utils.stream(""), Utils.stream(""), 0}
   end
 
   # Resolve a path relative to the current working directory
@@ -407,29 +428,29 @@ defmodule RShell.Builtins do
       man math:add         # Show help for math:add
   """
   @shell_man_opts :parsed
-  def shell_man(%ParseError{reason: reason}, _stdin, context) do
+  def shell_man(%ParseError{reason: reason}, _stdin, state) do
     help_text = get_builtin_help("man")
     stderr = "man: #{reason}\n\n#{help_text}"
-    {context, Utils.stream(""), Utils.stream(stderr), 1}
+    {state, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
-  def shell_man(%ParsedOptions{} = opts, _stdin, context) do
+  def shell_man(%ParsedOptions{} = opts, _stdin, state) do
     args = opts.arguments
 
     cond do
       opts.options.all || length(args) == 0 ->
         # List all builtins organized by namespace
         output = format_builtin_list()
-        {context, Utils.stream(output), Utils.stream(""), 0}
+        {state, Utils.stream(output), Utils.stream(""), 0}
 
       true ->
         [command_name | _] = args
 
         if is_builtin?(command_name) do
           help_text = get_builtin_help(command_name)
-          {context, Utils.stream(help_text <> "\n"), Utils.stream(""), 0}
+          {state, Utils.stream(help_text <> "\n"), Utils.stream(""), 0}
         else
-          {context, Utils.stream(""), Utils.stream("man: no manual entry for #{command_name}\n"), 1}
+          {state, Utils.stream(""), Utils.stream("man: no manual entry for #{command_name}\n"), 1}
         end
     end
   end
@@ -459,7 +480,9 @@ defmodule RShell.Builtins do
       env CONFIG                       # Show CONFIG (pretty-printed if JSON)
   """
   @shell_env_opts :argv
-  def shell_env(argv, _stdin, context) do
+  def shell_env(argv, _stdin, state) do
+    context = state.context
+
     cond do
       # No arguments - list all
       length(argv) == 0 ->
@@ -475,7 +498,7 @@ defmodule RShell.Builtins do
           |> Enum.join("\n")
 
         output = if output == "", do: "", else: output <> "\n"
-        {context, Utils.stream(output), Utils.stream(""), 0}
+        {state, Utils.stream(output), Utils.stream(""), 0}
 
       # Has arguments - check if they're assignments or lookups
       true ->
@@ -503,6 +526,8 @@ defmodule RShell.Builtins do
             context
           end
 
+        new_state = %{state | context: new_context}
+
         # Process lookups
         if length(lookups) > 0 do
           env = new_context.env || %{}
@@ -524,10 +549,10 @@ defmodule RShell.Builtins do
               ""
             end
 
-          {new_context, Utils.stream(output), Utils.stream(""), 0}
+          {new_state, Utils.stream(output), Utils.stream(""), 0}
         else
           # Only assignments, no output
-          {new_context, Utils.stream(""), Utils.stream(""), 0}
+          {new_state, Utils.stream(""), Utils.stream(""), 0}
         end
     end
   end
@@ -569,13 +594,13 @@ defmodule RShell.Builtins do
       inspect DATA                 # Shows: :map, %{"x" => 1, "y" => 2}
   """
   @shell_inspect_opts :argv
-  def shell_inspect([], _stdin, context) do
+  def shell_inspect([], _stdin, state) do
     stderr = "inspect: missing variable name\nUsage: inspect [NAME]...\n"
-    {context, Utils.stream(""), Utils.stream(stderr), 1}
+    {state, Utils.stream(""), Utils.stream(stderr), 1}
   end
 
-  def shell_inspect(argv, _stdin, context) do
-    env = context.env || %{}
+  def shell_inspect(argv, _stdin, state) do
+    env = state.context.env || %{}
 
     output =
       argv
@@ -624,7 +649,7 @@ defmodule RShell.Builtins do
       end)
       |> Enum.join("\n")
 
-    {context, Utils.stream(output), Utils.stream(""), 0}
+    {state, Utils.stream(output), Utils.stream(""), 0}
   end
 
   @doc """
@@ -665,28 +690,28 @@ defmodule RShell.Builtins do
       test $CONFIG["db"]["port"] -eq 5432
   """
   @shell_test_opts :argv
-  def shell_test([], _stdin, context) do
+  def shell_test([], _stdin, state) do
     # No arguments - return false
-    {context, Utils.stream(""), Utils.stream(""), 1}
+    {state, Utils.stream(""), Utils.stream(""), 1}
   end
 
-  def shell_test([arg], _stdin, context) do
+  def shell_test([arg], _stdin, state) do
     # Single argument - check if truthy
     result = is_truthy?(arg)
     exit_code = if result, do: 0, else: 1
-    {context, Utils.stream(""), Utils.stream(""), exit_code}
+    {state, Utils.stream(""), Utils.stream(""), exit_code}
   end
 
-  def shell_test([left, op, right], _stdin, context) do
+  def shell_test([left, op, right], _stdin, state) do
     # Three arguments - binary comparison
-    result = evaluate_comparison(left, op, right, context)
+    result = evaluate_comparison(left, op, right, state.context)
     exit_code = if result, do: 0, else: 1
-    {context, Utils.stream(""), Utils.stream(""), exit_code}
+    {state, Utils.stream(""), Utils.stream(""), exit_code}
   end
 
-  def shell_test(_argv, _stdin, context) do
+  def shell_test(_argv, _stdin, state) do
     # Other arities - not supported yet
-    {context, Utils.stream(""), Utils.stream("test: unsupported expression\n"), 1}
+    {state, Utils.stream(""), Utils.stream("test: unsupported expression\n"), 1}
   end
 
   defp is_truthy?(nil), do: false

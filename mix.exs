@@ -7,7 +7,10 @@ defmodule RShell.MixProject do
       version: "0.1.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      # Exclude helper files from test pattern to suppress warnings
+      test_pattern: "*_test.exs",
+      test_ignore_filters: ["test/support/*", "test/test_helpers/*"]
     ]
   end
 
@@ -26,7 +29,8 @@ defmodule RShell.MixProject do
       {:rustler_precompiled, "~> 0.7.0"},
       {:jason, "~> 1.4"},
       {:phoenix_pubsub, "~> 2.1"},
-      {:warpath, "~> 0.6"}
+      {:warpath, "~> 0.6"},
+      {:ex_readline, "~> 0.1.0"}
     ]
   end
 end

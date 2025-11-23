@@ -118,24 +118,39 @@ defmodule RShell.CLI.Executor do
     executable_nodes = find_executable_nodes(ast)
 
     # Execute each node synchronously
-    Enum.reduce(executable_nodes, nil, fn node, _acc ->
+    # CRITICAL: Return the LAST result, but keep executing all nodes
+    # (Previous bug: ignored accumulator, so last result was always returned)
+    Enum.reduce(executable_nodes, nil, fn node, _prev_result ->
       case Runtime.execute_node(runtime_pid, node) do
         {:ok, context} ->
-          # Build execution result from context
-          %{
+          # Get frame_stack from runtime to access output
+          runtime_state = :sys.get_state(runtime_pid)
+          frame_output = RShell.Runtime.FrameStack.get_output(runtime_state.frame_stack)
+
+          # Build execution result from context and frame_stack
+          result = %{
             status: :success,
             node: node,
             node_type: ASTUtils.node_type(node),
             node_text: ASTUtils.node_text(node),
             node_line: ASTUtils.node_line(node),
             exit_code: context.exit_code,
-            stdout: context.last_output.stdout,
-            stderr: context.last_output.stderr,
+            stdout: frame_output.stdout,
+            stderr: frame_output.stderr,
             context: context,
             # Already tracked in exec_metrics
             duration_us: 0,
             timestamp: DateTime.utc_now()
           }
+
+          # Clear FrameStack after materializing in :isolate mode
+          # This prevents output leakage to the next command
+          if RShell.Runtime.FrameStack.output_mode(runtime_state.frame_stack) == :isolate do
+            cleared_stack = RShell.Runtime.FrameStack.clear_output(runtime_state.frame_stack)
+            :sys.replace_state(runtime_pid, fn state -> %{state | frame_stack: cleared_stack} end)
+          end
+
+          result
 
         {:error, reason} ->
           # Execution failed
@@ -170,9 +185,10 @@ defmodule RShell.CLI.Executor do
     {context.exit_code, [], [], context}
   end
 
-  defp extract_execution_data(result, runtime_pid) do
-    context = Runtime.get_context(runtime_pid)
-    exit_code = Map.get(result, :exit_code, context.exit_code)
+  defp extract_execution_data(result, _runtime_pid) do
+    # Use context from execution_result - it already has correct exit_code
+    context = Map.get(result, :context)
+    exit_code = Map.get(result, :exit_code, 0)
     stdout = Map.get(result, :stdout, [])
     stderr = Map.get(result, :stderr, [])
     {exit_code, stdout, stderr, context}

@@ -6,7 +6,6 @@ defmodule RShell.Runtime.ExecutionPipeline do
   for all execution and broadcasting logic.
   """
 
-  alias BashParser.AST.Types
   alias RShell.PubSub
 
   defstruct [
@@ -38,9 +37,14 @@ defmodule RShell.Runtime.ExecutionPipeline do
 
   # Execute the node, capturing success or error
   defp run_execution(%{node: node, context: ctx, session_id: sid} = pipeline) do
+    require Logger
     try do
       # Delegate to actual execution logic (imported from Runtime module)
       new_context = RShell.Runtime.do_execute_node(node, ctx, sid)
+
+      # DEBUG: Log what do_execute_node returned
+      Logger.debug("ExecutionPipeline.run_execution: do_execute_node returned context.exit_code=#{new_context.exit_code}")
+
       %{pipeline | result: {:ok, new_context}}
     rescue
       e ->
@@ -54,21 +58,16 @@ defmodule RShell.Runtime.ExecutionPipeline do
     %{pipeline | duration: duration}
   end
 
-  # Broadcast execution result if needed (Commands and VariableAssignments only)
+  # Broadcast execution result for ALL executable nodes
+  # This ensures control flow nodes (if/for/while) propagate accumulated output
   defp broadcast_if_needed(pipeline) do
-    case {pipeline.node, pipeline.result} do
-      {%Types.Command{}, {:ok, ctx}} ->
+    case pipeline.result do
+      {:ok, ctx} ->
+        # Broadcast for any successful execution
         broadcast_success(pipeline, ctx)
 
-      {%Types.VariableAssignment{}, {:ok, ctx}} ->
-        broadcast_success(pipeline, ctx)
-
-      {_, {:error, error}} ->
+      {:error, error} ->
         broadcast_failure(pipeline, error)
-
-      _ ->
-        # Control flow nodes don't broadcast - their internal commands do
-        :ok
     end
 
     pipeline
@@ -79,6 +78,8 @@ defmodule RShell.Runtime.ExecutionPipeline do
   defp extract_context(%{context: ctx}), do: ctx
 
   # Broadcast successful execution
+  # NOTE: Output is now in FrameStack, not context.last_output
+  # But for now, we'll broadcast empty arrays since we don't have access to ExecutionState here
   defp broadcast_success(pipeline, new_context) do
     result = %{
       status: :success,
@@ -87,8 +88,8 @@ defmodule RShell.Runtime.ExecutionPipeline do
       node_text: get_node_text(pipeline.node),
       node_line: get_node_line(pipeline.node),
       exit_code: new_context.exit_code,
-      stdout: new_context.last_output.stdout,
-      stderr: new_context.last_output.stderr,
+      stdout: [],  # Output is in FrameStack, not accessible here
+      stderr: [],  # Output is in FrameStack, not accessible here
       context: %{
         env: new_context.env,
         cwd: new_context.cwd,

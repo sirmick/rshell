@@ -24,8 +24,8 @@
 
 **The mode is determined by how each line STARTS:**
 
-- **Expression Mode**: Line starts with `IDENTIFIER =`, `if`, `for`, `while`, `else`, `elif`
-- **Command Mode**: Everything else
+- **Expression Mode**: Line starts with `IDENTIFIER =` (or `+=`, `-=` etc), `if`, `for`, `while`, `else`, `elif`. Or in ${} while in Command Mode
+- **Command Mode**: Everything else, or in $rsh() in Expression Mode
 
 ### 2. Clear Mode Boundaries
 
@@ -36,7 +36,7 @@ SERVERS = [{'fqdn':'a.b.c', 'port':8000}]
 # Expression mode (starts with 'for')
 for S in SERVERS {
   # Expression mode (starts with assignment)
-  result = $(ssh $S.fqdn -p $S.port)
+  result = $rsh(ssh $S.fqdn -p $S.port)
   
   # Expression mode (starts with 'if')
   if (not result.success) {FAILED += S}
@@ -49,11 +49,11 @@ ssh server.com -p 8080 -c uname -a
 ### 3. Cross-Mode Features
 
 **Expression Mode → Command Mode:**
-- `$(command)` - Command substitution (bash-style)
+- `$rsh(command)` - Execute command from EXPR mode
 - Returns captured output as string or result object
 
 **Command Mode → Expression Mode:**
-- `{expression}` - Expression interpolation within commands
+- `${expression}` - Expression interpolation in CMD mode
 - Evaluates to string and injects into command
 
 ---
@@ -91,10 +91,10 @@ if (not result.success) {
   SUCCESS += S
 }
 
-# Command substitution (bash-style)
-result = $(ssh $S.fqdn -p $S.port)
-output = $(uname -a)
-hostname = $(hostname)
+# Command execution from EXPR mode
+result = $rsh(ssh $S.fqdn -p $S.port)
+output = $rsh(uname -a)
+hostname = $rsh(hostname)
 ```
 
 ### Command Mode Triggers
@@ -108,9 +108,9 @@ echo Hello World
 ls -la
 
 # Commands with expression interpolation
-ssh {S.fqdn} -p {S.port} -c uname -a
-echo Server {S.fqdn} succeeded! Total: {SUCCESS.length}
-cat {filename}
+ssh ${S.fqdn} -p ${S.port} -c uname -a
+echo Server ${S.fqdn} succeeded! Total: ${SUCCESS.length}
+cat ${filename}
 ```
 
 ---
@@ -276,12 +276,12 @@ if (COUNT > 10) {
 ```bash
 # Iterate over list
 for S in SERVERS {
-  result = shell(ssh $S.fqdn -p $S.port)
+  result = $rsh(ssh $S.fqdn -p $S.port)
 }
 
 # Iterate with index (future)
 for (i, S) in enumerate(SERVERS) {
-  echo "Server {i}: {S.fqdn}"
+  echo "Server ${i}: ${S.fqdn}"
 }
 ```
 
@@ -296,35 +296,29 @@ while (COUNT < 10) {
 
 # Condition-based
 while (not ready) {
-  result = shell(check_status)
+  result = $rsh(check_status)
   ready = result.success
 }
 ```
 
-### Command Substitution with $()
+### Command Execution with $rsh()
 
-Execute commands and capture output (bash-style syntax):
+Execute commands from Expression mode and capture output:
 
 ```bash
-# Basic substitution
-hostname = $(hostname)
-files = $(ls -la)
-user = $(whoami)
+# Basic execution
+hostname = $rsh(hostname)
+files = $rsh(ls -la)
+user = $rsh(whoami)
 
-# Multiple substitutions
-user = $(whoami) and host = $(hostname)
+# Multiple executions
+user = $rsh(whoami) and host = $rsh(hostname)
 
 # In assignments
-result = $(ssh $S.fqdn -p $S.port)
-
-# In command arguments
-grep $(cat pattern.txt) logfile.txt
-
-# Nested substitution
-parent_dir = $(dirname $(pwd))
+result = $rsh(ssh $S.fqdn -p $S.port)
 
 # With result object (when assigned)
-result = $(ssh server.com uname -a)
+result = $rsh(ssh server.com uname -a)
 if (result.success) {
   echo $result.stdout
 } else {
@@ -361,38 +355,38 @@ command (stderr)> errors.txt
 command (stderr+stdout)> all_output.txt
 ```
 
-### Expression Interpolation with {}
+### Expression Interpolation with ${}
 
 Inject expression values into commands:
 
 ```bash
 # Property access
-ssh {S.fqdn} -p {S.port} -c uname -a
-cat {CONFIG.logfile}
-mkdir {BASE_PATH}/subdir
+ssh ${S.fqdn} -p ${S.port} -c uname -a
+cat ${CONFIG.logfile}
+mkdir ${BASE_PATH}/subdir
 
 # String expressions
-echo Server {S.fqdn} succeeded!
-echo Total successful: {SUCCESS.length}
-curl https://{HOST}:{PORT}/api
+echo Server ${S.fqdn} succeeded!
+echo Total successful: ${SUCCESS.length}
+curl https://${HOST}:${PORT}/api
 
 # Complex expressions
-echo Processing item {i+1} of {ITEMS.length}
-ssh {SERVERS[0].fqdn} whoami
+echo Processing item ${i+1} of ${ITEMS.length}
+ssh ${SERVERS[0].fqdn} whoami
 ```
 
-### Command Substitution with $()
+### Variable References in Commands
 
-Use command output as arguments:
+Use variables in command mode:
 
 ```bash
-# Basic substitution in CMD mode
-echo $(whoami)
-grep $(cat pattern.txt) file.log
+# Standard variable reference
+echo $USER
+cat $FILENAME
 
-# Combined with other features
-ssh $(hostname) -p {CONFIG.port}
-cat $(find . -name "*.txt" | head -1)
+# Expression interpolation
+echo ${S.fqdn}
+ssh ${S.fqdn} -p ${S.port}
 ```
 
 ### Variable References
@@ -403,9 +397,9 @@ echo $NAME
 ssh $HOST -p $PORT
 cat $FILENAME
 
-# {} syntax for expressions
-echo {S.fqdn}
-ssh {S.fqdn} -p {S.port}
+# ${} syntax for expressions
+echo ${S.fqdn}
+ssh ${S.fqdn} -p ${S.port}
 ```
 
 ### File Redirection (Planned)
@@ -453,7 +447,7 @@ SERVERS += {'fqdn':'api1.example.com', 'port':22}
 
 # Expression mode - check each server
 for S in SERVERS {
-  result = $(ssh $S.fqdn -p $S.port echo ok)
+  result = $rsh(ssh $S.fqdn -p $S.port echo ok)
   
   if (not result.success) {
     FAILED += S
@@ -466,17 +460,17 @@ for S in SERVERS {
 # Expression mode - report successes
 for S in SUCCESS {
   # Command mode - direct command with interpolation
-  echo {S.fqdn} succeeded! Total: {SUCCESS.length} of {SERVERS.length}
+  echo ${S.fqdn} succeeded! Total: ${SUCCESS.length} of ${SERVERS.length}
   
   # Command mode - SSH command
-  ssh {S.fqdn} -p {S.port} -c uname -a
+  ssh ${S.fqdn} -p ${S.port} -c uname -a
 }
 
 # Expression mode - report failures
 if (FAILED.length > 0) {
   for S in FAILED {
     # Command mode
-    echo FAILED: {S.fqdn}
+    echo FAILED: ${S.fqdn}
   }
 }
 ```
@@ -492,8 +486,8 @@ ERROR_COUNT = 0
 WARNING_COUNT = 0
 ERRORS = []
 
-# Expression mode - read log (command substitution)
-LINES = $(cat $LOGFILE).stdout.split('\n')
+# Expression mode - read log (command execution)
+LINES = $rsh(cat $LOGFILE).stdout.split('\n')
 
 # Expression mode - process lines
 for LINE in LINES {
@@ -506,14 +500,14 @@ for LINE in LINES {
 }
 
 # Command mode - report
-echo Total errors: {ERROR_COUNT}
-echo Total warnings: {WARNING_COUNT}
+echo Total errors: ${ERROR_COUNT}
+echo Total warnings: ${WARNING_COUNT}
 
 # Expression mode - show details
 if (ERROR_COUNT > 0) {
   for ERR in ERRORS {
     # Command mode
-    echo ERROR: {ERR}
+    echo ERROR: ${ERR}
   }
 }
 ```
@@ -535,31 +529,31 @@ SERVERS = [
 # Expression mode - deploy to each server
 for S in SERVERS {
   # Command mode - show progress
-  echo Deploying {VERSION} to {S.fqdn} ({S.role})
+  echo Deploying ${VERSION} to ${S.fqdn} (${S.role})
   
   # Expression mode - copy files
-  result = $(rsync -avz ./dist/ {S.fqdn}:/app/)
+  result = $rsh(rsync -avz ./dist/ ${S.fqdn}:/app/)
   
   if (not result.success) {
     # Command mode
-    echo FAILED to copy files to {S.fqdn}
+    echo FAILED to copy files to ${S.fqdn}
     continue
   }
   
   # Expression mode - restart service
-  restart_result = $(ssh {S.fqdn} systemctl restart app)
+  restart_result = $rsh(ssh ${S.fqdn} systemctl restart app)
   
   if (restart_result.success) {
     # Command mode
-    echo SUCCESS: {S.fqdn} deployed and restarted
+    echo SUCCESS: ${S.fqdn} deployed and restarted
   } else {
     # Command mode
-    echo FAILED: {S.fqdn} restart failed
+    echo FAILED: ${S.fqdn} restart failed
   }
 }
 
 # Command mode - final message
-echo Deployment complete for version {VERSION}
+echo Deployment complete for version ${VERSION}
 ```
 
 ---
@@ -621,28 +615,27 @@ for S in SERVERS {
 
 ### Phase 3: Cross-Mode Features (Completed)
 
-**Goal**: Command substitution and interpolation
+**Goal**: Command execution and interpolation
 
 **Grammar Features**:
-- `$(command)` substitution (bash-style, replaces shell())
-- `{expression}` interpolation in command mode
+- `$rsh(command)` - Execute command from EXPR mode
+- `${expression}` - Interpolation in CMD mode
 - Path literals: `/bin/ls`, `./script.sh`
 - Result object (`.success`, `.stdout`, `.stderr`, `.exit_code`)
 
 **Completed Features**:
-- ✅ $() command substitution
-- ✅ {} interpolation in commands
+- ✅ $rsh() command execution
+- ✅ ${} interpolation in commands
 - ✅ Path literal support
 - ✅ Property access
 - ✅ Result objects
 
 **Test Cases**:
 ```bash
-result = $(ls -la)
-echo Status: {result.exit_code}
-ssh {S.fqdn} -p {S.port} whoami
-user = $(whoami) and host = $(hostname)
-grep $(cat pattern.txt) file.log
+result = $rsh(ls -la)
+echo Status: ${result.exit_code}
+ssh ${S.fqdn} -p ${S.port} whoami
+user = $rsh(whoami) and host = $rsh(hostname)
 ```
 
 ### Phase 4: Redirection & Command Chaining (Planned)
@@ -671,8 +664,8 @@ test -f file && echo "exists" || echo "not found"
 ### Key Rules
 
 1. **Start-of-line detection** determines mode
-   - `IDENTIFIER =` → Expression mode
-   - `if`/`for`/`while`/`elif`/`else` → Expression mode  
+   - `IDENTIFIER =`, `IDENTIFIER +=`, `IDENTIFIER -=` → Expression mode
+   - `if`/`for`/`while`/`elif`/`else` → Expression mode
    - Everything else → Command mode
 
 2. **No mode keywords needed**
@@ -680,8 +673,9 @@ test -f file && echo "exists" || echo "not found"
    - Natural, readable syntax
 
 3. **Clear interpolation syntax**
-   - Expression mode: `$(command)` for command substitution
-   - Command mode: `{expr}` for expression injection
+   - Expression mode: `$rsh(command)` for command execution
+   - Command mode: `${expr}` for expression interpolation
+   - Scanner tracks context with brace/bracket counting
 
 ### Development Tips
 
@@ -705,8 +699,8 @@ test -f file && echo "exists" || echo "not found"
    - While loops
 
 4. **Finally cross-mode features**
-   - `$()` command substitution
-   - `{}` interpolation
+   - `$rsh()` command execution from EXPR mode
+   - `${}` interpolation in CMD mode
    - Result objects
    - Path literals
 
@@ -718,7 +712,7 @@ test -f file && echo "exists" || echo "not found"
 |-------|----------|--------|-------------|
 | 1 | 1 week | ✅ Complete | Mode switching + data structures |
 | 2 | 1 week | ✅ Complete | Automatic mode detection + control flow + expressions |
-| 3 | 1 week | ✅ Complete | $() substitution + {} interpolation + path literals |
+| 3 | 1 week | ✅ Complete | $rsh() execution + ${} interpolation + path literals |
 | 4 | 1 week | 📋 Planned | File redirection + command chaining |
 | **Total** | **4 weeks** | **Phase 3** | **Core RShell syntax complete** |
 
@@ -740,7 +734,7 @@ See [`PHASE_2_MODE_DETECTION_COMPLETE.md`](PHASE_2_MODE_DETECTION_COMPLETE.md) f
 
 ---
 
-**Last Updated**: 2025-11-17
-**Current Phase**: Phase 3 Complete - Command substitution with $() syntax
-**Completed**: All core syntax features including $() substitution, {} interpolation, and path literals
+**Last Updated**: 2025-11-18
+**Current Phase**: Phase 3 Complete - Command execution with $rsh() syntax
+**Completed**: All core syntax features including $rsh() execution, ${} interpolation, and path literals
 **Next**: Phase 4 - File redirection with explicit syntax: `(stderr)>`, `(stderr+stdout)>`

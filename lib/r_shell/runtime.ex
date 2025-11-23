@@ -26,7 +26,10 @@ defmodule RShell.Runtime do
 
   alias RShell.PubSub
   alias RShell.Builtins
-  alias BashParser.AST.Types
+  alias RShell.ExprEvaluator
+  alias RShell.Runtime.FrameStack
+  alias RShell.Runtime.ExecutionState
+  alias BashParser.AST.RShellTypes, as: Types
 
   # Default variable attributes (reserved for future use)
   # @default_attributes %{
@@ -108,10 +111,14 @@ defmodule RShell.Runtime do
       env_meta: %{},
       cwd: cwd,
       exit_code: 0,
-      command_count: 0,
-      # Only current command output (lists of native terms)
-      last_output: %{stdout: [], stderr: []}
+      command_count: 0
     }
+
+    # NEW: Initialize frame stack alongside existing context
+    frame_stack = FrameStack.new(
+      output_mode: :isolate,
+      context: context
+    )
 
     Logger.debug("Runtime started: session_id=#{session_id}")
 
@@ -119,6 +126,10 @@ defmodule RShell.Runtime do
      %{
        session_id: session_id,
        context: context,
+       # NEW: Frame stack for future frame-based execution
+       frame_stack: frame_stack,
+       # Feature flag: false = use old context-based code (safe)
+       use_frames: false,
        # Store for reset
        initial_env: env,
        # Store for reset
@@ -129,8 +140,17 @@ defmodule RShell.Runtime do
   @impl true
   def handle_call({:execute_node, node}, _from, state) do
     try do
-      {result, new_context} = execute_node_internal(node, state.context, state.session_id)
-      {:reply, result, %{state | context: new_context}}
+      # Create ExecutionState from runtime state
+      exec_state = ExecutionState.from_runtime_state(state)
+
+      # Execute with new state
+      new_exec_state = execute_node_internal(node, exec_state)
+
+      # Extract updates and apply to runtime state
+      updates = ExecutionState.to_runtime_updates(new_exec_state)
+      new_state = Map.merge(state, updates)
+
+      {:reply, {:ok, new_exec_state.context}, new_state}
     rescue
       e ->
         # Broadcast failure publicly (same as handle_info)
@@ -185,9 +205,14 @@ defmodule RShell.Runtime do
       env_meta: %{},
       cwd: state.initial_cwd,
       exit_code: 0,
-      command_count: 0,
-      last_output: %{stdout: [], stderr: []}
+      command_count: 0
     }
+
+    # NEW: Reinitialize frame stack on reset
+    new_frame_stack = FrameStack.new(
+      output_mode: :isolate,
+      context: new_context
+    )
 
     # Broadcast reset event
     PubSub.broadcast(
@@ -201,38 +226,111 @@ defmodule RShell.Runtime do
        }}
     )
 
-    {:reply, :ok, %{state | context: new_context}}
+    {:reply, :ok, %{state | context: new_context, frame_stack: new_frame_stack}}
   end
 
   # No longer handle executable nodes asynchronously - execution is now synchronous via execute_node/2
 
   # Private Helpers
 
-  defp execute_node_internal(node, context, session_id) do
-    # Use ExecutionPipeline for clean execution and broadcasting
-    new_context = RShell.Runtime.ExecutionPipeline.execute(node, context, session_id)
-    {{:ok, new_context}, new_context}
+  defp execute_node_internal(node, exec_state) do
+    # Execute directly with state instead of going through ExecutionPipeline
+    # ExecutionPipeline was designed for context-only flow and doesn't preserve frame_stack
+    new_state = do_execute_node_with_state(node, exec_state)
+
+    # Return updated execution state
+    new_state
   end
 
   # Execute AST nodes (exported for ExecutionPipeline)
+  # Legacy version for ExecutionPipeline compatibility
   def do_execute_node(node, context, session_id) do
-    new_context = %{context | command_count: context.command_count + 1}
+    exec_state = %ExecutionState{
+      context: context,
+      frame_stack: FrameStack.new(output_mode: :isolate, context: context),
+      session_id: session_id
+    }
+    new_state = do_execute_node_with_state(node, exec_state)
+    new_state.context
+  end
 
+  # New version: Execute AST nodes with ExecutionState
+  defp do_execute_node_with_state(node, state) do
     case node do
-      %Types.Command{} = cmd ->
-        execute_command(cmd, new_context, session_id)
+      # RShell wraps commands in CmdLine nodes - extract the inner command/pipeline/list
+      %Types.CmdLine{children: [inner_node | _]} ->
+        # Transparent pass-through - don't increment command_count for wrapper
+        do_execute_node_with_state(inner_node, state)
 
-      %Types.VariableAssignment{} = assignment ->
-        execute_variable_assignment(assignment, new_context, session_id)
+      # RShell wraps expressions in ExprLine nodes - extract the inner assignment/expression
+      %Types.ExprLine{children: children} = expr_line ->
+        require Logger
+        Logger.debug("ExprLine unwrapping: #{length(children)} children")
+        if children == [] do
+          Logger.debug("  ExprLine has EMPTY children!")
+          Logger.debug("  ExprLine source_info: #{inspect(expr_line.source_info)}")
+        end
+        Enum.each(children, fn child ->
+          Logger.debug("  child: #{inspect(child.__struct__)}")
+        end)
+        # Find the actual executable node (skip newlines and other wrappers)
+        inner_node = Enum.find(children, fn child ->
+          case child do
+            %Types.Newline{} -> false
+            %Types.CmdLine{} -> true
+            %Types.Command{} -> true
+            %Types.Assignment{} -> true
+            %Types.IfStatement{} -> true
+            %Types.ForStatement{} -> true
+            %Types.WhileStatement{} -> true
+            _ -> true  # Default to trying to execute
+          end
+        end)
+
+        case inner_node do
+          nil ->
+            Logger.debug("ExprLine: no executable child found, returning state unchanged")
+            state
+          node ->
+            Logger.debug("ExprLine: executing #{inspect(node.__struct__)}")
+            do_execute_node_with_state(node, state)
+        end
+
+      # RShell wraps control flow in ControlFlow nodes - extract the inner statement
+      %Types.ControlFlow{children: [inner_node | _]} ->
+        # Transparent pass-through - don't increment command_count for wrapper
+        do_execute_node_with_state(inner_node, state)
+
+      # Increment command_count first, then execute and preserve result state
+      %Types.Command{} = cmd ->
+        incremented_context = increment_command_count(state.context)
+        incremented_state = %{state | context: incremented_context}
+        execute_command(cmd, incremented_state)
+
+      %Types.Pipeline{} = _pipeline ->
+        # TODO: Implement pipeline execution
+        raise "Pipeline execution not yet implemented"
+
+      %Types.Assignment{} = assignment ->
+        # Assignments don't increment command_count
+        new_context = execute_rshell_assignment(assignment, state.context, state.session_id)
+        %{state | context: new_context}
 
       %Types.IfStatement{} = stmt ->
-        execute_if_statement(stmt, new_context, session_id)
+        # RShell if statement execution
+        execute_if_statement(stmt, state)
 
       %Types.ForStatement{} = stmt ->
-        execute_for_statement(stmt, new_context, session_id)
+        # RShell for loop execution
+        execute_for_statement(stmt, state)
 
       %Types.WhileStatement{} = stmt ->
-        execute_while_statement(stmt, new_context, session_id)
+        # RShell while loop execution
+        execute_while_statement(stmt, state)
+
+      %Types.Newline{} ->
+        # Newlines are not executable - just return state unchanged
+        state
 
       other ->
         node_type = other.__struct__ |> Module.split() |> List.last()
@@ -240,84 +338,44 @@ defmodule RShell.Runtime do
     end
   end
 
-  # Legacy name for internal use
-  defp simple_execute(node, context, session_id) do
-    do_execute_node(node, context, session_id)
+  # Helper: Increment command count
+  defp increment_command_count(context) do
+    %{context | command_count: context.command_count + 1}
   end
 
-  defp execute_command(%Types.Command{source_info: source_info} = cmd, context, session_id) do
+  # State-based execution helper
+  # ALL execution functions follow this pattern: take ExecutionState, return ExecutionState
+  @spec simple_execute_with_state(Types.t(), ExecutionState.t()) :: ExecutionState.t()
+  defp simple_execute_with_state(node, state) do
+    do_execute_node_with_state(node, state)
+  end
+
+  @spec execute_command(Types.Command.t(), ExecutionState.t()) :: ExecutionState.t()
+  defp execute_command(%Types.Command{source_info: source_info} = cmd, state) do
     text = source_info.text || ""
 
     # Extract command name and arguments with context for variable expansion
-    case extract_command_parts(cmd, context) do
+    case extract_command_parts(cmd, state.context) do
       {:ok, command_name, args} ->
         # Check if it's a builtin command
         if Builtins.is_builtin?(command_name) do
-          # Pass native args directly to builtins
-          execute_builtin(command_name, args, "", context, session_id)
+          # Pass native args directly to builtins (returns updated state)
+          execute_builtin(command_name, args, "", state)
         else
           # For external commands, convert native values to JSON
           _json_args = Enum.map(args, &convert_to_string/1)
           # TODO: Use json_args when implementing external command execution
           # Execute as external command
-          execute_external_command(text, context, session_id)
+          new_context = execute_external_command(text, state.context, state.session_id)
+          %{state | context: new_context}
         end
 
       {:error, _reason} ->
         # Couldn't parse command, fall back to text-based execution
-        execute_external_command(text, context, session_id)
+        new_context = execute_external_command(text, state.context, state.session_id)
+        %{state | context: new_context}
     end
   end
-
-  # Execute variable assignment: X=value
-  defp execute_variable_assignment(
-         %Types.VariableAssignment{name: name_node, value: value_node},
-         context,
-         _session_id
-       ) do
-    # Extract variable name
-    var_name =
-      case name_node do
-        %Types.VariableName{source_info: %{text: text}} -> text
-        _ -> ""
-      end
-
-    # Extract value - may be string or native type from variable expansion
-    value_result = extract_value_text(value_node, context)
-
-    # If already a native type (from $VAR expansion), use directly
-    # Otherwise parse as JSON/string
-    parsed_value =
-      if is_binary(value_result) do
-        case RShell.EnvJSON.parse(value_result) do
-          {:ok, parsed} -> parsed
-          # Not JSON, keep as string
-          {:error, _} -> value_result
-        end
-      else
-        # Already a native type from variable expansion
-        value_result
-      end
-
-    # Update environment
-    new_env = Map.put(context.env, var_name, parsed_value)
-    # Variable assignments produce NO output - clear last_output
-    %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
-  end
-
-  # Extract value text with smart JSON/expansion detection
-  defp extract_value_text(%{source_info: %{text: text}} = node, context)
-       when is_binary(text) and text != "" do
-    # If it looks like JSON (starts with { or [), preserve raw text for parsing
-    if String.starts_with?(text, "{") or String.starts_with?(text, "[") do
-      text
-    else
-      # Otherwise, extract with context for variable expansion
-      extract_text_from_node(node, context)
-    end
-  end
-
-  defp extract_value_text(node, context), do: extract_text_from_node(node, context)
 
   # Convert native values to strings for external commands
   defp convert_to_string(value) when is_binary(value), do: value
@@ -339,25 +397,37 @@ defmodule RShell.Runtime do
   defp convert_to_string(nil), do: ""
   defp convert_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
 
-  # Execute a builtin command
-  defp execute_builtin(name, args, stdin, context, session_id) do
-    case Builtins.execute(name, args, stdin, context) do
-      {new_context, stdout, stderr, exit_code} ->
-        # Materialize output if it's a stream (preserves native types!)
-        stdout_list = materialize_output(stdout)
-        stderr_list = materialize_output(stderr)
+  # Execute a builtin command - now returns ExecutionState with frame_stack updated
+  defp execute_builtin(name, args, stdin, state) do
+    alias RShell.BuiltinResult
 
-        # Store ONLY in last_output (no accumulated output/errors)
-        %{
-          new_context
-          | exit_code: exit_code,
-            last_output: %{stdout: stdout_list, stderr: stderr_list}
-        }
+    case Builtins.execute(name, args, stdin, state) do
+      {new_context, stdout, stderr, exit_code} when is_map(new_context) and not is_struct(new_context) ->
+        # Backward compat: context returned
+        result = BuiltinResult.new(new_context, stdout, stderr, exit_code)
+        {updated_context, stdout_list, stderr_list} = BuiltinResult.materialize_and_update(result)
+
+        # Add output to FrameStack
+        updated_stack = FrameStack.add_output(state.frame_stack, stdout_list, stderr_list)
+
+        # Return updated state
+        %{state | context: updated_context, frame_stack: updated_stack}
+
+      {%ExecutionState{} = new_state, stdout, stderr, exit_code} ->
+        # New: ExecutionState returned
+        result = BuiltinResult.new(new_state.context, stdout, stderr, exit_code)
+        {updated_context, stdout_list, stderr_list} = BuiltinResult.materialize_and_update(result)
+
+        # Add output to FrameStack from new_state
+        updated_stack = FrameStack.add_output(new_state.frame_stack, stdout_list, stderr_list)
+
+        # Return updated state with both context and frame_stack
+        %{new_state | context: updated_context, frame_stack: updated_stack}
 
       {:error, :not_a_builtin} ->
         # Should not happen since we checked is_builtin?, but handle gracefully
         Logger.warning("Builtin '#{name}' not found despite passing is_builtin? check")
-        execute_external_command("#{name} #{Enum.join(args, " ")}", context, session_id)
+        raise "External command execution not yet implemented"
     end
   end
 
@@ -376,12 +446,46 @@ defmodule RShell.Runtime do
     end
   end
 
+  # Execute RShell-style assignment: X = value
+  # Uses ExprEvaluator to convert AST directly to native Elixir types (NO JSON!)
+  defp execute_rshell_assignment(
+         %Types.Assignment{name: name_node, value: value_node},
+         context,
+         session_id
+       ) do
+    # Extract variable name from identifier
+    var_name =
+      case name_node do
+        %Types.Identifier{source_info: %{text: text}} -> text
+        %{source_info: %{text: text}} -> text
+        _ -> ""
+      end
+
+    # NEW: Use ExprEvaluator to convert AST to native value
+    native_value = ExprEvaluator.evaluate(value_node, context)
+
+    # Update environment with native value
+    new_env = Map.put(context.env, var_name, native_value)
+
+    # Broadcast variable_set event
+    PubSub.broadcast(session_id, :context, {:variable_set, %{
+      name: var_name,
+      value: native_value
+    }})
+
+    # Assignments produce NO output (update env only)
+    %{context | env: new_env}
+  end
+
   # Extract command name from CommandName node by traversing children
   defp extract_command_name(%Types.CommandName{children: children}) when is_list(children) do
-    # CommandName contains Word children
+    # CommandName contains Word children - extract text from each
     name =
       children
-      |> Enum.map(&extract_text_from_node/1)
+      |> Enum.map(fn
+        %{source_info: %{text: text}} when is_binary(text) -> text
+        _ -> ""
+      end)
       |> Enum.join("")
 
     {:ok, name}
@@ -397,191 +501,87 @@ defmodule RShell.Runtime do
 
   defp extract_command_name(_), do: {:error, :unknown_name_type}
 
-  # Extract arguments from argument nodes with context for variable expansion
+  # Extract arguments from argument nodes with context for variable/expression expansion
+  # Returns NATIVE values (not strings!) to preserve types
   defp extract_arguments(nil, _context), do: {:ok, []}
   defp extract_arguments([], _context), do: {:ok, []}
 
   defp extract_arguments(args_nodes, context) when is_list(args_nodes) do
     args =
       args_nodes
-      |> Enum.map(&extract_text_from_node(&1, context))
-      |> Enum.reject(&(&1 == ""))
+      |> Enum.map(&extract_argument_value(&1, context))
+      |> Enum.reject(&is_nil/1)
 
     {:ok, args}
   end
 
-  # Extract text from any node by traversing the typed structure
-  # All 2-arity versions (with context) grouped together
-  defp extract_text_from_node(%Types.String{children: children}, context)
-       when is_list(children) do
-    # For String nodes, extract the content inside the quotes
-    # This allows JSON values like '{"x":1}' to be parsed correctly
-    children
-    |> Enum.map(&extract_text_from_node(&1, context))
+  # Extract argument value - returns NATIVE type (not string!)
+  defp extract_argument_value(%Types.CommandArgument{children: children}, context) when is_list(children) do
+    # CommandArgument can contain multiple parts - collect and join/convert
+    parts = Enum.map(children, &extract_argument_value(&1, context))
+
+    # Filter out nils and convert to strings for joining
+    non_nil_parts = Enum.reject(parts, &is_nil/1)
+
+    case non_nil_parts do
+      [] -> ""
+      [single] -> convert_to_string(single)
+      multiple ->
+        # Convert all parts to strings and join
+        multiple
+        |> Enum.map(&convert_to_string/1)
+        |> Enum.join("")
+    end
+  end
+
+  # Variable reference: Look up native value in context and convert to string
+  defp extract_argument_value(%Types.VariableReference{children: [identifier | _]}, context) do
+    var_name = case identifier do
+      %Types.Identifier{source_info: %{text: text}} -> text
+      %{source_info: %{text: text}} -> text
+      _ -> ""
+    end
+
+    # Look up value and convert to string (echo needs strings)
+    value = Map.get(context.env, var_name, "")
+    convert_to_string(value)
+  end
+
+  # Expression interpolation: Evaluate expression and convert to string
+  defp extract_argument_value(%Types.ExprInterpolation{children: [expr | _]}, context) do
+    # Use ExprEvaluator to get native value, then convert to string
+    value = ExprEvaluator.evaluate(expr, context)
+    convert_to_string(value)
+  end
+
+  # Raw argument with children (can contain variables/interpolations)
+  defp extract_argument_value(%Types.RawArgument{children: children}, context) when is_list(children) do
+    parts = Enum.map(children, &extract_argument_value(&1, context))
+
+    # Join all parts (already converted to strings)
+    parts
+    |> Enum.reject(&is_nil/1)
     |> Enum.map(&convert_to_string/1)
     |> Enum.join("")
   end
 
-  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}}, _context)
-       when is_binary(text) do
-    # RawString nodes (single quotes in bash) preserve everything literally
-    # Strip the outer single quotes for JSON parsing: 'value' -> value
-    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and
-         String.length(text) >= 2 do
-      String.slice(text, 1..-2//-1)
-    else
-      text
-    end
-  end
+  # String literal - handle variable expansion within double-quoted strings
+  defp extract_argument_value(%Types.String{source_info: %{text: text}}, context) when is_binary(text) do
+    # Remove surrounding quotes
+    content = String.trim(text, "\"")
 
-  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}, _context),
-    do: text
-
-  defp extract_text_from_node(%Types.SimpleExpansion{children: children}, context)
-       when is_list(children) do
-    # Extract variable expression (may include bracket notation)
-    var_expr =
-      children
-      |> Enum.map(&extract_variable_name/1)
-      |> Enum.join("")
-
-    # Check if it has bracket notation: VAR["key"] or VAR[0]
-    if String.contains?(var_expr, "[") do
-      result = parse_bracket_access(var_expr, context)
-      # Return native value directly (NO string conversion for builtins!)
-      result
-    else
-      # Simple variable lookup - return native value
-      case Map.get(context.env || %{}, var_expr) do
-        nil -> ""
-        # Return native value (list, map, number, etc.)
-        value -> value
-      end
-    end
-  end
-
-  defp extract_text_from_node(%Types.VariableName{source_info: %{text: text}}, _context), do: text
-
-  defp extract_text_from_node(%Types.Word{source_info: %{text: text}}, _context), do: text
-
-  defp extract_text_from_node(%Types.Concatenation{children: children}, context)
-       when is_list(children) do
-    children
-    |> Enum.map(&extract_text_from_node(&1, context))
-    # Convert native values to strings for concatenation
-    |> Enum.map(&convert_to_string/1)
-    |> Enum.join("")
-  end
-
-  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text),
-    do: text
-
-  defp extract_text_from_node(_, _context), do: ""
-
-  # All 1-arity versions (without context) grouped together - fallbacks
-  defp extract_text_from_node(%Types.String{children: children}) when is_list(children) do
-    # For String nodes, extract the content inside the quotes
-    children
-    |> Enum.map(&extract_text_from_node/1)
-    |> Enum.join("")
-  end
-
-  defp extract_text_from_node(%Types.RawString{source_info: %{text: text}})
-       when is_binary(text) do
-    # RawString nodes (single quotes in bash) - strip outer quotes
-    if String.starts_with?(text, "'") and String.ends_with?(text, "'") and
-         String.length(text) >= 2 do
-      String.slice(text, 1..-2//-1)
-    else
-      text
-    end
-  end
-
-  defp extract_text_from_node(%Types.StringContent{source_info: %{text: text}}), do: text
-
-  defp extract_text_from_node(%Types.SimpleExpansion{children: children})
-       when is_list(children) do
-    # Return the expansion text as-is (e.g., "$VAR")
-    children
-    |> Enum.map(&extract_text_from_node/1)
-    |> Enum.join("")
-    |> then(&"$#{&1}")
-  end
-
-  defp extract_text_from_node(%Types.VariableName{source_info: %{text: text}}), do: text
-
-  defp extract_text_from_node(%Types.Word{source_info: %{text: text}}), do: text
-
-  defp extract_text_from_node(%Types.Concatenation{children: children}) when is_list(children) do
-    children
-    |> Enum.map(&extract_text_from_node/1)
-    |> Enum.join("")
-  end
-
-  defp extract_text_from_node(%{source_info: %{text: text}}) when is_binary(text), do: text
-
-  defp extract_text_from_node(_), do: ""
-
-  # Extract variable name from VariableName node (helper for variable expansion)
-  defp extract_variable_name(%Types.VariableName{source_info: %{text: text}}), do: text
-  defp extract_variable_name(_), do: ""
-
-  # =============================================================================
-  # Bracket Notation Support for Environment Variables (using Warpath JSONPath)
-  # =============================================================================
-
-  # Parse bracket notation for nested data access using JSONPath.
-  #
-  # Examples:
-  #   - SERVER["port"] -> Access map key
-  #   - SERVERS[0] -> Access list index
-  #   - CONFIG["db"]["host"] -> Nested map access
-  #   - APPS[0]["name"] -> List then map access
-  defp parse_bracket_access(expr, context) do
-    # Split variable name from bracket chain: SERVER["port"] -> ["SERVER", "["port"]"]
-    case String.split(expr, "[", parts: 2) do
-      [var_name, bracket_rest] ->
-        # Get initial value from environment
-        initial_value = Map.get(context.env || %{}, var_name)
-
-        # Convert bracket notation to JSONPath and query
-        path = bracket_to_jsonpath("[" <> bracket_rest)
-
-        case Warpath.query(initial_value, path) do
-          {:ok, [result]} -> result
-          {:ok, []} -> nil
-          _ -> nil
-        end
-
-      [var_name] ->
-        # No brackets - simple variable
-        Map.get(context.env || %{}, var_name)
-    end
-  end
-
-  # Convert bracket notation to JSONPath query string.
-  #
-  # Examples:
-  #   - ["port"] -> $.port
-  #   - [0] -> $[0]
-  #   - ["db"]["host"] -> $.db.host
-  #   - [0]["name"] -> $[0].name
-  defp bracket_to_jsonpath(bracket_str) do
-    # Extract all keys from: ["port"] or ["db"]["host"] or [0] or [0]["name"]
-    Regex.scan(~r/\[([^\]]+)\]/, bracket_str)
-    |> Enum.map(fn [_, key] ->
-      # Remove quotes if present: "port" -> port
-      clean_key = String.trim(key, "\"")
-
-      # Try parsing as integer for list/array access
-      case Integer.parse(clean_key) do
-        {int, ""} -> "[#{int}]"
-        _ -> ".#{clean_key}"
-      end
+    # Perform variable expansion: replace $VAR with context value
+    # Use regex to find $IDENTIFIER patterns
+    Regex.replace(~r/\$([A-Za-z_][A-Za-z0-9_]*)/, content, fn _, var_name ->
+      value = Map.get(context.env, var_name, "")
+      convert_to_string(value)
     end)
-    |> Enum.join("")
-    |> then(&"$#{&1}")
   end
+
+  # Simple text nodes - return as string
+  defp extract_argument_value(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
+  defp extract_argument_value(_, _context), do: ""
+
 
   # broadcast_execution_success/5 removed - no longer needed with synchronous execution
 
@@ -696,232 +696,381 @@ defmodule RShell.Runtime do
   defp get_node_line(%{source_info: %{start_line: line}}) when is_integer(line), do: line
   defp get_node_line(_), do: nil
 
-  # Materialize output - convert Stream to list of native terms
-  defp materialize_output(stream) when is_function(stream) do
-    # Return list of native terms (NO string conversion!)
-    stream |> Enum.to_list()
-  end
-
-  defp materialize_output(string) when is_binary(string) do
-    # Single string becomes list with one element
-    if string == "", do: [], else: [string]
-  end
-
-  defp materialize_output([]), do: []
-  defp materialize_output(list) when is_list(list), do: list
-  defp materialize_output(term), do: [term]
-
   # =============================================================================
   # Control Flow Helper Functions
   # =============================================================================
 
-  # Execute a list of commands sequentially, threading context through each
+  # Execute a list of commands sequentially - ExecutionState version with FrameStack
   # Broadcasts execution results for each command
-  defp execute_command_list(nodes, context, session_id) when is_list(nodes) do
-    Enum.reduce(nodes, context, fn node, acc_context ->
-      start_time = System.monotonic_time(:microsecond)
+  defp execute_command_list(nodes, state, accumulate) when is_list(nodes) do
+    if accumulate do
+      # Accumulate output in FrameStack (for loops)
+      Enum.reduce(nodes, state, fn node, acc_state ->
+        start_time = System.monotonic_time(:microsecond)
 
-      # Execute the node
-      try do
-        new_context = simple_execute(node, acc_context, session_id)
-        duration = System.monotonic_time(:microsecond) - start_time
+        # Execute the node
+        try do
+          new_state = simple_execute_with_state(node, acc_state)
+          duration = System.monotonic_time(:microsecond) - start_time
 
-        # Output is now in context.last_output (no process dictionary!)
-        broadcast_execution_success_with_output(
-          node,
-          new_context,
-          acc_context,
-          duration,
-          new_context.last_output.stdout,
-          new_context.last_output.stderr,
-          session_id
-        )
+          # Get output from FrameStack (already added by execute_builtin)
+          frame_output = FrameStack.get_output(new_state.frame_stack)
 
-        new_context
-      rescue
-        e ->
-          _duration = System.monotonic_time(:microsecond) - start_time
-
-          # Get any output that was produced before error (from context)
-          stdout = acc_context.last_output.stdout
-          stderr = acc_context.last_output.stderr
-
-          broadcast_execution_failure_with_output(
-            e,
+          # Broadcast with the command's own output
+          broadcast_execution_success_with_output(
             node,
-            stdout,
-            stderr,
-            acc_context.exit_code,
-            session_id
+            new_state.context,
+            acc_state.context,
+            duration,
+            frame_output.stdout,
+            frame_output.stderr,
+            new_state.session_id
           )
 
-          # Continue with unchanged context
-          acc_context
-      end
-    end)
-  end
+          new_state
+        rescue
+          e ->
+            _duration = System.monotonic_time(:microsecond) - start_time
 
-  defp execute_command_list(_, context, _session_id), do: context
+            # Get any output that was produced before error (from FrameStack)
+            frame_output = FrameStack.get_output(acc_state.frame_stack)
 
-  # Execute DoGroup, CompoundStatement, or single node
-  defp execute_do_group_or_node(%Types.DoGroup{children: children}, context, session_id) do
-    execute_command_list(children, context, session_id)
-  end
+            broadcast_execution_failure_with_output(
+              e,
+              node,
+              frame_output.stdout,
+              frame_output.stderr,
+              acc_state.context.exit_code,
+              acc_state.session_id
+            )
 
-  defp execute_do_group_or_node(%Types.CompoundStatement{children: children}, context, session_id) do
-    execute_command_list(children, context, session_id)
-  end
-
-  defp execute_do_group_or_node(node, context, session_id) when is_struct(node) do
-    simple_execute(node, context, session_id)
-  end
-
-  defp execute_do_group_or_node(_, context, _session_id), do: context
-
-  # Extract iteration values from for statement value nodes with native type support
-  defp extract_loop_values(nil, _context), do: []
-  defp extract_loop_values([], _context), do: []
-
-  defp extract_loop_values(value_nodes, context) when is_list(value_nodes) do
-    value_nodes
-    |> Enum.flat_map(fn node ->
-      value = extract_text_from_node(node, context)
-
-      # CRITICAL: Variable expansion preserves native types!
-      # $A where A=[1,2,3] returns [1,2,3], NOT string "[1, 2, 3]"
-      case value do
-        # Native list - iterate over elements
-        list when is_list(list) ->
-          list
-
-        # Native map - single value
-        map when is_map(map) ->
-          [map]
-
-        # String - split on whitespace (traditional bash)
-        string when is_binary(string) ->
-          String.split(string, ~r/\s+/, trim: true)
-
-        # Other native types (numbers, booleans, atoms)
-        other ->
-          [other]
-      end
-    end)
-  end
-
-  # =============================================================================
-  # Control Flow Execution Functions
-  # =============================================================================
-
-  # Execute if statement with elif/else support
-  defp execute_if_statement(
-         %Types.IfStatement{condition: condition_nodes, children: children},
-         context,
-         session_id
-       ) do
-    # Execute condition commands
-    condition_context = execute_command_list(condition_nodes, context, session_id)
-
-    if condition_context.exit_code == 0 do
-      # Condition succeeded - execute then-body (first non-elif/else child)
-      then_body =
-        Enum.reject(children, fn child ->
-          match?(%Types.ElifClause{}, child) or match?(%Types.ElseClause{}, child)
-        end)
-
-      execute_command_list(then_body, condition_context, session_id)
-    else
-      # Condition failed - try elif clauses, then else clause
-      execute_elif_else_chain(children, condition_context, session_id)
-    end
-  end
-
-  # Try elif clauses in order, then else clause
-  defp execute_elif_else_chain(children, context, session_id) do
-    # Get all elif clauses
-    elif_clauses = Enum.filter(children, &match?(%Types.ElifClause{}, &1))
-
-    # Try each elif clause
-    case try_elif_clauses(elif_clauses, context, session_id) do
-      {:executed, new_context} ->
-        new_context
-
-      :no_match ->
-        # No elif matched, try else clause
-        case Enum.find(children, &match?(%Types.ElseClause{}, &1)) do
-          %Types.ElseClause{children: else_body} ->
-            execute_command_list(else_body, context, session_id)
-
-          nil ->
-            # No else clause - return context from condition
-            context
+            # Continue with unchanged state
+            acc_state
         end
-    end
-  end
-
-  # Try elif clauses until one matches
-  defp try_elif_clauses([], _context, _session_id), do: :no_match
-
-  defp try_elif_clauses([%Types.ElifClause{children: elif_children} | rest], context, session_id) do
-    # ElifClause.children contains both condition and body commands
-    # Need to separate them (similar to IfStatement structure)
-    # The condition commands come first, then the body commands
-
-    # For now, execute all children as condition+body in sequence
-    # TODO: Properly separate condition from body based on AST structure
-    elif_context = execute_command_list(elif_children, context, session_id)
-
-    if elif_context.exit_code == 0 do
-      # This elif matched - return executed context
-      {:executed, elif_context}
+      end)
     else
-      # Try next elif
-      try_elif_clauses(rest, context, session_id)
+      # Normal mode - just thread state without special accumulation logic
+      Enum.reduce(nodes, state, fn node, acc_state ->
+        start_time = System.monotonic_time(:microsecond)
+
+        # Execute the node
+        try do
+          new_state = simple_execute_with_state(node, acc_state)
+          duration = System.monotonic_time(:microsecond) - start_time
+
+          # Get output from FrameStack
+          frame_output = FrameStack.get_output(new_state.frame_stack)
+
+          # Broadcast with output
+          broadcast_execution_success_with_output(
+            node,
+            new_state.context,
+            acc_state.context,
+            duration,
+            frame_output.stdout,
+            frame_output.stderr,
+            new_state.session_id
+          )
+
+          new_state
+        rescue
+          e ->
+            _duration = System.monotonic_time(:microsecond) - start_time
+
+            # Get any output that was produced before error (from FrameStack)
+            frame_output = FrameStack.get_output(acc_state.frame_stack)
+
+            broadcast_execution_failure_with_output(
+              e,
+              node,
+              frame_output.stdout,
+              frame_output.stderr,
+              acc_state.context.exit_code,
+              acc_state.session_id
+            )
+
+            # Continue with unchanged state
+            acc_state
+        end
+      end)
     end
   end
 
-  # Execute for statement with native type support
+  defp execute_command_list(_, state, _accumulate), do: state
+
+  # Execute body nodes - RShell uses lists of children directly - ExecutionState version
+  # accumulate: whether to accumulate output across all commands (needed for loops)
+  defp execute_body_nodes(children, state, accumulate) when is_list(children) do
+    require Logger
+    Logger.debug("execute_body_nodes: #{length(children)} children, accumulate=#{accumulate}")
+    Enum.each(children, fn child ->
+      Logger.debug("  child type: #{inspect(child.__struct__)}")
+    end)
+    result_state = execute_command_list(children, state, accumulate)
+    Logger.debug("execute_body_nodes result: command_count=#{result_state.context.command_count}")
+    result_state
+  end
+
+  defp execute_body_nodes(_, state, _accumulate), do: state
+
+  # =============================================================================
+  # Control Flow Execution Functions (RShell Implementation)
+  # =============================================================================
+
+  # Execute RShell if statement with elif/else support (ExecutionState version)
+  # RShell structure: condition is Parenthesized node, body is Block, alternative is list
+  @spec execute_if_statement(Types.IfStatement.t(), ExecutionState.t()) :: ExecutionState.t()
+  defp execute_if_statement(
+         %Types.IfStatement{condition: condition_node, body: body_node, alternative: alternatives},
+         state
+       ) do
+    require Logger
+    Logger.debug("execute_if_statement called")
+    Logger.debug("  condition_node: #{inspect(condition_node.__struct__)}")
+    Logger.debug("  body_node: #{inspect(body_node.__struct__)}")
+
+    # Evaluate condition expression (returns boolean or uses exit code)
+    condition_result = evaluate_condition(condition_node, state.context, state.session_id)
+    Logger.debug("  condition_result: #{inspect(condition_result)}")
+
+    if condition_result do
+      # Condition is true - execute then-body
+      Logger.debug("  executing if body")
+      result_state = execute_block(body_node, state, false)
+      Logger.debug("  if body executed, command_count: #{result_state.context.command_count}")
+      result_state
+    else
+      # Condition is false - try alternatives (elif/else)
+      Logger.debug("  condition false, checking alternatives")
+      execute_alternatives(alternatives, state)
+    end
+  end
+
+  # Execute elif/else alternatives (ExecutionState version)
+  defp execute_alternatives([], state) do
+    # No alternatives - return state unchanged
+    state
+  end
+
+  defp execute_alternatives([alt | rest], state) do
+    case alt do
+      %Types.ElifClause{condition: elif_cond, body: elif_body} ->
+        # Evaluate elif condition
+        if evaluate_condition(elif_cond, state.context, state.session_id) do
+          # This elif matched - execute body
+          execute_block(elif_body, state, false)
+        else
+          # Try next alternative
+          execute_alternatives(rest, state)
+        end
+
+      %Types.ElseClause{body: else_body} ->
+        # Else clause always executes
+        execute_block(else_body, state, false)
+
+      _ ->
+        # Unknown alternative type - skip and continue
+        execute_alternatives(rest, state)
+    end
+  end
+
+  # Evaluate condition expression (from ParenthesizedExpression node)
+  defp evaluate_condition(%Types.ParenthesizedExpression{children: children}, context, session_id) when is_list(children) and length(children) > 0 do
+    # Find the actual expression (skip children with text "(" or ")")
+    expr = Enum.find(children, fn child ->
+      case child do
+        %{source_info: %{text: text}} when text in ["(", ")"] -> false
+        _ -> true
+      end
+    end)
+
+    if expr do
+      evaluate_condition(expr, context, session_id)
+    else
+      # No expression found - treat as false
+      false
+    end
+  end
+
+  # Also handle Parenthesized wrapper (aliased node)
+  defp evaluate_condition(%Types.Parenthesized{children: children}, context, session_id) when is_list(children) do
+    # Parenthesized contains 3 ParenthesizedExpression children: "(", content, ")"
+    # Find the middle child that has actual content
+    content_child = Enum.find(children, fn child ->
+      case child do
+        %Types.ParenthesizedExpression{children: inner_children} when inner_children != [] ->
+          # Check if it's not just a paren token
+          case child do
+            %{source_info: %{text: text}} when text in ["(", ")"] -> false
+            _ -> true
+          end
+        _ -> false
+      end
+    end)
+
+    if content_child do
+      evaluate_condition(content_child, context, session_id)
+    else
+      # No content found - treat as false
+      false
+    end
+  end
+
+  # Fallback: Direct expression evaluation (for Identifier and other expression nodes)
+  defp evaluate_condition(expr, context, _session_id) do
+    require Logger
+    Logger.debug("evaluate_condition: evaluating #{inspect(expr.__struct__)}")
+
+    result = try do
+      ExprEvaluator.evaluate(expr, context)
+    rescue
+      e ->
+        Logger.error("ExprEvaluator.evaluate crashed: #{Exception.message(e)}")
+        Logger.error("  expr: #{inspect(expr, pretty: true)}")
+        Logger.error("  context.env: #{inspect(Map.keys(context.env))}")
+        reraise e, __STACKTRACE__
+    end
+
+    Logger.debug("  result: #{inspect(result)}")
+
+    # Use ExprEvaluator's truthy? function for consistent truthiness evaluation
+    truthiness = case result do
+      result when is_boolean(result) -> result
+      val when val in [0, "", nil, false] -> false
+      _ -> ExprEvaluator.truthy?(result)
+    end
+
+    Logger.debug("  truthiness: #{inspect(truthiness)}")
+    truthiness
+  end
+
+  # Execute RShell for statement with actual FrameStack (ExecutionState version)
+  # RShell structure: variable is Identifier, iterable is expression, body is Block
+  @spec execute_for_statement(Types.ForStatement.t(), ExecutionState.t()) :: ExecutionState.t()
   defp execute_for_statement(
-         %Types.ForStatement{variable: var_node, value: value_nodes, body: body},
-         context,
-         session_id
+         %Types.ForStatement{variable: var_node, iterable: iterable_node, body: body_node},
+         state
        ) do
     # Extract variable name
     var_name = extract_variable_name(var_node)
 
-    # Extract values with native type preservation
-    values = extract_loop_values(value_nodes, context)
+    # Evaluate iterable expression to get collection
+    iterable_value = ExprEvaluator.evaluate(iterable_node, state.context)
 
-    # Iterate over values
-    Enum.reduce(values, context, fn value, acc_context ->
-      # Store native value in environment
-      new_env = Map.put(acc_context.env, var_name, value)
-      loop_context = %{acc_context | env: new_env}
-      execute_do_group_or_node(body, loop_context, session_id)
+    # Convert to list if needed
+    values =
+      case iterable_value do
+        list when is_list(list) -> list
+        map when is_map(map) -> [map]
+        string when is_binary(string) -> String.split(string, ~r/\s+/, trim: true)
+        other -> [other]
+      end
+
+    # Push loop frame onto FrameStack with :accumulate mode
+    new_frame_stack = FrameStack.push_frame(state.frame_stack, :loop, :accumulate, %{type: :for, variable: var_name})
+    loop_state = %{state | frame_stack: new_frame_stack}
+
+    # Iterate over values with actual frame-based accumulation
+    final_state = Enum.reduce(values, loop_state, fn value, acc_state ->
+      # Store native value in environment (using FrameStack)
+      new_env = Map.put(acc_state.context.env, var_name, value)
+      iteration_context = %{acc_state.context | env: new_env}
+      iteration_state = %{acc_state | context: iteration_context}
+
+      # Execute body with accumulate=true so commands add to the frame
+      execute_block(body_node, iteration_state, true)
     end)
+
+    # Pop frame and get accumulated output
+    {popped_stack, accumulated_output} = FrameStack.pop_frame(final_state.frame_stack)
+
+    # Add accumulated output to parent frame (so it's visible to caller)
+    updated_stack = FrameStack.add_output(popped_stack, accumulated_output.stdout, accumulated_output.stderr)
+
+    %{final_state | frame_stack: updated_stack}
   end
 
-  # Execute while statement
+  # Execute RShell while statement (ExecutionState version with actual FrameStack)
+  # RShell structure: condition is Parenthesized, body is Block
+  @spec execute_while_statement(Types.WhileStatement.t(), ExecutionState.t()) :: ExecutionState.t()
   defp execute_while_statement(
-         %Types.WhileStatement{condition: condition_nodes, body: body},
-         context,
-         session_id
+         %Types.WhileStatement{condition: condition_node, body: body_node},
+         state
        ) do
-    execute_while_loop(condition_nodes, body, context, session_id)
+    # Push loop frame onto FrameStack with :accumulate mode
+    new_frame_stack = FrameStack.push_frame(state.frame_stack, :loop, :accumulate, %{type: :while})
+    loop_state = %{state | frame_stack: new_frame_stack}
+
+    # Execute while loop with actual frame-based accumulation
+    final_state = execute_while_loop_with_frames(condition_node, body_node, loop_state)
+
+    # Pop frame and get accumulated output
+    {popped_stack, accumulated_output} = FrameStack.pop_frame(final_state.frame_stack)
+
+    # Add accumulated output to parent frame (so it's visible to caller)
+    updated_stack = FrameStack.add_output(popped_stack, accumulated_output.stdout, accumulated_output.stderr)
+
+    %{final_state | frame_stack: updated_stack}
   end
 
-  # Recursive while loop execution
-  defp execute_while_loop(condition_nodes, body, context, session_id) do
-    # Execute condition
-    condition_context = execute_command_list(condition_nodes, context, session_id)
+  # Frame-based while loop execution - uses actual FrameStack operations
+  defp execute_while_loop_with_frames(condition_node, body_node, state) do
+    # Evaluate condition
+    if evaluate_condition(condition_node, state.context, state.session_id) do
+      # Condition is true - execute body
+      body_state = execute_block(body_node, state, true)
 
-    if condition_context.exit_code == 0 do
-      # Condition succeeded - execute body and continue
-      body_context = execute_do_group_or_node(body, condition_context, session_id)
-      execute_while_loop(condition_nodes, body, body_context, session_id)
+      # Continue loop (accumulated output is in frame_stack)
+      execute_while_loop_with_frames(condition_node, body_node, body_state)
     else
-      # Condition failed - exit loop
-      condition_context
+      # Condition is false - return final state
+      # Accumulated output will be popped by caller
+      state
     end
   end
+
+  # Execute a Block node (contains children list) - ExecutionState version
+  # accumulate: whether to accumulate output across all commands in the block
+  @spec execute_block(Types.t(), ExecutionState.t(), boolean()) :: ExecutionState.t()
+  defp execute_block(%Types.Block{children: children}, state, accumulate) do
+    require Logger
+    Logger.debug("execute_block Block: #{length(children)} children, accumulate=#{accumulate}")
+    execute_body_nodes(children, state, accumulate)
+  end
+
+  # Execute an ExprBlock node (wrapper around Block nodes) - ExecutionState version
+  defp execute_block(%Types.ExprBlock{children: children}, state, accumulate) do
+    require Logger
+    Logger.debug("execute_block ExprBlock: #{length(children)} children, accumulate=#{accumulate}")
+    # ExprBlock contains Block nodes as children (opening brace, content, closing brace)
+    # Find the middle Block that has actual content
+    content_block = Enum.find(children, fn child ->
+      case child do
+        %Types.Block{children: block_children} when block_children != [] -> true
+        _ -> false
+      end
+    end)
+
+    case content_block do
+      %Types.Block{children: block_children} ->
+        Logger.debug("execute_block ExprBlock -> found content Block with #{length(block_children)} children")
+        # Execute the content directly (don't recurse through execute_block)
+        execute_body_nodes(block_children, state, accumulate)
+      _ ->
+        Logger.debug("execute_block ExprBlock -> no content found")
+        state
+    end
+  end
+
+  # Fallback for non-Block nodes - ExecutionState version
+  defp execute_block(node, state, _accumulate) when is_struct(node) do
+    simple_execute_with_state(node, state)
+  end
+
+  defp execute_block(_, state, _accumulate), do: state
+
+  # Extract variable name from Identifier node
+  defp extract_variable_name(%Types.Identifier{source_info: %{text: text}}), do: text
+  defp extract_variable_name(%{source_info: %{text: text}}), do: text
+  defp extract_variable_name(_), do: ""
 end

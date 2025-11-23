@@ -54,7 +54,7 @@ defmodule RShell.Integration.CLITest do
     end
 
     test "stores runtime context" do
-      state = assert_cli_success("X=hello\n")
+      state = assert_cli_success("X = 'hello'\n")
 
       record = List.last(state.history)
       assert is_map(record.context)
@@ -66,15 +66,15 @@ defmodule RShell.Integration.CLITest do
   describe "execute_string/2 - if statements" do
     test "variable assignment with if statement (then branch)" do
       script = """
-      env X=5
-      if test $X = 5; then
+      X = 5
+      if (X == 5) {
         echo "X equals 5!"
-      else
+      } else {
         echo "X does not equal 5"
-      fi
+      }
       """
 
-      # With execute_lines (auto-detected for multi-line): env + if creates 2 records
+      # RShell syntax: assignment + if creates 2 records
       assert_cli_output(script,
         stdout_contains: "X equals 5!",
         exit_code: 0,
@@ -84,11 +84,11 @@ defmodule RShell.Integration.CLITest do
 
     test "if-else executes else branch when condition false" do
       script = """
-      if test 1 = 2; then
+      if (false) {
         echo "should not print"
-      else
+      } else {
         echo "else branch"
-      fi
+      }
       """
 
       state =
@@ -106,12 +106,12 @@ defmodule RShell.Integration.CLITest do
   describe "execute_lines/2 - InputBuffer integration" do
     test "accumulates if statement until complete" do
       script = """
-      X=5
-      if test $X = 5; then
+      X = 5
+      if (X == 5) {
         echo "X equals 5!"
-      else
+      } else {
         echo "X does not equal 5"
-      fi
+      }
       """
 
       state =
@@ -127,18 +127,18 @@ defmodule RShell.Integration.CLITest do
 
       # Verify InputBuffer accumulated the if statement
       first_record = List.first(state.history)
-      assert first_record.fragment =~ "X=5"
+      assert first_record.fragment =~ "X = 5"
 
       second_record = List.last(state.history)
-      assert second_record.fragment =~ "if test"
-      assert second_record.fragment =~ "fi"
+      assert second_record.fragment =~ "if"
+      assert second_record.fragment =~ "}"
     end
 
     test "accumulates for loop until done" do
       script = """
-      for i in 1 2 3; do
+      for (i in [1,2,3]) {
         echo "Loop: $i"
-      done
+      }
       """
 
       state = assert_cli_success(script, mode: :execute_lines)
@@ -147,8 +147,8 @@ defmodule RShell.Integration.CLITest do
       assert length(state.history) == 1
 
       record = List.first(state.history)
-      assert record.fragment =~ "for i in"
-      assert record.fragment =~ "done"
+      assert record.fragment =~ "for"
+      assert record.fragment =~ "}"
     end
   end
 
@@ -167,7 +167,7 @@ defmodule RShell.Integration.CLITest do
 
   describe "reset/1" do
     test "clears execution history" do
-      {:ok, state1} = CLI.execute_string("env X=5\n")
+      {:ok, state1} = CLI.execute_string("X = 5\n")
       {:ok, state2} = CLI.execute_string("echo $X\n", state: state1)
       assert length(state2.history) == 2
 
@@ -176,7 +176,7 @@ defmodule RShell.Integration.CLITest do
     end
 
     test "resets runtime environment" do
-      {:ok, state1} = CLI.execute_string("X=5\n")
+      {:ok, state1} = CLI.execute_string("X = 5\n")
 
       # Variable should be set in context
       record = List.last(state1.history)
@@ -202,7 +202,7 @@ defmodule RShell.Integration.CLITest do
 
   describe "variable support" do
     test "variable assignment sets environment variable" do
-      {:ok, state} = CLI.execute_string("X=5\n")
+      {:ok, state} = CLI.execute_string("X = 5\n")
 
       record = List.last(state.history)
       assert record.context.env["X"] == 5
@@ -211,8 +211,8 @@ defmodule RShell.Integration.CLITest do
 
     test "multiple variable assignments accumulate" do
       script = """
-      X=5
-      Y=10
+      X = 5
+      Y = 10
       """
 
       state = assert_cli_success(script)
@@ -227,9 +227,9 @@ defmodule RShell.Integration.CLITest do
   describe "timeout protection" do
     test "both execute_string and execute_lines complete without timeout" do
       script = """
-      for i in 1 2 3; do
+      for (i in [1,2,3]) {
         echo $i
-      done
+      }
       """
 
       # Just verify both complete without timeout (5 second default)

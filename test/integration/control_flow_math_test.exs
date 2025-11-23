@@ -1,26 +1,29 @@
 defmodule RShell.Integration.ControlFlowMathTest do
   @moduledoc """
-  Composite tests for control flow structures combined with
-  the math namespace builtins, test builtin, env, and echo.
+  Comprehensive tests for control flow structures combined with
+  math operations and deeply nested structures.
 
-  These tests verify basic integration between control flow and builtins,
-  focusing on what currently works in the RShell implementation.
+  These tests verify RShell's ability to handle:
+  - Arithmetic expressions and comparisons
+  - Nested control flow (if/for/while)
+  - Variable persistence across structures
+  - Complex computational scenarios (fibonacci, factorial, range validation)
   """
 
   use ExUnit.Case, async: true
 
   import RShell.TestSupport.CLIHelper
 
-  describe "if statements with test builtin" do
-    test "if with test builtin comparing variables - then branch" do
+  describe "if statements with comparisons" do
+    test "if with variable comparison - then branch" do
       script = """
-      env X=5
-      env Y=5
-      if test $X = $Y; then
+      X = 5
+      Y = 5
+      if (X == Y) {
         echo "X equals Y"
-      else
+      } else {
         echo "X does not equal Y"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -29,15 +32,15 @@ defmodule RShell.Integration.ControlFlowMathTest do
       )
     end
 
-    test "if with test builtin - else branch" do
+    test "if with comparison - else branch" do
       script = """
-      env X=10
-      env Y=5
-      if test $X = $Y; then
+      X = 10
+      Y = 5
+      if (X == Y) {
         echo "X equals Y"
-      else
+      } else {
         echo "X does not equal Y"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -46,12 +49,12 @@ defmodule RShell.Integration.ControlFlowMathTest do
       )
     end
 
-    test "if with numeric comparison using test -eq" do
+    test "if with numeric comparison using ==" do
       script = """
-      env X=5
-      if test $X -eq 5; then
+      X = 5
+      if (X == 5) {
         echo "Equal to 5"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -60,12 +63,12 @@ defmodule RShell.Integration.ControlFlowMathTest do
       )
     end
 
-    test "if with numeric comparison using test -ne" do
+    test "if with numeric comparison using !=" do
       script = """
-      env X=10
-      if test $X -ne 5; then
+      X = 10
+      if (X != 5) {
         echo "Not equal to 5"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -78,10 +81,10 @@ defmodule RShell.Integration.ControlFlowMathTest do
   describe "for loops with variables" do
     test "for loop with variable assignment - final value persists" do
       script = """
-      env LAST=0
-      for i in 1 2 3; do
-        env LAST=$i
-      done
+      LAST = 0
+      for (i in [1, 2, 3]) {
+        LAST = i
+      }
       echo "Last value: $LAST"
       """
 
@@ -93,10 +96,10 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "for loop iterates and updates variable" do
       script = """
-      env COUNTER=start
-      for item in a b c; do
-        env COUNTER=$item
-      done
+      COUNTER = 'start'
+      for (item in ['a', 'b', 'c']) {
+        COUNTER = item
+      }
       echo "Final: $COUNTER"
       """
 
@@ -110,7 +113,7 @@ defmodule RShell.Integration.ControlFlowMathTest do
   describe "math namespace basic operations" do
     test "env sets numeric values correctly" do
       script = """
-      env RESULT=8
+      RESULT = 8
       """
 
       state = assert_cli_success(script)
@@ -122,9 +125,9 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "math operations set variables correctly" do
       script = """
-      env A=5
-      env B=3
-      env SUM=8
+      A = 5
+      B = 3
+      SUM = 8
       echo "Sum is $SUM"
       """
 
@@ -142,15 +145,15 @@ defmodule RShell.Integration.ControlFlowMathTest do
   end
 
   describe "nested control structures" do
-    test "nested if statements with test builtin" do
+    test "nested if statements with comparisons" do
       script = """
-      env X=10
-      if test $X = 10; then
-        env Y=5
-        if test $Y = 5; then
+      X = 10
+      if (X == 10) {
+        Y = 5
+        if (Y == 5) {
           echo "Both conditions true"
-        fi
-      fi
+        }
+      }
       """
 
       assert_cli_output(script,
@@ -161,15 +164,15 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "nested if with else branches" do
       script = """
-      env X=10
-      if test $X = 10; then
-        env Y=3
-        if test $Y = 5; then
+      X = 10
+      if (X == 10) {
+        Y = 3
+        if (Y == 5) {
           echo "Y is 5"
-        else
+        } else {
           echo "Y is not 5"
-        fi
-      fi
+        }
+      }
       """
 
       assert_cli_output(script,
@@ -182,10 +185,10 @@ defmodule RShell.Integration.ControlFlowMathTest do
   describe "variable persistence across control structures" do
     test "variables persist after for loop" do
       script = """
-      env RESULT=initial
-      for x in first second third; do
-        env RESULT=$x
-      done
+      RESULT = 'initial'
+      for (x in ['first', 'second', 'third']) {
+        RESULT = x
+      }
       echo $RESULT
       """
 
@@ -197,10 +200,10 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "variables persist after if statement" do
       script = """
-      env RESULT=initial
-      if test 1 = 1; then
-        env RESULT=changed
-      fi
+      RESULT = 'initial'
+      if (true) {
+        RESULT = 'changed'
+      }
       echo $RESULT
       """
 
@@ -212,10 +215,10 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "multiple variable updates" do
       script = """
-      env A=1
-      env B=2
-      env A=10
-      env B=20
+      A = 1
+      B = 2
+      A = 10
+      B = 20
       echo "A=$A B=$B"
       """
 
@@ -227,21 +230,9 @@ defmodule RShell.Integration.ControlFlowMathTest do
   end
 
   describe "integration with env builtin" do
-    test "env sets and echo displays" do
-      script = """
-      env MESSAGE=hello
-      echo $MESSAGE
-      """
-
-      assert_cli_output(script,
-        stdout_contains: "hello",
-        exit_code: 0
-      )
-    end
-
     test "env with numeric values" do
       script = """
-      env NUM=42
+      NUM = 42
       echo "Number is $NUM"
       """
 
@@ -256,9 +247,9 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "multiple env assignments accumulate" do
       script = """
-      env X=5
-      env Y=10
-      env Z=15
+      X = 5
+      Y = 10
+      Z = 15
       """
 
       state = assert_cli_success(script)
@@ -270,13 +261,13 @@ defmodule RShell.Integration.ControlFlowMathTest do
     end
   end
 
-  describe "test builtin comprehensive coverage" do
-    test "test with -gt (greater than)" do
+  describe "comparison operators comprehensive coverage" do
+    test "greater than comparison" do
       script = """
-      env X=10
-      if test $X -gt 5; then
+      X = 10
+      if (X > 5) {
         echo "Greater"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -285,12 +276,12 @@ defmodule RShell.Integration.ControlFlowMathTest do
       )
     end
 
-    test "test with -lt (less than)" do
+    test "less than comparison" do
       script = """
-      env X=3
-      if test $X -lt 5; then
+      X = 3
+      if (X < 5) {
         echo "Less"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -299,12 +290,12 @@ defmodule RShell.Integration.ControlFlowMathTest do
       )
     end
 
-    test "test with -ge (greater or equal)" do
+    test "greater or equal comparison" do
       script = """
-      env X=5
-      if test $X -ge 5; then
+      X = 5
+      if (X >= 5) {
         echo "Greater or equal"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -313,12 +304,12 @@ defmodule RShell.Integration.ControlFlowMathTest do
       )
     end
 
-    test "test with -le (less or equal)" do
+    test "less or equal comparison" do
       script = """
-      env X=5
-      if test $X -le 5; then
+      X = 5
+      if (X <= 5) {
         echo "Less or equal"
-      fi
+      }
       """
 
       assert_cli_output(script,
@@ -331,117 +322,89 @@ defmodule RShell.Integration.ControlFlowMathTest do
   describe "complex deeply nested control flow scenarios combining for/if/while" do
     test "range validation with thresholds: process 1-20, count values in ranges using for/while/if - 8 variables, 6+ levels" do
       script = """
-      env MAX=20
-      env LOW_COUNT=0
-      env MID_COUNT=0
-      env HIGH_COUNT=0
-      env CURRENT=0
-      env CATEGORY=none
-      env ITER=0
-      env PROCESSED=0
+      MAX = 20
+      LOW_COUNT = 0
+      MID_COUNT = 0
+      HIGH_COUNT = 0
+      CURRENT = 0
+      CATEGORY = 'none'
+      ITER = 0
+      PROCESSED = 0
 
-      for num in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-        env CURRENT=$num
-        env CATEGORY=none
-        env ITER=0
+      for (num in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
+        CURRENT = num
+        CATEGORY = 'none'
+        ITER = 0
 
-        if test $CURRENT -gt 0; then
-          while test $ITER -lt 1; do
-            env ITER=1
+        if (CURRENT > 0) {
+          while (ITER < 1) {
+            ITER = 1
 
-            if test $CURRENT -le 7; then
-              for check in 1; do
-                if test $CURRENT -ge 1; then
-                  if test $LOW_COUNT -eq 0; then
-                    env LOW_COUNT=1
-                  else
-                    if test $LOW_COUNT -eq 1; then
-                      env LOW_COUNT=2
-                    else
-                      if test $LOW_COUNT -eq 2; then
-                        env LOW_COUNT=3
-                      else
-                        if test $LOW_COUNT -eq 3; then
-                          env LOW_COUNT=4
-                        else
-                          if test $LOW_COUNT -eq 4; then
-                            env LOW_COUNT=5
-                          else
-                            if test $LOW_COUNT -eq 5; then
-                              env LOW_COUNT=6
-                            else
-                              env LOW_COUNT=7
-                            fi
-                          fi
-                        fi
-                      fi
-                    fi
-                  fi
-                  env CATEGORY=low
-                fi
-              done
-            else
-              if test $CURRENT -le 14; then
-                if test $CURRENT -gt 7; then
-                  if test $MID_COUNT -eq 0; then
-                    env MID_COUNT=1
-                  else
-                    if test $MID_COUNT -eq 1; then
-                      env MID_COUNT=2
-                    else
-                      if test $MID_COUNT -eq 2; then
-                        env MID_COUNT=3
-                      else
-                        if test $MID_COUNT -eq 3; then
-                          env MID_COUNT=4
-                        else
-                          if test $MID_COUNT -eq 4; then
-                            env MID_COUNT=5
-                          else
-                            if test $MID_COUNT -eq 5; then
-                              env MID_COUNT=6
-                            else
-                              env MID_COUNT=7
-                            fi
-                          fi
-                        fi
-                      fi
-                    fi
-                  fi
-                  env CATEGORY=mid
-                fi
-              else
-                if test $CURRENT -gt 14; then
-                  if test $HIGH_COUNT -eq 0; then
-                    env HIGH_COUNT=1
-                  else
-                    if test $HIGH_COUNT -eq 1; then
-                      env HIGH_COUNT=2
-                    else
-                      if test $HIGH_COUNT -eq 2; then
-                        env HIGH_COUNT=3
-                      else
-                        if test $HIGH_COUNT -eq 3; then
-                          env HIGH_COUNT=4
-                        else
-                          if test $HIGH_COUNT -eq 4; then
-                            env HIGH_COUNT=5
-                          else
-                            env HIGH_COUNT=6
-                          fi
-                        fi
-                      fi
-                    fi
-                  fi
-                  env CATEGORY=high
-                fi
-              fi
-            fi
-          done
+            if (CURRENT <= 7) {
+              for (check in [1]) {
+                if (CURRENT >= 1) {
+                  if (LOW_COUNT == 0) {
+                    LOW_COUNT = 1
+                  } elif (LOW_COUNT == 1) {
+                    LOW_COUNT = 2
+                  } elif (LOW_COUNT == 2) {
+                    LOW_COUNT = 3
+                  } elif (LOW_COUNT == 3) {
+                    LOW_COUNT = 4
+                  } elif (LOW_COUNT == 4) {
+                    LOW_COUNT = 5
+                  } elif (LOW_COUNT == 5) {
+                    LOW_COUNT = 6
+                  } else {
+                    LOW_COUNT = 7
+                  }
+                  CATEGORY = 'low'
+                }
+              }
+            } else {
+              if (CURRENT <= 14) {
+                if (CURRENT > 7) {
+                  if (MID_COUNT == 0) {
+                    MID_COUNT = 1
+                  } elif (MID_COUNT == 1) {
+                    MID_COUNT = 2
+                  } elif (MID_COUNT == 2) {
+                    MID_COUNT = 3
+                  } elif (MID_COUNT == 3) {
+                    MID_COUNT = 4
+                  } elif (MID_COUNT == 4) {
+                    MID_COUNT = 5
+                  } elif (MID_COUNT == 5) {
+                    MID_COUNT = 6
+                  } else {
+                    MID_COUNT = 7
+                  }
+                  CATEGORY = 'mid'
+                }
+              } else {
+                if (CURRENT > 14) {
+                  if (HIGH_COUNT == 0) {
+                    HIGH_COUNT = 1
+                  } elif (HIGH_COUNT == 1) {
+                    HIGH_COUNT = 2
+                  } elif (HIGH_COUNT == 2) {
+                    HIGH_COUNT = 3
+                  } elif (HIGH_COUNT == 3) {
+                    HIGH_COUNT = 4
+                  } elif (HIGH_COUNT == 4) {
+                    HIGH_COUNT = 5
+                  } else {
+                    HIGH_COUNT = 6
+                  }
+                  CATEGORY = 'high'
+                }
+              }
+            }
+          }
 
-          env PROCESSED=$CURRENT
-        fi
-      done
+          PROCESSED = CURRENT
+        }
+      }
 
       echo "Low: $LOW_COUNT Mid: $MID_COUNT High: $HIGH_COUNT"
       """
@@ -461,104 +424,102 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "fibonacci sequence: compute 10th fibonacci using for/while/if - 10 variables, 7+ levels" do
       script = """
-      env N=10
-      env A=0
-      env B=1
-      env TEMP=0
-      env I=0
-      env RESULT=0
-      env ITER=0
-      env COMPUTED=0
-      env STEPS=0
-      env TARGET=10
+      N = 10
+      A = 0
+      B = 1
+      TEMP = 0
+      I = 0
+      RESULT = 0
+      ITER = 0
+      COMPUTED = 0
+      STEPS = 0
+      TARGET = 10
 
-      if test $N -gt 0; then
-        env COMPUTED=1
+      if (N > 0) {
+        COMPUTED = 1
 
-        for step in 1 2 3 4 5 6 7 8 9 10; do
-          env I=$step
-          env ITER=0
+        for (step in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+          I = step
+          ITER = 0
 
-          if test $I -le $TARGET; then
-            while test $ITER -lt 1; do
-              env ITER=1
+          if (I <= TARGET) {
+            while (ITER < 1) {
+              ITER = 1
 
-              if test $I -eq 1; then
-                env A=0
-                env B=1
-                env RESULT=0
-              else
-                if test $I -eq 2; then
-                  env TEMP=$A
-                  env A=$B
-                  env B=1
-                  env RESULT=1
-                else
-                  for calc in 1; do
-                    if test $I -eq 3; then
-                      env TEMP=$B
-                      env B=1
-                      env A=1
-                      env RESULT=1
-                    fi
+              if (I == 1) {
+                A = 0
+                B = 1
+                RESULT = 0
+              } elif (I == 2) {
+                TEMP = A
+                A = B
+                B = 1
+                RESULT = 1
+              } else {
+                for (calc in [1]) {
+                  if (I == 3) {
+                    TEMP = B
+                    B = 1
+                    A = 1
+                    RESULT = 1
+                  }
 
-                    if test $I -eq 4; then
-                      env TEMP=$B
-                      env B=2
-                      env A=1
-                      env RESULT=2
-                    fi
+                  if (I == 4) {
+                    TEMP = B
+                    B = 2
+                    A = 1
+                    RESULT = 2
+                  }
 
-                    if test $I -eq 5; then
-                      env TEMP=$B
-                      env B=3
-                      env A=2
-                      env RESULT=3
-                    fi
+                  if (I == 5) {
+                    TEMP = B
+                    B = 3
+                    A = 2
+                    RESULT = 3
+                  }
 
-                    if test $I -eq 6; then
-                      env TEMP=$B
-                      env B=5
-                      env A=3
-                      env RESULT=5
-                    fi
+                  if (I == 6) {
+                    TEMP = B
+                    B = 5
+                    A = 3
+                    RESULT = 5
+                  }
 
-                    if test $I -eq 7; then
-                      env TEMP=$B
-                      env B=8
-                      env A=5
-                      env RESULT=8
-                    fi
+                  if (I == 7) {
+                    TEMP = B
+                    B = 8
+                    A = 5
+                    RESULT = 8
+                  }
 
-                    if test $I -eq 8; then
-                      env TEMP=$B
-                      env B=13
-                      env A=8
-                      env RESULT=13
-                    fi
+                  if (I == 8) {
+                    TEMP = B
+                    B = 13
+                    A = 8
+                    RESULT = 13
+                  }
 
-                    if test $I -eq 9; then
-                      env TEMP=$B
-                      env B=21
-                      env A=13
-                      env RESULT=21
-                    fi
+                  if (I == 9) {
+                    TEMP = B
+                    B = 21
+                    A = 13
+                    RESULT = 21
+                  }
 
-                    if test $I -eq 10; then
-                      env TEMP=$B
-                      env B=34
-                      env A=21
-                      env RESULT=34
-                    fi
-                  done
-                fi
-              fi
+                  if (I == 10) {
+                    TEMP = B
+                    B = 34
+                    A = 21
+                    RESULT = 34
+                  }
+                }
+              }
 
-              env STEPS=$I
-            done
-          fi
-        done
-      fi
+              STEPS = I
+            }
+          }
+        }
+      }
 
       echo "Fib($N) = $RESULT"
       """
@@ -578,93 +539,93 @@ defmodule RShell.Integration.ControlFlowMathTest do
 
     test "factorial computation: compute 7! using for/while/if - 9 variables, 8+ levels" do
       script = """
-      env N=7
-      env RESULT=1
-      env I=1
-      env TEMP=0
-      env STAGE=0
-      env ITER=0
-      env MULTIPLIER=0
-      env ACCUMULATOR=1
-      env FINAL=0
+      N = 7
+      RESULT = 1
+      I = 1
+      TEMP = 0
+      STAGE = 0
+      ITER = 0
+      MULTIPLIER = 0
+      ACCUMULATOR = 1
+      FINAL = 0
 
-      if test $N -gt 0; then
-        env STAGE=1
+      if (N > 0) {
+        STAGE = 1
 
-        for num in 1 2 3 4 5 6 7; do
-          env I=$num
-          env ITER=0
+        for (num in [1, 2, 3, 4, 5, 6, 7]) {
+          I = num
+          ITER = 0
 
-          if test $I -le $N; then
-            env STAGE=2
+          if (I <= N) {
+            STAGE = 2
 
-            while test $ITER -lt 1; do
-              env ITER=1
-              env STAGE=3
+            while (ITER < 1) {
+              ITER = 1
+              STAGE = 3
 
-              if test $I -gt 0; then
-                env STAGE=4
+              if (I > 0) {
+                STAGE = 4
 
-                for multiply in 1; do
-                  env STAGE=5
+                for (multiply in [1]) {
+                  STAGE = 5
 
-                  if test $I -eq 1; then
-                    env ACCUMULATOR=1
-                    env RESULT=1
-                  fi
+                  if (I == 1) {
+                    ACCUMULATOR = 1
+                    RESULT = 1
+                  }
 
-                  if test $I -eq 2; then
-                    env TEMP=$ACCUMULATOR
-                    env ACCUMULATOR=2
-                    env RESULT=2
-                  fi
+                  if (I == 2) {
+                    TEMP = ACCUMULATOR
+                    ACCUMULATOR = 2
+                    RESULT = 2
+                  }
 
-                  if test $I -eq 3; then
-                    if test $ACCUMULATOR -eq 2; then
-                      env STAGE=6
-                      env ACCUMULATOR=6
-                      env RESULT=6
-                    fi
-                  fi
+                  if (I == 3) {
+                    if (ACCUMULATOR == 2) {
+                      STAGE = 6
+                      ACCUMULATOR = 6
+                      RESULT = 6
+                    }
+                  }
 
-                  if test $I -eq 4; then
-                    if test $ACCUMULATOR -eq 6; then
-                      env STAGE=7
-                      env ACCUMULATOR=24
-                      env RESULT=24
-                    fi
-                  fi
+                  if (I == 4) {
+                    if (ACCUMULATOR == 6) {
+                      STAGE = 7
+                      ACCUMULATOR = 24
+                      RESULT = 24
+                    }
+                  }
 
-                  if test $I -eq 5; then
-                    if test $ACCUMULATOR -eq 24; then
-                      if test $RESULT -eq 24; then
-                        env STAGE=8
-                        env ACCUMULATOR=120
-                        env RESULT=120
-                      fi
-                    fi
-                  fi
+                  if (I == 5) {
+                    if (ACCUMULATOR == 24) {
+                      if (RESULT == 24) {
+                        STAGE = 8
+                        ACCUMULATOR = 120
+                        RESULT = 120
+                      }
+                    }
+                  }
 
-                  if test $I -eq 6; then
-                    if test $ACCUMULATOR -eq 120; then
-                      env ACCUMULATOR=720
-                      env RESULT=720
-                    fi
-                  fi
+                  if (I == 6) {
+                    if (ACCUMULATOR == 120) {
+                      ACCUMULATOR = 720
+                      RESULT = 720
+                    }
+                  }
 
-                  if test $I -eq 7; then
-                    if test $ACCUMULATOR -eq 720; then
-                      env ACCUMULATOR=5040
-                      env RESULT=5040
-                      env FINAL=5040
-                    fi
-                  fi
-                done
-              fi
-            done
-          fi
-        done
-      fi
+                  if (I == 7) {
+                    if (ACCUMULATOR == 720) {
+                      ACCUMULATOR = 5040
+                      RESULT = 5040
+                      FINAL = 5040
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
 
       echo "7! = $FINAL"
       """

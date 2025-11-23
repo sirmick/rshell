@@ -25,8 +25,8 @@ module.exports = grammar({
     [$.assignment, $.command],
     [$.expression, $.command_name],
     [$.property_access],
-    [$.literal, $.command_name],  // String can be literal or command name
     [$.command_argument, $.raw_argument],  // raw_argument can contain variable_reference
+    [$.expr_line, $.cmd_line],  // Top-level ambiguity between EXPR and CMD mode
   ],
 
   rules: {
@@ -48,13 +48,16 @@ module.exports = grammar({
     // ===== MODE DETECTION IN GRAMMAR =====
     
     // EXPR line: starts with keyword or assignment pattern
+    // Note: Bare identifiers are commands, not expressions
     expr_line: $ => choice(
       $.assignment,
       $.control_flow,
       $.return_statement,
       $.break_statement,
       $.continue_statement,
-      $.expression,  // Standalone expression (function calls, etc.)
+      // Specific expression types only (not bare identifiers)
+      $.function_call,
+      $.cmd_execution,
     ),
     
     // CMD line: shell commands and pipelines
@@ -71,11 +74,13 @@ module.exports = grammar({
 
     // ===== EXPRESSION MODE =====
     
-    assignment: $ => seq(
+    // Assignment with high precedence to win conflicts with command
+    // Note: No token.immediate() to allow spaces: X = 42
+    assignment: $ => prec.dynamic(15, seq(
       field('name', $.identifier),
       field('operator', choice('=', '+=', '-=', '*=', '/=', '%=')),
       field('value', $.expression)
-    ),
+    )),
 
     control_flow: $ => choice(
       $.if_statement,
@@ -104,9 +109,11 @@ module.exports = grammar({
 
     for_statement: $ => seq(
       'for',
+      '(',
       field('variable', $.identifier),
       'in',
       field('iterable', $.expression),
+      ')',
       field('body', $.expr_block)
     ),
 
@@ -152,7 +159,8 @@ module.exports = grammar({
     literal: $ => choice(
       $.number,
       $.string,
-      $.boolean,
+      // Note: boolean removed - true/false are now parsed as regular identifiers/commands
+      // Future: Add $true/$false as read-only variables for expression context
     ),
 
     number: $ => /-?\d+(\.\d+)?/,
@@ -161,8 +169,6 @@ module.exports = grammar({
       seq('"', repeat(choice(/[^"\\]+/, /\\./)), '"'),
       seq("'", repeat(choice(/[^'\\]+/, /\\./)), "'"),
     ),
-    
-    boolean: $ => choice('true', 'false'),
 
     array: $ => seq(
       '[',
@@ -208,18 +214,15 @@ module.exports = grammar({
 
     variable_reference: $ => seq('$', $.identifier),
 
-    property_access: $ => alias(
-      prec.left(1, seq(
-        field('object', choice(
-          $.identifier,
-          $.variable_reference,
-          $.cmd_execution,
-          $.parenthesized,
-        )),
-        repeat1(seq('.', field('property', $.identifier)))
+    property_access: $ => prec.left(1, seq(
+      field('object', choice(
+        $.identifier,
+        $.variable_reference,
+        $.cmd_execution,
+        $.parenthesized,
       )),
-      $.property_chain
-    ),
+      alias(repeat1(seq('.', field('property', $.identifier))), $.property_chain)
+    )),
 
     binary_expression: $ => choice(
       // Arithmetic
@@ -275,7 +278,8 @@ module.exports = grammar({
 
     // ===== COMMAND MODE =====
 
-    command: $ => prec.left(0, seq(
+    // Command with low precedence to lose conflicts with assignment
+    command: $ => prec.left(-1, seq(
       field('name', $.command_name),
       repeat(field('argument', $.command_argument))
     )),
@@ -283,7 +287,6 @@ module.exports = grammar({
     command_name: $ => choice(
       $.identifier,
       $.path,
-      $.string,
     ),
 
     command_argument: $ => prec.left(choice(
@@ -302,11 +305,15 @@ module.exports = grammar({
     
     // Raw argument: Can contain special chars (: / =) and ${} interpolations
     // Matches patterns like: https://${HOST}:${PORT}/api
-    raw_argument: $ => prec.left(repeat1(choice(
-      /[a-zA-Z0-9_\-\.\/:=@%&+]+/,  // Raw text (no $ or whitespace)
-      $.expr_interpolation,          // ${...} embedded
-      $.variable_reference,          // $VAR embedded
-    ))),
+    // Note: Starts with non-operator to avoid conflicting with assignments
+    raw_argument: $ => prec.left(seq(
+      /[a-zA-Z0-9_\-\.\/:%@&+]/,  // First char: NOT = or assignment operators
+      optional(repeat(choice(
+        /[a-zA-Z0-9_\-\.\/:=@%&+]+/,  // Rest can include = for URLs, etc.
+        $.expr_interpolation,          // ${...} embedded
+        $.variable_reference,          // $VAR embedded
+      )))
+    )),
 
     path: $ => choice(
       /\/[a-zA-Z0-9_\-\.\/]+/,              // Absolute paths: /bin/ls

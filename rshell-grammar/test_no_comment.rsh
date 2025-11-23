@@ -1,1 +1,0 @@
-result = $rsh(ls -la)

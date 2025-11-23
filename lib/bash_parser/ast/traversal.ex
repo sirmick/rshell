@@ -34,7 +34,9 @@ defmodule RShell do
     if not is_binary(script) do
       {:error, "Script must be a string, got: #{inspect(script)}"}
     else
-      case BashParser.parse_bash(script) do
+      # Use RShell grammar for parsing
+      {:ok, parser} = RShell.Grammar.new_parser()
+      case RShell.Grammar.parse_incremental(parser, script <> "\n") do
         {:ok, ast_data} ->
           # Convert the generic map AST to strongly-typed structs
           typed_ast = convert_to_typed(ast_data)
