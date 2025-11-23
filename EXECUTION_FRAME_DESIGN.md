@@ -989,3 +989,49 @@ Each commit point is:
 - **Tested**: Unit or integration tests included
 - **Safe**: No breaking changes until Phase 4
 - **Reversible**: Can roll back to any commit
+
+---
+
+## ACTUAL IMPLEMENTATION NOTES (2025-11-23)
+
+### Reality Check: Threading State is Hard
+
+The original design assumed we could thread `{context, frame_stack}` through all execution functions. This is impractical because:
+
+1. **80+ function calls** would need signature changes
+2. **Pattern matching everywhere** on `{context, frame_stack}` tuples
+3. **Breaking change** to all existing execution code
+
+### Pragmatic Alternative: Keep Frame Stack in GenServer State
+
+**Better approach**: Keep frame stack in Runtime GenServer state alongside context:
+- `state.context` - Current execution context (env, cwd, exit_code, last_output)
+- `state.frame_stack` - Frame stack for scope/output management (PARALLEL)
+
+**Execution model**:
+```elixir
+# Current (context only):
+new_context = execute_while_loop(condition, body, context, session_id)
+
+# After frame migration:
+# Still returns context, but ALSO updates frame_stack in GenServer state
+new_context = execute_while_loop(condition, body, context, session_id)
+# Internally: get frame_stack from process state, use it, update it
+```
+
+### Revised Implementation (Pragmatic Hard Cutover)
+
+**Phase 1-2: DONE** (6 commits)
+- ✅ Frame and FrameStack modules (30 tests)
+- ✅ Integration into Runtime state
+- ✅ While loop refactoring
+
+**Phase 3: Simplify Output Accumulation** (Current)
+- Goal: Remove `accumulate` parameter without full frame migration
+- Keep context-based execution
+- Frame stack stays dormant but ready
+
+**Future: When needed for functions/subshells**
+- Use frame stack for LOCAL SCOPES only
+- Keep context for global state
+- Hybrid model: best of both worlds
