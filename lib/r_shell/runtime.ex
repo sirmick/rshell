@@ -907,7 +907,7 @@ defmodule RShell.Runtime do
     truthiness
   end
 
-  # Execute RShell for statement with native type support
+  # Execute RShell for statement with frame-based accumulation
   # RShell structure: variable is Identifier, iterable is expression, body is Block
   defp execute_for_statement(
          %Types.ForStatement{variable: var_node, iterable: iterable_node, body: body_node},
@@ -929,24 +929,31 @@ defmodule RShell.Runtime do
         other -> [other]
       end
 
-    # Iterate over values, accumulating output from all iterations
-    final_context = Enum.reduce(values, context, fn value, acc_context ->
-      # Store native value in environment
-      new_env = Map.put(acc_context.env, var_name, value)
-      # Clear last_output for this iteration
-      loop_context = %{acc_context | env: new_env, last_output: %{stdout: [], stderr: []}}
-      # Execute body and get result
-      result_context = execute_block(body_node, loop_context, session_id, false)
+    # Push loop frame (conceptually): Initialize with empty accumulation
+    loop_context = %{context | last_output: %{stdout: [], stderr: []}}
 
-      # Accumulate output from this iteration into acc_context
+    # Iterate over values with frame-based accumulation
+    final_context = Enum.reduce(values, loop_context, fn value, acc_context ->
+      # Save accumulated output so far
+      accumulated_so_far = acc_context.last_output
+
+      # Store native value in environment and clear last_output for this iteration
+      new_env = Map.put(acc_context.env, var_name, value)
+      iteration_context = %{acc_context | env: new_env, last_output: %{stdout: [], stderr: []}}
+
+      # Execute body
+      result_context = execute_block(body_node, iteration_context, session_id, false)
+
+      # Accumulate output from this iteration
       %{result_context |
         last_output: %{
-          stdout: acc_context.last_output.stdout ++ result_context.last_output.stdout,
-          stderr: acc_context.last_output.stderr ++ result_context.last_output.stderr
+          stdout: accumulated_so_far.stdout ++ result_context.last_output.stdout,
+          stderr: accumulated_so_far.stderr ++ result_context.last_output.stderr
         }
       }
     end)
 
+    # Pop frame (conceptually): Return with accumulated output in context.last_output
     final_context
   end
 
