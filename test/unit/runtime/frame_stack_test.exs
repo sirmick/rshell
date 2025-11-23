@@ -204,4 +204,63 @@ defmodule RShell.Runtime.FrameStackTest do
       assert FrameStack.get_variable(stack, "GLOBAL") == "value"
     end
   end
+
+  describe "FrameStack output accumulation" do
+    test "isolate mode replaces output" do
+      stack = FrameStack.new(output_mode: :isolate)
+
+      stack = FrameStack.add_output(stack, ["first\n"], [])
+      assert FrameStack.get_output(stack) == %{stdout: ["first\n"], stderr: []}
+
+      stack = FrameStack.add_output(stack, ["second\n"], [])
+      assert FrameStack.get_output(stack) == %{stdout: ["second\n"], stderr: []}
+    end
+
+    test "accumulate mode appends output" do
+      stack = FrameStack.new()
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+
+      stack = FrameStack.add_output(stack, ["first\n"], [])
+      stack = FrameStack.add_output(stack, ["second\n"], [])
+
+      output = FrameStack.get_output(stack)
+      assert output == %{stdout: ["first\n", "second\n"], stderr: []}
+    end
+
+    test "accumulate mode handles both stdout and stderr" do
+      stack = FrameStack.new()
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+
+      stack = FrameStack.add_output(stack, ["out1\n"], ["err1\n"])
+      stack = FrameStack.add_output(stack, ["out2\n"], ["err2\n"])
+
+      output = FrameStack.get_output(stack)
+      assert output == %{stdout: ["out1\n", "out2\n"], stderr: ["err1\n", "err2\n"]}
+    end
+
+    test "clear_output empties accumulated output" do
+      stack = FrameStack.new()
+      stack = FrameStack.add_output(stack, ["test\n"], [])
+      stack = FrameStack.clear_output(stack)
+
+      assert FrameStack.get_output(stack) == %{stdout: [], stderr: []}
+    end
+
+    test "output is frame-specific" do
+      stack = FrameStack.new()
+      stack = FrameStack.add_output(stack, ["global\n"], [])
+
+      # Push new frame
+      stack = FrameStack.push_frame(stack, :loop, :accumulate)
+      stack = FrameStack.add_output(stack, ["loop\n"], [])
+
+      # Current frame has only loop output
+      assert FrameStack.get_output(stack) == %{stdout: ["loop\n"], stderr: []}
+
+      # Pop back to global
+      {stack, loop_output} = FrameStack.pop_frame(stack)
+      assert loop_output == %{stdout: ["loop\n"], stderr: []}
+      assert FrameStack.get_output(stack) == %{stdout: ["global\n"], stderr: []}
+    end
+  end
 end

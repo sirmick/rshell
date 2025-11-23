@@ -195,4 +195,73 @@ defmodule RShell.Runtime.FrameStack do
     new_env = Map.put(context.env || %{}, name, value)
     %{stack | global_context: %{context | env: new_env}}
   end
+
+  @doc """
+  Add output to the current frame based on its output mode.
+
+  - `:isolate` mode: Replaces previous output (for interactive commands)
+  - `:accumulate` mode: Appends to existing output (for loops/blocks)
+  - Other modes: Reserved for future use
+
+  ## Examples
+
+      iex> stack = RShell.Runtime.FrameStack.new(output_mode: :isolate)
+      iex> stack = RShell.Runtime.FrameStack.add_output(stack, ["first\\n"], [])
+      iex> stack = RShell.Runtime.FrameStack.add_output(stack, ["second\\n"], [])
+      iex> RShell.Runtime.FrameStack.get_output(stack)
+      %{stdout: ["second\\n"], stderr: []}
+  """
+  @spec add_output(t(), list(), list()) :: t()
+  def add_output(%__MODULE__{frames: [current | rest]} = stack, stdout, stderr) do
+    case current.output_mode do
+      :isolate ->
+        # Replace output (clear previous)
+        updated_frame = %{current | accumulated: %{stdout: stdout, stderr: stderr}}
+        %{stack | frames: [updated_frame | rest]}
+
+      :accumulate ->
+        # Append to existing output
+        new_accumulated = %{
+          stdout: current.accumulated.stdout ++ stdout,
+          stderr: current.accumulated.stderr ++ stderr
+        }
+        updated_frame = %{current | accumulated: new_accumulated}
+        %{stack | frames: [updated_frame | rest]}
+
+      _ ->
+        # Other modes TBD (pipe, capture)
+        stack
+    end
+  end
+
+  @doc """
+  Clear the output in the current frame.
+
+  ## Examples
+
+      iex> stack = RShell.Runtime.FrameStack.new()
+      iex> stack = RShell.Runtime.FrameStack.add_output(stack, ["test\\n"], [])
+      iex> stack = RShell.Runtime.FrameStack.clear_output(stack)
+      iex> RShell.Runtime.FrameStack.get_output(stack)
+      %{stdout: [], stderr: []}
+  """
+  @spec clear_output(t()) :: t()
+  def clear_output(%__MODULE__{frames: [current | rest]} = stack) do
+    updated_frame = %{current | accumulated: %{stdout: [], stderr: []}}
+    %{stack | frames: [updated_frame | rest]}
+  end
+
+  @doc """
+  Get the accumulated output from the current frame.
+
+  ## Examples
+
+      iex> stack = RShell.Runtime.FrameStack.new()
+      iex> RShell.Runtime.FrameStack.get_output(stack)
+      %{stdout: [], stderr: []}
+  """
+  @spec get_output(t()) :: map()
+  def get_output(%__MODULE__{frames: [current | _]}) do
+    current.accumulated
+  end
 end
