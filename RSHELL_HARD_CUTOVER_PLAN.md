@@ -1,4 +1,50 @@
-## 🎉 LATEST STATUS UPDATE (2025-11-22 00:45 PST)
+## 🎉 LATEST STATUS UPDATE (2025-11-22 17:45 PST)
+
+### ✅ VARIABLE EXPANSION AND WHILE LOOP OUTPUT FIXED!
+
+**Major Achievement**: Fixed variable expansion and while loop output accumulation! 🚀
+
+**Test Results:**
+- **Before**: 14 failures (96.3% pass rate - 364/378)
+- **After**: 4 failures (98.9% pass rate - 374/378) ⬆️⬆️⬆️
+- **Fixed**: 10 tests (9 variable expansion + 1 while loop)
+
+**Issues Fixed:**
+
+1. **Variable Expansion in Strings** ✅ FIXED
+   - Problem: `echo "Sum is $SUM"` outputting literal `"$SUM"` instead of value
+   - Solution: Added `Types.String` handler in `extract_argument_value/2` with regex-based expansion
+   - Impact: Fixed 9 tests with double-quoted variable references
+
+2. **While Loop Output Accumulation** ✅ FIXED
+   - Problem: While loops executing but producing empty stdout
+   - Root Cause: Assignments clearing `last_output`, loop body has `echo $X; X = X + 1`
+   - Solution: Added `accumulate` parameter to `execute_command_list/4` - when true, output accumulates across commands
+   - Impact: Fixed while loop test, all 14 control flow tests now passing
+
+3. **Test File Warnings** ✅ FIXED
+   - Added `test_pattern` and `test_ignore_filters` to mix.exs
+   - Suppressed warnings for helper files
+
+**Files Modified:**
+- `lib/r_shell/runtime.ex` - Added accumulate mode to execute_command_list
+- `lib/r_shell/runtime.ex` - Added String node variable expansion (lines 508-519)
+- `mix.exs` - Added test configuration
+- `EXECUTION_FRAME_DESIGN.md` - Created design for future frame-based refactoring
+
+**Remaining Issues (4 failures):**
+1. **Interactive mode isolation** (1 test) - Output isolation between commands needs investigation
+2. **Interactive mode reset** (1 test) - Environment not clearing properly
+3. **AST broadcasting** (2 tests) - Pre-existing parser issues, unrelated to runtime
+
+**Next Steps:**
+- Frame-based execution stack design documented (see EXECUTION_FRAME_DESIGN.md)
+- Consider implementing frame stack to clean up accumulate parameter threading
+- Fix remaining 2 interactive mode tests
+
+---
+
+## 🎉 PREVIOUS STATUS UPDATE (2025-11-22 00:45 PST)
 
 ### ✅ STDOUT CAPTURE ISSUE RESOLVED!
 
@@ -336,10 +382,12 @@ assert get_type(node) == "cmd_line"
 | InputBuffer | 52 | 52 | 0 | ✅ COMPLETE |
 | ErrorClassifier | ~15 | ~15 | 0 | ✅ COMPLETE |
 | Builtins | ~80 | ~80 | 0 | ✅ PASSING |
-| Control Flow Tests | 14 | 7 | 7 | 🔄 IN PROGRESS |
+| Control Flow Tests | 14 | 14 | 0 | ✅ COMPLETE |
+| Interactive Mode | ~20 | ~18 | 2 | 🔄 IN PROGRESS |
 | **Parser/Grammar** | **174** | **174** | **0** | **100%** |
+| **Overall** | **378** | **374** | **4** | **98.9%** ⬆️⬆️⬆️ |
 
-**Trend**: ⬆️⬆️⬆️ Parser/Grammar at 100% (Grammar + Scanner tests complete)
+**Trend**: ⬆️⬆️⬆️ Up from 96.3% (364/378) to 98.9% (374/378)
 
 **New Capabilities**:
 - ✅ Grammar: 100% test coverage (88/88)
@@ -462,16 +510,20 @@ git branch -D feature/rshell-hard-cutover
 - ✅ Parser defaults to RShell grammar
 - ✅ InputBuffer uses brace counting
 - ✅ Control flow execution implemented (if/for/while)
-- ⏳ All tests pass with RShell syntax (64 failures - all due to bash syntax in tests)
+- ✅ Variable expansion in strings working
+- ✅ Control flow output accumulation working
+- ⏳ All tests pass (4 failures remaining - 2 interactive mode, 2 AST broadcasting)
 - ✅ CLI starts with RShell parser
 - ⏳ Documentation updated
 - ⏳ No bash parser code remains
 
 **Quality Gates**:
-- Current: 83.3% test pass rate (319/383 tests passing)
+- Current: **98.9% test pass rate (374/378 tests passing)** ⬆️⬆️⬆️
 - Target: 100% test pass rate
-- Status: Implementation complete, test conversion in progress
-- Blocking issue: Tests using old bash syntax need conversion to RShell syntax
+- Status: Nearly complete! Only 4 failures remaining
+- **Major milestone**: All control flow tests passing (14/14)
+- **Major milestone**: Variable expansion working (9 tests fixed)
+- Remaining: 2 interactive mode tests + 2 AST broadcasting tests
 
 ---
 
