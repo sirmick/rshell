@@ -957,31 +957,40 @@ defmodule RShell.Runtime do
          context,
          session_id
        ) do
-    # NEW: Use frame stack for while loop execution
-    execute_while_loop_with_frames(condition_node, body_node, context, session_id)
+    # Push loop frame onto stack (conceptually - stored in context.last_output)
+    # Start with empty accumulation
+    loop_context = %{context | last_output: %{stdout: [], stderr: []}}
+
+    # Execute while loop with frame-based accumulation
+    execute_while_loop_with_frames(condition_node, body_node, loop_context, session_id)
   end
 
-  # Frame-based while loop execution
+  # Frame-based while loop execution - accumulates output in context.last_output
+  # This simulates a loop frame with :accumulate mode
   defp execute_while_loop_with_frames(condition_node, body_node, context, session_id) do
     # Evaluate condition
     if evaluate_condition(condition_node, context, session_id) do
-      # Condition is true - execute body and continue
+      # Condition is true - execute body
+      # Save accumulated output so far
+      accumulated_so_far = context.last_output
+
       # Clear last_output for this iteration
       clean_context = %{context | last_output: %{stdout: [], stderr: []}}
       body_context = execute_block(body_node, clean_context, session_id, true)
 
-      # Accumulate output from this iteration into context
+      # Accumulate output from this iteration
       accumulated_context = %{body_context |
         last_output: %{
-          stdout: context.last_output.stdout ++ body_context.last_output.stdout,
-          stderr: context.last_output.stderr ++ body_context.last_output.stderr
+          stdout: accumulated_so_far.stdout ++ body_context.last_output.stdout,
+          stderr: accumulated_so_far.stderr ++ body_context.last_output.stderr
         }
       }
 
-      # Continue loop with accumulated output in context
+      # Continue loop with accumulated output
       execute_while_loop_with_frames(condition_node, body_node, accumulated_context, session_id)
     else
       # Condition is false - return final context with accumulated output
+      # Frame popped (conceptually) - accumulated output remains in context.last_output
       context
     end
   end
