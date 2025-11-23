@@ -1,7 +1,6 @@
 # RShell - Getting Started
 
-**Status**: ✅ Phase 2 Complete - 96.8% Test Coverage (60/62 tests passing)
-**Last Updated**: 2025-11-17
+**Last Updated**: 2025-11-23
 
 ---
 
@@ -229,57 +228,46 @@ tree-sitter parse examples/rshell/01_server_health_monitor.rsh
 
 ---
 
-## Current Status
+## Design Documentation by Subsystem
 
-### ✅ What Works (96.8% coverage - 60/62 tests passing):
+RShell is organized into several key subsystems, each with detailed design documentation:
 
-**Core Features:**
-- ✅ Automatic mode detection (EXPR vs CMD)
-- ✅ Assignments: `X = 42`, compound operators (`+=`, `-=`, `*=`, `/=`)
-- ✅ Data types: numbers, strings, booleans, lists, maps
-- ✅ Commands: `echo hello`, `ls -la`, pipelines
-- ✅ Control flow: `if`/`elif`/`else`, `for`, `while` with nested blocks
-- ✅ Expressions: arithmetic, comparisons, logical operators
-- ✅ Property access: `SERVER.fqdn`, `$CONFIG.port`
-- ✅ Comments: `# comment`
-- ✅ Semicolons: Multiple statements on one line
+### 🏗️ Architecture & Runtime
+- **[ARCHITECTURE_DESIGN.md](ARCHITECTURE_DESIGN.md)** - System architecture, component relationships, data flow
+- **[RUNTIME_DESIGN.md](RUNTIME_DESIGN.md)** - Runtime execution model, context management, GenServer architecture
+- **[EXECUTION_FRAME_DESIGN.md](EXECUTION_FRAME_DESIGN.md)** - Frame stack, scope management, output isolation
 
-### ⚠️ Known Limitations (2 failing tests):
+### 💻 Builtin Commands
+- **[BUILTIN_DESIGN.md](BUILTIN_DESIGN.md)** - Builtin system, namespace organization, I/O design, all 16 implemented builtins
 
-- ❌ Multiline lists: `ITEMS = [\n  1,\n  2\n]` (use single-line instead)
-- ❌ Multiline maps: `CONFIG = {\n  "key": "value"\n}` (use single-line instead)
+### 🔄 Control Flow
+- **[CONTROL_FLOW_DESIGN.md](CONTROL_FLOW_DESIGN.md)** - If/for/while/case statements, condition evaluation, loop execution
 
-**Workaround:** Use single-line syntax: `ITEMS = [1, 2, 3]` ✅
+### 📦 Variables & Types
+- **[ENV_VAR_DESIGN.md](ENV_VAR_DESIGN.md)** - Environment variables, native types (maps/lists/numbers), bracket notation, JSON support
 
-### ✅ Phase 3 (Complete):
+### 📝 Syntax & Grammar
+- **[RSHELL_SYNTAX_DESIGN.md](RSHELL_SYNTAX_DESIGN.md)** - RShell syntax specification, extensions to bash
+- **[rshell-grammar/README.md](rshell-grammar/README.md)** - Tree-sitter grammar overview
+- **[rshell-grammar/PARSER_DESIGN.md](rshell-grammar/PARSER_DESIGN.md)** - Parser architecture and implementation
+- **[rshell-grammar/STATUS.md](rshell-grammar/STATUS.md)** - Current grammar implementation status
 
-- ✅ Multiline structure support (achieved with grammar-based solution)
-- ✅ `return`, `continue`, `break` statements
-- ✅ Mode-specific constructs:
-  - `${}` expression interpolation in CMD mode
-  - `$rsh()` command execution in EXPR mode
-- ✅ `{}` interpolation for expressions in commands
-- ✅ Path literals: `/bin/ls`, `./script.sh`
-- ✅ Template strings: `` `Hello ${name}` ``
+### 🧪 Testing
+- **[TEST_GUIDE.md](TEST_GUIDE.md)** - Testing patterns, CLIHelper usage, best practices
+- **[UNIT_TESTS.md](UNIT_TESTS.md)** - Detailed unit test coverage documentation
 
-### 🚧 Current Focus: Scanner Unit Tests
-
-- Working on 87% test coverage (20/23 tests passing)
-- Focusing on fixing remaining edge cases
+### 📚 Complete Documentation Index
+- **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Comprehensive map of all 20 documentation files
 
 ---
 
-## Documentation
+## Getting Help
 
-**Essential Files:**
-- [`rshell-grammar/README.md`](rshell-grammar/README.md:1) - Grammar overview and quick reference
-- [`rshell-grammar/CURRENT_STATUS.md`](rshell-grammar/CURRENT_STATUS.md:1) - Project status and test results
-- [`RSHELL_SYNTAX_DESIGN.md`](RSHELL_SYNTAX_DESIGN.md:1) - Complete syntax specification
-
-**Technical Deep Dives:**
-- [`rshell-grammar/LINE_BASED_MODE_DETECTION.md`](rshell-grammar/LINE_BASED_MODE_DETECTION.md:1) - Mode detection explained
-- [`rshell-grammar/TREE_SITTER_EXTERNAL_SCANNER.md`](rshell-grammar/TREE_SITTER_EXTERNAL_SCANNER.md:1) - Scanner implementation guide
-- [`rshell-grammar/PHASE_2_MODE_DETECTION_COMPLETE.md`](rshell-grammar/PHASE_2_MODE_DETECTION_COMPLETE.md:1) - Implementation details
+**New to RShell?** Start with:
+1. This file (START_HERE.md) for build instructions
+2. [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) for complete documentation map
+3. [ARCHITECTURE_DESIGN.md](ARCHITECTURE_DESIGN.md) for system overview
+4. [TEST_GUIDE.md](TEST_GUIDE.md) for testing patterns
 
 ---
 
