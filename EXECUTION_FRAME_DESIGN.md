@@ -175,26 +175,696 @@ def execute_while_loop(condition, body, stack, session_id) do
 end
 ```
 
-## Implementation Strategy
+## Implementation Strategy with Commit Points
 
-### Phase 1: Create Frame Stack Module
-- Implement `RShell.Runtime.Frame`
-- Implement `RShell.Runtime.FrameStack`
-- Unit tests for frame operations
+### Phase 1: Create Frame Stack Foundation
+**Goal**: Build and test the frame stack infrastructure without changing runtime execution
 
-### Phase 2: Migrate Command Execution
-- Update `execute_command` to use stack
-- Update `execute_assignment` to respect output_mode
-- Update builtins to receive/return stack
+#### Commit 1.1: Create Frame module
+**Files**: `lib/r_shell/runtime/frame.ex`
+```elixir
+defmodule RShell.Runtime.Frame do
+  @moduledoc """
+  Represents an execution frame with scope, output mode, and metadata.
+  """
+  
+  @type frame_type :: :global | :loop | :function | :subshell | :command_substitution
+  @type output_mode :: :isolate | :accumulate | :pipe | :capture
+  
+  defstruct [
+    type: :global,
+    output_mode: :isolate,
+    scope: %{},
+    accumulated: %{stdout: [], stderr: []},
+    metadata: %{},
+    parent_scope: nil
+  ]
+  
+  @spec new(frame_type(), output_mode(), map()) :: t()
+  def new(type, output_mode, metadata \\ %{}) do
+    %__MODULE__{
+      type: type,
+      output_mode: output_mode,
+      metadata: metadata,
+      scope: %{},
+      accumulated: %{stdout: [], stderr: []}
+    }
+  end
+end
+```
 
-### Phase 3: Migrate Control Flow
-- Update `execute_while_loop` to use frames
-- Update `execute_for_loop` to use frames
-- Update `execute_if_statement` to use frames
+**Tests**: `test/unit/runtime/frame_test.exs`
+```elixir
+defmodule RShell.Runtime.FrameTest do
+  use ExUnit.Case, async: true
+  alias RShell.Runtime.Frame
+  
+  test "creates frame with defaults" do
+    frame = Frame.new(:global, :isolate)
+    assert frame.type == :global
+    assert frame.output_mode == :isolate
+    assert frame.scope == %{}
+  end
+  
+  test "creates frame with metadata" do
+    frame = Frame.new(:loop, :accumulate, %{iteration: 0})
+    assert frame.metadata.iteration == 0
+  end
+end
+```
 
-### Phase 4: Update Tests
-- Ensure all existing tests still pass
-- Add new tests for frame-specific behavior
+**Commit Message**: 
+```
+feat(runtime): add Frame struct for execution contexts
+
+- Define frame types: global, loop, function, subshell, command_substitution
+- Define output modes: isolate, accumulate, pipe, capture
+- Frame holds scope, accumulated output, and metadata
+- Add unit tests for frame creation
+```
+
+#### Commit 1.2: Create FrameStack module with basic operations
+**Files**: `lib/r_shell/runtime/frame_stack.ex`
+```elixir
+defmodule RShell.Runtime.FrameStack do
+  @moduledoc """
+  Manages a stack of execution frames with variable scoping and output handling.
+  """
+  
+  alias RShell.Runtime.Frame
+  
+  defstruct [
+    frames: [],           # Stack of Frame.t()
+    global_context: %{}   # Shared global state (env, cwd, exit_code, command_count)
+  ]
+  
+  @spec new(keyword()) :: t()
+  def new(opts \\ []) do
+    output_mode = Keyword.get(opts, :output_mode, :isolate)
+    context = Keyword.get(opts, :context, %{
+      env: %{},
+      cwd: "/",
+      exit_code: 0,
+      command_count: 0
+    })
+    
+    # Start with a global frame
+    global_frame = Frame.new(:global, output_mode)
+    
+    %__MODULE__{
+      frames: [global_frame],
+      global_context: context
+    }
+  end
+  
+  @spec push_frame(t(), Frame.frame_type(), Frame.output_mode(), map()) :: t()
+  def push_frame(%__MODULE__{frames: frames} = stack, type, output_mode, metadata \\ %{}) do
+    new_frame = Frame.new(type, output_mode, metadata)
+    %{stack | frames: [new_frame | frames]}
+  end
+  
+  @spec pop_frame(t()) :: {t(), map()}
+  def pop_frame(%__MODULE__{frames: [current | rest]} = stack) do
+    # Return stack without current frame and the accumulated output
+    {%{stack | frames: rest}, current.accumulated}
+  end
+  
+  @spec current_frame(t()) :: Frame.t()
+  def current_frame(%__MODULE__{frames: [current | _]}), do: current
+  
+  @spec output_mode(t()) :: Frame.output_mode()
+  def output_mode(stack) do
+    current_frame(stack).output_mode
+  end
+end
+```
+
+**Tests**: `test/unit/runtime/frame_stack_test.exs`
+```elixir
+defmodule RShell.Runtime.FrameStackTest do
+  use ExUnit.Case, async: true
+  alias RShell.Runtime.FrameStack
+  
+  test "initializes with global frame" do
+    stack = FrameStack.new()
+    assert length(stack.frames) == 1
+    frame = FrameStack.current_frame(stack)
+    assert frame.type == :global
+    assert frame.output_mode == :isolate
+  end
+  
+  test "pushes and pops frames" do
+    stack = FrameStack.new()
+    stack = FrameStack.push_frame(stack, :loop, :accumulate)
+    
+    assert length(stack.frames) == 2
+    assert FrameStack.current_frame(stack).type == :loop
+    
+    {stack, _output} = FrameStack.pop_frame(stack)
+    assert length(stack.frames) == 1
+    assert FrameStack.current_frame(stack).type == :global
+  end
+  
+  test "returns accumulated output on pop" do
+    stack = FrameStack.new()
+    stack = FrameStack.push_frame(stack, :loop, :accumulate)
+    
+    # Simulate adding output (will be implemented in commit 1.3)
+    # For now, just test the structure
+    {_stack, output} = FrameStack.pop_frame(stack)
+    assert output == %{stdout: [], stderr: []}
+  end
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): add FrameStack with push/pop operations
+
+- Initialize with global frame
+- Push new frames onto stack
+- Pop frames and return accumulated output
+- Track global context (env, cwd, exit_code, command_count)
+- Add unit tests for stack operations
+```
+
+#### Commit 1.3: Add variable operations with scope chain
+**Files**: Update `lib/r_shell/runtime/frame_stack.ex`
+```elixir
+# Add to FrameStack module:
+
+@spec get_variable(t(), String.t()) :: term()
+def get_variable(%__MODULE__{frames: frames, global_context: context}, name) do
+  # Search frames from top to bottom (current -> parent -> ... -> global)
+  Enum.find_value(frames, fn frame ->
+    Map.get(frame.scope, name)
+  end) || Map.get(context.env || %{}, name)
+end
+
+@spec set_variable(t(), String.t(), term()) :: t()
+def set_variable(%__MODULE__{frames: [current | rest]} = stack, name, value) do
+  # Set in current frame's scope
+  new_scope = Map.put(current.scope, name, value)
+  updated_frame = %{current | scope: new_scope}
+  %{stack | frames: [updated_frame | rest]}
+end
+
+@spec update_global_env(t(), String.t(), term()) :: t()
+def update_global_env(%__MODULE__{global_context: context} = stack, name, value) do
+  new_env = Map.put(context.env || %{}, name, value)
+  %{stack | global_context: %{context | env: new_env}}
+end
+```
+
+**Tests**: Update `test/unit/runtime/frame_stack_test.exs`
+```elixir
+test "sets and gets variables in current frame" do
+  stack = FrameStack.new()
+  stack = FrameStack.set_variable(stack, "X", 42)
+  
+  assert FrameStack.get_variable(stack, "X") == 42
+end
+
+test "variable shadowing works across frames" do
+  stack = FrameStack.new()
+  stack = FrameStack.update_global_env(stack, "X", 10)
+  
+  # Push new frame and shadow X
+  stack = FrameStack.push_frame(stack, :loop, :accumulate)
+  stack = FrameStack.set_variable(stack, "X", 20)
+  
+  # Current frame sees shadowed value
+  assert FrameStack.get_variable(stack, "X") == 20
+  
+  # Pop frame - back to global value
+  {stack, _output} = FrameStack.pop_frame(stack)
+  assert FrameStack.get_variable(stack, "X") == 10
+end
+
+test "looks up variables in parent frames" do
+  stack = FrameStack.new()
+  stack = FrameStack.update_global_env(stack, "GLOBAL", "value")
+  
+  stack = FrameStack.push_frame(stack, :loop, :accumulate)
+  stack = FrameStack.set_variable(stack, "LOCAL", "local_value")
+  
+  # Can see both local and global
+  assert FrameStack.get_variable(stack, "LOCAL") == "local_value"
+  assert FrameStack.get_variable(stack, "GLOBAL") == "value"
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): add variable scoping to FrameStack
+
+- Implement get_variable with scope chain lookup
+- Implement set_variable in current frame
+- Support variable shadowing across frames
+- Add update_global_env for global variables
+- Add comprehensive tests for scoping behavior
+```
+
+#### Commit 1.4: Add output accumulation operations
+**Files**: Update `lib/r_shell/runtime/frame_stack.ex`
+```elixir
+# Add to FrameStack module:
+
+@spec add_output(t(), list(), list()) :: t()
+def add_output(%__MODULE__{frames: [current | rest]} = stack, stdout, stderr) do
+  case current.output_mode do
+    :isolate ->
+      # Replace output (clear previous)
+      updated_frame = %{current | accumulated: %{stdout: stdout, stderr: stderr}}
+      %{stack | frames: [updated_frame | rest]}
+    
+    :accumulate ->
+      # Append to existing output
+      new_accumulated = %{
+        stdout: current.accumulated.stdout ++ stdout,
+        stderr: current.accumulated.stderr ++ stderr
+      }
+      updated_frame = %{current | accumulated: new_accumulated}
+      %{stack | frames: [updated_frame | rest]}
+    
+    _ ->
+      # Other modes TBD (pipe, capture)
+      stack
+  end
+end
+
+@spec clear_output(t()) :: t()
+def clear_output(%__MODULE__{frames: [current | rest]} = stack) do
+  updated_frame = %{current | accumulated: %{stdout: [], stderr: []}}
+  %{stack | frames: [updated_frame | rest]}
+end
+
+@spec get_output(t()) :: map()
+def get_output(%__MODULE__{frames: [current | _]}) do
+  current.accumulated
+end
+```
+
+**Tests**: Update `test/unit/runtime/frame_stack_test.exs`
+```elixir
+test "isolate mode replaces output" do
+  stack = FrameStack.new(output_mode: :isolate)
+  
+  stack = FrameStack.add_output(stack, ["first\n"], [])
+  assert FrameStack.get_output(stack) == %{stdout: ["first\n"], stderr: []}
+  
+  stack = FrameStack.add_output(stack, ["second\n"], [])
+  assert FrameStack.get_output(stack) == %{stdout: ["second\n"], stderr: []}
+end
+
+test "accumulate mode appends output" do
+  stack = FrameStack.new()
+  stack = FrameStack.push_frame(stack, :loop, :accumulate)
+  
+  stack = FrameStack.add_output(stack, ["first\n"], [])
+  stack = FrameStack.add_output(stack, ["second\n"], [])
+  
+  output = FrameStack.get_output(stack)
+  assert output == %{stdout: ["first\n", "second\n"], stderr: []}
+end
+
+test "clear_output empties accumulated output" do
+  stack = FrameStack.new()
+  stack = FrameStack.add_output(stack, ["test\n"], [])
+  stack = FrameStack.clear_output(stack)
+  
+  assert FrameStack.get_output(stack) == %{stdout: [], stderr: []}
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): add output accumulation to FrameStack
+
+- Implement add_output with mode-specific behavior
+  - :isolate mode replaces previous output
+  - :accumulate mode appends to existing output
+- Add clear_output and get_output helpers
+- Add tests for both output modes
+```
+
+**Phase 1 Complete**: All FrameStack infrastructure tested and working independently.
+
+---
+
+### Phase 2: Parallel Implementation (Adapter Pattern)
+**Goal**: Add FrameStack support to Runtime WITHOUT breaking existing code
+
+#### Commit 2.1: Add FrameStack adapter to Runtime state
+**Files**: Update `lib/r_shell/runtime.ex`
+```elixir
+# In init/1 callback, add:
+alias RShell.Runtime.FrameStack
+
+context = %{
+  env: env,
+  env_meta: %{},
+  cwd: cwd,
+  exit_code: 0,
+  command_count: 0,
+  last_output: %{stdout: [], stderr: []}
+}
+
+# NEW: Initialize frame stack alongside existing context
+frame_stack = FrameStack.new(
+  output_mode: :isolate,
+  context: context
+)
+
+{:ok, %{
+  session_id: session_id,
+  context: context,              # Keep existing
+  frame_stack: frame_stack,      # Add new
+  initial_env: env,
+  initial_cwd: cwd,
+  use_frames: false              # Feature flag!
+}}
+```
+
+**Tests**: Update existing runtime tests to verify no breakage
+```elixir
+test "runtime initializes with frame stack" do
+  {:ok, state} = Runtime.init(session_id: "test", env: %{}, cwd: "/")
+  
+  # Old context still works
+  assert state.context.cwd == "/"
+  
+  # New frame stack exists
+  assert state.frame_stack != nil
+  assert length(state.frame_stack.frames) == 1
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): add FrameStack to Runtime state (parallel mode)
+
+- Initialize FrameStack alongside existing context
+- Add use_frames feature flag (default: false)
+- Keep existing context-based code working
+- Verify no regression in existing tests
+```
+
+#### Commit 2.2: Add frame-based variable operations
+**Files**: Update `lib/r_shell/runtime.ex`
+```elixir
+# Add new functions (don't change existing ones):
+
+defp get_variable_from_frames(state, name) do
+  FrameStack.get_variable(state.frame_stack, name)
+end
+
+defp set_variable_in_frames(state, name, value) do
+  new_stack = FrameStack.update_global_env(state.frame_stack, name, value)
+  %{state | frame_stack: new_stack}
+end
+
+# Update execute_rshell_assignment to support both modes:
+defp execute_rshell_assignment(%Types.Assignment{name: name_node, value: value_node}, context, session_id) do
+  var_name = case name_node do
+    %Types.Identifier{source_info: %{text: text}} -> text
+    %{source_info: %{text: text}} -> text
+    _ -> ""
+  end
+  
+  native_value = ExprEvaluator.evaluate(value_node, context)
+  
+  # Update environment with native value
+  new_env = Map.put(context.env, var_name, native_value)
+  
+  # Broadcast variable_set event
+  PubSub.broadcast(session_id, :context, {:variable_set, %{
+    name: var_name,
+    value: native_value
+  }})
+  
+  # Assignments produce NO output
+  %{context | env: new_env, last_output: %{stdout: [], stderr: []}}
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): add frame-based variable operations (parallel mode)
+
+- Add get_variable_from_frames helper
+- Add set_variable_in_frames helper
+- Keep existing context-based assignment working
+- Prepare for future frame-based execution
+```
+
+#### Commit 2.3: Create frame-based execute_command_list
+**Files**: Update `lib/r_shell/runtime.ex`
+```elixir
+# Add new version alongside existing execute_command_list:
+
+defp execute_command_list_with_frames(nodes, frame_stack, session_id) when is_list(nodes) do
+  output_mode = FrameStack.output_mode(frame_stack)
+  
+  Enum.reduce(nodes, frame_stack, fn node, acc_stack ->\
+    start_time = System.monotonic_time(:microsecond)
+    
+    try do
+      # Execute node with frame stack
+      new_stack = simple_execute_with_frames(node, acc_stack, session_id)
+      duration = System.monotonic_time(:microsecond) - start_time
+      
+      # Get output from current frame
+      output = FrameStack.get_output(new_stack)
+      
+      # Broadcast execution result
+      broadcast_execution_success_with_output(
+        node,
+        FrameStack.current_frame(new_stack),
+        acc_stack,
+        duration,
+        output.stdout,
+        output.stderr,
+        session_id
+      )
+      
+      # Clear output if in isolate mode
+      if output_mode == :isolate do
+        FrameStack.clear_output(new_stack)
+      else
+        new_stack
+      end
+    rescue
+      e ->
+        # Error handling (similar to existing)
+        acc_stack
+    end
+  end)
+end
+
+# Keep existing execute_command_list for compatibility
+```
+
+**Tests**: Add parallel tests (don't change existing ones)
+```elixir
+# test/unit/runtime/frame_execution_test.exs
+defmodule RShell.Runtime.FrameExecutionTest do
+  use ExUnit.Case, async: true
+  
+  # Tests for frame-based execution
+  # Without breaking existing tests
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): add frame-based execute_command_list (parallel mode)
+
+- Create execute_command_list_with_frames alongside existing
+- Respect output_mode from current frame
+- Clear output after each command in isolate mode
+- Keep accumulating output in accumulate mode
+- Add parallel test suite for frame execution
+```
+
+**Phase 2 Complete**: FrameStack fully integrated in parallel mode, all existing tests pass.
+
+---
+
+### Phase 3: Migrate Control Flow (Feature Flag Enabled)
+**Goal**: Switch while/for/if to use frames, enable with feature flag
+
+#### Commit 3.1: Migrate while loop to frames
+**Files**: Update `lib/r_shell/runtime.ex`
+```elixir
+# Replace execute_while_loop:
+defp execute_while_loop(condition_node, body_node, context, session_id, accumulated_output \\ %{stdout: [], stderr: []}) do
+  # NEW: Check feature flag
+  state = %{context: context, frame_stack: /* get from somewhere */, use_frames: true}
+  
+  if state.use_frames do
+    execute_while_loop_with_frames(condition_node, body_node, state, session_id)
+  else
+    # Keep old implementation for now
+    execute_while_loop_legacy(condition_node, body_node, context, session_id, accumulated_output)
+  end
+end
+
+defp execute_while_loop_with_frames(condition_node, body_node, state, session_id) do
+  # Push loop frame
+  frame_stack = FrameStack.push_frame(state.frame_stack, :loop, :accumulate, %{type: :while})
+  
+  # Recursive loop with frames
+  final_stack = while_iteration_with_frames(condition_node, body_node, frame_stack, session_id)
+  
+  # Pop frame and get accumulated output
+  {popped_stack, output} = FrameStack.pop_frame(final_stack)
+  
+  # Add output to parent frame
+  new_stack = FrameStack.add_output(popped_stack, output.stdout, output.stderr)
+  
+  # Update context from frame stack
+  %{state.context | 
+    env: new_stack.global_context.env,
+    last_output: output
+  }
+end
+```
+
+**Tests**: Add feature flag tests
+```elixir
+@tag :use_frames
+test "while loop with frames accumulates output correctly" do
+  script = """
+  X = 0
+  while (X < 3) {
+    echo $X
+    X = X + 1
+  }
+  """
+  
+  state = assert_cli_success(script, use_frames: true)
+  outputs = Enum.flat_map(state.history, & &1.stdout)
+  assert Enum.any?(outputs, &(&1 =~ "0"))
+  assert Enum.any?(outputs, &(&1 =~ "1"))
+  assert Enum.any?(outputs, &(&1 =~ "2"))
+end
+```
+
+**Commit Message**:
+```
+feat(runtime): migrate while loop to use frames (feature flag)
+
+- Add execute_while_loop_with_frames
+- Keep legacy implementation for compatibility
+- Use feature flag to switch implementations
+- Add @tag :use_frames tests
+- Verify output accumulation works correctly
+```
+
+#### Commit 3.2: Migrate for loop to frames
+**Files**: Similar pattern to 3.1
+
+**Commit Message**:
+```
+feat(runtime): migrate for loop to use frames (feature flag)
+
+- Add execute_for_statement_with_frames
+- Support variable scoping in loop iterations
+- Accumulate output across all iterations
+- Add @tag :use_frames tests
+```
+
+#### Commit 3.3: Migrate if statement to frames
+**Files**: Similar pattern to 3.1
+
+**Commit Message**:
+```
+feat(runtime): migrate if statement to use frames (feature flag)
+
+- Add execute_if_statement_with_frames
+- Support elif/else branches with frames
+- Add @tag :use_frames tests
+```
+
+**Phase 3 Complete**: All control flow working with frames behind feature flag.
+
+---
+
+### Phase 4: Hard Cutover
+**Goal**: Remove feature flag, delete old code, make frames the default
+
+#### Commit 4.1: Enable frames by default
+**Files**: Update `lib/r_shell/runtime.ex`
+```elixir
+# In init/1:
+{:ok, %{
+  session_id: session_id,
+  context: context,
+  frame_stack: frame_stack,
+  initial_env: env,
+  initial_cwd: cwd,
+  use_frames: true  # Changed from false!
+}}
+```
+
+**Run all tests, verify pass rate stays at 98.9%+**
+
+**Commit Message**:
+```
+feat(runtime): enable frame stack by default
+
+- Change use_frames default to true
+- Run full test suite (expect 374/378 passing)
+- Keep legacy code for one more commit (safety)
+```
+
+#### Commit 4.2: Remove legacy code and feature flag
+**Files**: Update `lib/r_shell/runtime.ex`
+```elixir
+# Remove:
+# - execute_while_loop_legacy
+# - execute_for_statement_legacy  
+# - execute_if_statement_legacy
+# - execute_command_list (old version)
+# - use_frames flag from state
+
+# Rename:
+# - execute_while_loop_with_frames -> execute_while_loop
+# - execute_for_statement_with_frames -> execute_for_statement
+# - execute_if_statement_with_frames -> execute_if_statement
+```
+
+**Commit Message**:
+```
+refactor(runtime): remove legacy execution code
+
+- Delete execute_*_legacy functions
+- Remove use_frames feature flag
+- Rename execute_*_with_frames to standard names
+- FrameStack is now the only execution model
+- All tests passing (374/378 = 98.9%)
+```
+
+#### Commit 4.3: Update documentation
+**Files**: 
+- Update `EXECUTION_FRAME_DESIGN.md` (mark as IMPLEMENTED)
+- Update `RUNTIME_DESIGN.md` with frame stack details
+- Update code comments
+
+**Commit Message**:
+```
+docs(runtime): update documentation for frame stack
+
+- Mark EXECUTION_FRAME_DESIGN.md as implemented
+- Add frame stack details to RUNTIME_DESIGN.md
+- Update inline code comments
+- Remove references to accumulate parameter
+```
+
+**Phase 4 Complete**: FrameStack is the one true execution model.
+
+---
 
 ## Output Mode Behavior
 
@@ -216,31 +886,28 @@ end
 - Collect all output, return as string
 - Used for: `X = $(ls)`, `echo $(date)`
 
-## Migration Path
+## Testing Strategy
 
-1. Keep existing runtime working
-2. Build frame stack in parallel
-3. Add feature flag to switch implementations
-4. Migrate tests incrementally
-5. Remove old implementation once stable
+### Phase 1 Tests (Unit - FrameStack only)
+- Frame creation and properties
+- Stack push/pop operations
+- Variable scoping and shadowing
+- Output accumulation in both modes
 
-## Questions to Consider
+### Phase 2 Tests (Integration - Parallel mode)
+- Runtime initializes with frame stack
+- Variables work in both old and new mode
+- No regression in existing tests
 
-1. **Global context**: Should `cwd`, `exit_code`, `command_count` be in frames or stay global?
-   - **Answer**: Global state like cwd should be in the stack itself, not frames
-   - Frames handle scoping and output, stack handles global execution state
+### Phase 3 Tests (Integration - Feature flagged)
+- Control flow with `@tag :use_frames`
+- Output accumulation in loops
+- Variable scoping in nested structures
 
-2. **Variable shadowing**: How do we handle local variables in functions?
-   - **Answer**: Each frame has a `parent_scope` reference for lookups
-   - Set always sets in current frame, get searches up the chain
-
-3. **Broadcasting**: When do we broadcast execution results?
-   - **Answer**: Still broadcast at the command level (like now)
-   - Frames are internal implementation detail
-
-4. **Error handling**: How do frames interact with exceptions?
-   - **Answer**: Errors should pop frames during unwinding
-   - Could use `try/catch` with cleanup in `after` to ensure frames are popped
+### Phase 4 Tests (All existing tests)
+- Run full suite without feature flag
+- Verify 374/378 tests passing (98.9%)
+- No new failures introduced
 
 ## Expression Evaluation vs Execution Stack
 
@@ -265,29 +932,6 @@ end
 # Nested expressions create nested evaluate() calls
 # When a call returns, its value is used by the parent
 ```
-
-For complex lookups like `ex[2].d[4]['yo']`:
-```elixir
-# AST: MemberAccess{
-#   base: IndexAccess{
-#     base: MemberAccess{
-#       base: IndexAccess{base: Identifier("ex"), index: 2},
-#       member: "d"
-#     },
-#     index: 4
-#   },
-#   member: "yo"
-# }
-
-# Evaluation (post-order traversal):
-1. evaluate(Identifier("ex")) => lookup variable "ex" in EXECUTION stack
-2. evaluate(IndexAccess{ex, 2}) => ex[2]
-3. evaluate(MemberAccess{ex[2], "d"}) => ex[2].d
-4. evaluate(IndexAccess{ex[2].d, 4}) => ex[2].d[4]
-5. evaluate(MemberAccess{ex[2].d[4], "yo"}) => ex[2].d[4]["yo"]
-```
-
-**Key Point**: Variable lookups (`Identifier("ex")`) query the **execution stack** to get values, but the expression evaluation itself uses the **call stack** (recursive evaluate calls).
 
 ### Execution Stack (This Design)
 The execution frame stack manages:
@@ -315,61 +959,33 @@ The execution frame stack manages:
 8. FrameStack stores X in current frame (Loop Frame)
 ```
 
-### Stack Comparison
+## Commit Point Summary
 
-| Aspect | Expression Stack | Execution Stack |
-|--------|-----------------|-----------------|
-| **Purpose** | Compute values | Manage execution context |
-| **Implemented as** | Call stack (recursion) | Explicit frame list |
-| **Lifetime** | During single expression | Across multiple statements |
-| **Contains** | Intermediate values | Variables, output, state |
-| **Example** | `(2 + 3) * 4` | Loop iteration, function scope |
+### Phase 1: Foundation (4 commits, ~4 hours)
+1. ✅ Create Frame module
+2. ✅ Create FrameStack with push/pop
+3. ✅ Add variable scoping
+4. ✅ Add output accumulation
 
-### Why Separate Stacks?
+### Phase 2: Integration (3 commits, ~4 hours)
+1. ✅ Add FrameStack to Runtime state
+2. ✅ Add frame-based variable operations
+3. ✅ Create frame-based execute_command_list
 
-1. **Different lifecycles**:
-   - Expression stack lives for microseconds (one calculation)
-   - Execution frames live for statements/blocks
+### Phase 3: Migration (3 commits, ~6 hours)
+1. ✅ Migrate while loop to frames
+2. ✅ Migrate for loop to frames
+3. ✅ Migrate if statement to frames
 
-2. **Different data**:
-   - Expression stack: Numbers, strings, intermediate results
-   - Execution frames: Variable bindings, output buffers, metadata
+### Phase 4: Cutover (3 commits, ~4 hours)
+1. ✅ Enable frames by default
+2. ✅ Remove legacy code
+3. ✅ Update documentation
 
-3. **Clean separation**:
-   - ExprEvaluator: Pure expression evaluation (no side effects)
-   - FrameStack: Execution context and side effects (output, variables)
+**Total: 13 commits, ~18 hours estimated**
 
-### Example: Full Picture
-
-```elixir
-# Code: while (i < 10) { sum = sum + (i * 2); i = i + 1 }
-
-# Execution Stack State:
-# [GlobalFrame{i: 0, sum: 0}, LoopFrame{output_mode: :accumulate}]
-
-# Iteration 1:
-# 1. Evaluate condition: i < 10
-#    - ExprEvaluator.evaluate(BinaryOp{:lt, i, 10})
-#    - Needs 'i' -> queries FrameStack.get_variable("i") -> 0
-#    - Returns: true
-#
-# 2. Execute: sum = sum + (i * 2)
-#    - ExprEvaluator.evaluate(BinaryOp{:+, sum, BinaryOp{:*, i, 2}})
-#    - Needs 'sum' -> FrameStack.get_variable("sum") -> 0
-#    - Needs 'i' -> FrameStack.get_variable("i") -> 0
-#    - Computes: 0 + (0 * 2) = 0
-#    - FrameStack.set_variable("sum", 0)
-#
-# 3. Execute: i = i + 1
-#    - ExprEvaluator.evaluate(BinaryOp{:+, i, 1})
-#    - Needs 'i' -> FrameStack.get_variable("i") -> 0
-#    - Computes: 0 + 1 = 1
-#    - FrameStack.set_variable("i", 1)
-```
-
-### Summary
-
-- **Expression evaluation** = Tree-walking with call stack for intermediate values
-- **Execution frames** = Explicit stack for variable scopes and execution context
-- They interact: ExprEvaluator queries FrameStack for variable values
-- They're independent: You can have deep expression nesting in a single frame
+Each commit point is:
+- **Atomic**: Single, well-defined change
+- **Tested**: Unit or integration tests included
+- **Safe**: No breaking changes until Phase 4
+- **Reversible**: Can roll back to any commit

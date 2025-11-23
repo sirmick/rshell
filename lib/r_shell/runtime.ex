@@ -27,6 +27,7 @@ defmodule RShell.Runtime do
   alias RShell.PubSub
   alias RShell.Builtins
   alias RShell.ExprEvaluator
+  alias RShell.Runtime.FrameStack
   alias BashParser.AST.RShellTypes, as: Types
 
   # Default variable attributes (reserved for future use)
@@ -114,12 +115,22 @@ defmodule RShell.Runtime do
       last_output: %{stdout: [], stderr: []}
     }
 
+    # NEW: Initialize frame stack alongside existing context
+    frame_stack = FrameStack.new(
+      output_mode: :isolate,
+      context: context
+    )
+
     Logger.debug("Runtime started: session_id=#{session_id}")
 
     {:ok,
      %{
        session_id: session_id,
        context: context,
+       # NEW: Frame stack for future frame-based execution
+       frame_stack: frame_stack,
+       # Feature flag: false = use old context-based code (safe)
+       use_frames: false,
        # Store for reset
        initial_env: env,
        # Store for reset
@@ -190,6 +201,12 @@ defmodule RShell.Runtime do
       last_output: %{stdout: [], stderr: []}
     }
 
+    # NEW: Reinitialize frame stack on reset
+    new_frame_stack = FrameStack.new(
+      output_mode: :isolate,
+      context: new_context
+    )
+
     # Broadcast reset event
     PubSub.broadcast(
       state.session_id,
@@ -202,7 +219,7 @@ defmodule RShell.Runtime do
        }}
     )
 
-    {:reply, :ok, %{state | context: new_context}}
+    {:reply, :ok, %{state | context: new_context, frame_stack: new_frame_stack}}
   end
 
   # No longer handle executable nodes asynchronously - execution is now synchronous via execute_node/2
