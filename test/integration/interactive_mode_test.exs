@@ -18,7 +18,7 @@ defmodule RShell.Integration.InteractiveModeTest do
 
   describe "command output isolation - CRITICAL BUG PREVENTION" do
     test "variable assignment produces no output" do
-      {:ok, state} = CLI.execute_string("X=12\n")
+      {:ok, state} = CLI.execute_string("X = 12\n")
       record = List.last(state.history)
 
       # Variable assignments MUST produce zero output
@@ -35,7 +35,7 @@ defmodule RShell.Integration.InteractiveModeTest do
       assert length(record1.stdout) > 0, "man should produce output"
 
       # Execute variable assignment (MUST produce NO output)
-      {:ok, state2} = CLI.execute_string("X=12\n", state: state1)
+      {:ok, state2} = CLI.execute_string("X = 12\n", state: state1)
       record2 = List.last(state2.history)
 
       # THE CRITICAL ASSERTION - this was failing before the fix
@@ -46,7 +46,7 @@ defmodule RShell.Integration.InteractiveModeTest do
     end
 
     test "variable assignment followed by echo" do
-      {:ok, state1} = CLI.execute_string("X=hello\n")
+      {:ok, state1} = CLI.execute_string("X = 'hello'\n")
       {:ok, state2} = CLI.execute_string("echo $X\n", state: state1)
 
       record1 = List.last(state1.history)
@@ -63,9 +63,9 @@ defmodule RShell.Integration.InteractiveModeTest do
     test "multiple commands maintain strict isolation" do
       commands = [
         {"man\n", fn r -> assert length(r.stdout) > 0 end},
-        {"X=5\n", fn r -> assert r.stdout == [] end},
+        {"X = 5\n", fn r -> assert r.stdout == [] end},
         {"echo test\n", fn r -> assert Utils.format_output(r.stdout) =~ "test" end},
-        {"Y=10\n", fn r -> assert r.stdout == [] end},
+        {"Y = 10\n", fn r -> assert r.stdout == [] end},
         {"math:add 5 10\n", fn r -> assert Utils.format_output(r.stdout) =~ "15" end}
       ]
 
@@ -83,7 +83,7 @@ defmodule RShell.Integration.InteractiveModeTest do
 
     test "echo followed by variable followed by echo - each isolated" do
       {:ok, state1} = CLI.execute_string("echo first\n")
-      {:ok, state2} = CLI.execute_string("VAR=value\n", state: state1)
+      {:ok, state2} = CLI.execute_string("VAR = 'value'\n", state: state1)
       {:ok, state3} = CLI.execute_string("echo second\n", state: state2)
 
       [r1, r2, r3] = state3.history
@@ -141,8 +141,8 @@ defmodule RShell.Integration.InteractiveModeTest do
     end
 
     test "environment variables persist across commands" do
-      {:ok, state1} = CLI.execute_string("X=hello\n")
-      {:ok, state2} = CLI.execute_string("Y=world\n", state: state1)
+      {:ok, state1} = CLI.execute_string("X = 'hello'\n")
+      {:ok, state2} = CLI.execute_string("Y = 'world'\n", state: state1)
       {:ok, state3} = CLI.execute_string("echo $X $Y\n", state: state2)
 
       record = List.last(state3.history)
@@ -152,7 +152,7 @@ defmodule RShell.Integration.InteractiveModeTest do
     end
 
     test "reset clears history and environment" do
-      {:ok, state1} = CLI.execute_string("X=5\n")
+      {:ok, state1} = CLI.execute_string("X = 5\n")
       {:ok, state2} = CLI.execute_string("echo $X\n", state: state1)
 
       assert length(state2.history) == 2
@@ -178,9 +178,9 @@ defmodule RShell.Integration.InteractiveModeTest do
   describe "multi-line input accumulation" do
     test "if statement accumulates until complete" do
       script = """
-      if test 1 = 1; then
-        echo "true branch"
-      fi
+      if (true) {
+        echo 'true branch'
+      }
       """
 
       {:ok, state} = CLI.execute_lines(script)
@@ -189,8 +189,8 @@ defmodule RShell.Integration.InteractiveModeTest do
       record = List.first(state.history)
 
       # Full fragment should include entire if statement
-      assert record.fragment =~ "if test"
-      assert record.fragment =~ "fi"
+      assert record.fragment =~ "if (true)"
+      assert record.fragment =~ "}"
 
       # Output should be from then branch
       stdout = Utils.format_output(record.stdout)
@@ -199,9 +199,9 @@ defmodule RShell.Integration.InteractiveModeTest do
 
     test "for loop accumulates until done" do
       script = """
-      for i in 1 2 3; do
-        echo "Number: $i"
-      done
+      for (i in [1, 2, 3]) {
+        echo 'Number: $i'
+      }
       """
 
       {:ok, state} = CLI.execute_lines(script)
@@ -210,8 +210,8 @@ defmodule RShell.Integration.InteractiveModeTest do
       record = List.first(state.history)
 
       # Full fragment
-      assert record.fragment =~ "for i in"
-      assert record.fragment =~ "done"
+      assert record.fragment =~ "for (i in"
+      assert record.fragment =~ "}"
 
       # Note: Current implementation only captures last iteration's output
       # This is because each iteration overwrites context.last_output
@@ -222,10 +222,10 @@ defmodule RShell.Integration.InteractiveModeTest do
 
     test "variable assignment before control structure" do
       script = """
-      X=5
-      if test $X = 5; then
-        echo "X is 5"
-      fi
+      X = 5
+      if (X == 5) {
+        echo 'X is 5'
+      }
       """
 
       {:ok, state} = CLI.execute_lines(script)
@@ -236,11 +236,11 @@ defmodule RShell.Integration.InteractiveModeTest do
       [r1, r2] = state.history
 
       # First record: variable assignment (NO output!)
-      assert r1.fragment =~ "X=5"
+      assert r1.fragment =~ "X = 5"
       assert r1.stdout == []
 
       # Second record: if statement
-      assert r2.fragment =~ "if test"
+      assert r2.fragment =~ "if (X"
       stdout = Utils.format_output(r2.stdout)
       assert stdout =~ "X is 5"
     end
@@ -272,9 +272,9 @@ defmodule RShell.Integration.InteractiveModeTest do
     end
 
     test "multiple variable assignments in sequence" do
-      {:ok, state1} = CLI.execute_string("A=1\n")
-      {:ok, state2} = CLI.execute_string("B=2\n", state: state1)
-      {:ok, state3} = CLI.execute_string("C=3\n", state: state2)
+      {:ok, state1} = CLI.execute_string("A = 1\n")
+      {:ok, state2} = CLI.execute_string("B = 2\n", state: state1)
+      {:ok, state3} = CLI.execute_string("C = 3\n", state: state2)
 
       # All should produce no output
       [r1, r2, r3] = state3.history
@@ -326,7 +326,8 @@ defmodule RShell.Integration.InteractiveModeTest do
 
       # First node should be a Command
       first_node = List.first(record.incremental_ast)
-      assert first_node.__struct__ == BashParser.AST.Types.Command
+      # RShell AST returns CmdLine which wraps Command
+      assert first_node.__struct__ == BashParser.AST.RShellTypes.CmdLine
     end
   end
 
@@ -334,7 +335,7 @@ defmodule RShell.Integration.InteractiveModeTest do
     test "REGRESSION: man followed by variable assignment shows no man output" do
       # This is the exact bug that was reported and fixed
       {:ok, state1} = CLI.execute_string("man\n")
-      {:ok, state2} = CLI.execute_string("X=12\n", state: state1)
+      {:ok, state2} = CLI.execute_string("X = 12\n", state: state1)
 
       [man_record, var_record] = state2.history
 
@@ -348,7 +349,7 @@ defmodule RShell.Integration.InteractiveModeTest do
 
     test "REGRESSION: echo followed by variable shows no echo output" do
       {:ok, state1} = CLI.execute_string("echo LEAKED_TEXT\n")
-      {:ok, state2} = CLI.execute_string("Y=value\n", state: state1)
+      {:ok, state2} = CLI.execute_string("Y = 'value'\n", state: state1)
 
       var_record = List.last(state2.history)
 

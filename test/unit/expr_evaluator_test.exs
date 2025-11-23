@@ -71,12 +71,14 @@ defmodule RShell.ExprEvaluatorTest do
 
   describe "boolean literals" do
     test "evaluates true" do
-      node = %Types.Boolean{source_info: source_info("true")}
+      # Boolean removed from grammar - true is now an Identifier
+      node = %Types.Identifier{source_info: source_info("true")}
       assert ExprEvaluator.evaluate(node, context()) == true
     end
 
     test "evaluates false" do
-      node = %Types.Boolean{source_info: source_info("false")}
+      # Boolean removed from grammar - false is now an Identifier
+      node = %Types.Identifier{source_info: source_info("false")}
       assert ExprEvaluator.evaluate(node, context()) == false
     end
   end
@@ -117,7 +119,7 @@ defmodule RShell.ExprEvaluatorTest do
         children: [
           %Types.Number{source_info: source_info("1")},
           %Types.String{source_info: source_info("\"hello\"")},
-          %Types.Boolean{source_info: source_info("true")}
+          %Types.Identifier{source_info: source_info("true")}
         ]
       }
       assert ExprEvaluator.evaluate(node, context()) == [1, "hello", true]
@@ -349,9 +351,9 @@ defmodule RShell.ExprEvaluatorTest do
       node = %Types.BinaryExpression{
         source_info: source_info("true&&false"),
         children: [
-          %Types.Boolean{source_info: source_info("true")},
+          %Types.Identifier{source_info: source_info("true")},
           %{source_info: source_info("&&")},
-          %Types.Boolean{source_info: source_info("false")}
+          %Types.Identifier{source_info: source_info("false")}
         ]
       }
       assert ExprEvaluator.evaluate(node, context()) == false
@@ -361,9 +363,9 @@ defmodule RShell.ExprEvaluatorTest do
       node = %Types.BinaryExpression{
         source_info: source_info("false||true"),
         children: [
-          %Types.Boolean{source_info: source_info("false")},
+          %Types.Identifier{source_info: source_info("false")},
           %{source_info: source_info("||")},
-          %Types.Boolean{source_info: source_info("true")}
+          %Types.Identifier{source_info: source_info("true")}
         ]
       }
       assert ExprEvaluator.evaluate(node, context()) == true
@@ -387,7 +389,7 @@ defmodule RShell.ExprEvaluatorTest do
         source_info: source_info("!true"),
         children: [
           %{source_info: source_info("!")},
-          %Types.Boolean{source_info: source_info("true")}
+          %Types.Identifier{source_info: source_info("true")}
         ]
       }
       assert ExprEvaluator.evaluate(node, context()) == false

@@ -54,7 +54,7 @@ defmodule RShell.Integration.CLITest do
     end
 
     test "stores runtime context" do
-      state = assert_cli_success("X = \"hello\"\n")
+      state = assert_cli_success("X = 'hello'\n")
 
       record = List.last(state.history)
       assert is_map(record.context)
@@ -84,11 +84,11 @@ defmodule RShell.Integration.CLITest do
 
     test "if-else executes else branch when condition false" do
       script = """
-      if test 1 = 2; then
+      if (false) {
         echo "should not print"
-      else
+      } else {
         echo "else branch"
-      fi
+      }
       """
 
       state =

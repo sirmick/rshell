@@ -6,8 +6,6 @@ defmodule RShell.Runtime.ExecutionPipeline do
   for all execution and broadcasting logic.
   """
 
-  alias BashParser.AST.Types
-  alias BashParser.AST.RShellTypes, as: RShellTypes
   alias RShell.PubSub
 
   defstruct [

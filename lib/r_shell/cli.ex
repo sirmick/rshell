@@ -40,6 +40,7 @@ defmodule RShell.CLI do
     ".result" => "Show last execution result (full details)",
     ".stdout" => "Show stdout from last execution",
     ".stderr" => "Show stderr from last execution",
+    ".debug" => "Toggle debug logging on/off",
     ".help" => "Show this help message or help for a builtin command",
     ".quit" => "Exit the CLI"
   }
@@ -288,7 +289,9 @@ defmodule RShell.CLI do
     case File.read(file_path) do
       {:ok, content} ->
         # Parse entire file
-        case BashParser.parse_bash(content) do
+        # Use RShell grammar for file parsing
+        {:ok, parser} = RShell.Grammar.new_parser()
+        case RShell.Grammar.parse_incremental(parser, content <> "\n") do
           {:ok, ast_map} ->
             typed_ast = Types.from_map(ast_map)
 
@@ -355,10 +358,17 @@ defmodule RShell.CLI do
   ## Mode 2: Interactive (REPL) - Current Implementation
 
   defp execute_interactive do
+    # Set default logger level to :warning (hides debug messages)
+    Logger.configure(level: :warning)
+
     IO.puts("\n🐚 RShell - Interactive Bash Shell")
     IO.puts("=" |> String.duplicate(50))
     IO.puts("Type bash commands. Built-in commands start with '.'")
     IO.puts("Type .help for available commands\n")
+
+    # Initialize readline history
+    history_file = Path.expand("~/.rshell_history")
+    setup_readline_history(history_file)
 
     # Create CLI state (includes parser, runtime, session)
     {:ok, cli_state} = State.new()
@@ -373,6 +383,36 @@ defmodule RShell.CLI do
     # Create interactive state and start loop
     istate = InteractiveState.new(cli_state)
     loop(istate)
+  end
+
+  # Initialize readline with history file support
+  defp setup_readline_history(history_file) do
+    # Store history file path in process dictionary for later use
+    Process.put(:rshell_history_file, history_file)
+
+    # Read history from file if it exists
+    if File.exists?(history_file) do
+      case File.read(history_file) do
+        {:ok, content} ->
+          content
+          |> String.split("\n", trim: true)
+          |> Enum.each(&ExReadline.add_to_history/1)
+
+        {:error, _reason} ->
+          # Ignore read errors, just start with empty history
+          :ok
+      end
+    end
+  end
+
+  # Save a line to the history file
+  defp save_to_history_file(line) do
+    case Process.get(:rshell_history_file) do
+      nil -> :ok
+      history_file ->
+        # Append line to history file
+        File.write(history_file, line <> "\n", [:append])
+    end
   end
 
   ## Mode 3: Line-by-Line File Processing
@@ -453,7 +493,9 @@ defmodule RShell.CLI do
   defp execute_parse_only(file_path) do
     case File.read(file_path) do
       {:ok, content} ->
-        case BashParser.parse_bash(content) do
+        # Use RShell grammar for file parsing
+        {:ok, parser} = RShell.Grammar.new_parser()
+        case RShell.Grammar.parse_incremental(parser, content <> "\n") do
           {:ok, ast_map} ->
             typed_ast = Types.from_map(ast_map)
             IO.puts("✅ Parse successful!\n")
@@ -495,8 +537,18 @@ defmodule RShell.CLI do
     # Determine prompt based on input buffer state
     prompt = get_prompt(istate.input_buffer)
 
-    # Read input
-    case IO.gets(prompt) do
+    # Read input using ExReadline for history support
+    case ExReadline.read_line(prompt) do
+      line when is_binary(line) ->
+        # Add non-empty lines to history (skip dot commands and empty lines)
+        if line != "" && !String.starts_with?(line, ".") do
+          ExReadline.add_to_history(line)
+          # Save to history file
+          save_to_history_file(line)
+        end
+
+        handle_input(istate, line)
+
       :eof ->
         IO.puts("\n👋 Goodbye!")
         :ok
@@ -504,10 +556,6 @@ defmodule RShell.CLI do
       {:error, reason} ->
         IO.puts("❌ Error reading input: #{inspect(reason)}")
         loop(istate)
-
-      line ->
-        line = String.trim_trailing(line, "\n")
-        handle_input(istate, line)
     end
   end
 
@@ -725,6 +773,30 @@ defmodule RShell.CLI do
     end
 
     IO.puts("")
+
+    loop(istate)
+  end
+
+  # Handle .debug command - toggle debug logging
+  defp handle_input(%InteractiveState{} = istate, ".debug") do
+    current_level = Logger.level()
+
+    new_level = if current_level == :debug do
+      :warning
+    else
+      :debug
+    end
+
+    Logger.configure(level: new_level)
+
+    status = if new_level == :debug do
+      "ON"
+    else
+      "OFF"
+    end
+
+    IO.puts("\n🔧 Debug logging is now #{status}")
+    IO.puts("   Logger level: #{new_level}\n")
 
     loop(istate)
   end

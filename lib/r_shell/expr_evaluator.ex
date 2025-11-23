@@ -43,6 +43,7 @@ defmodule RShell.ExprEvaluator do
   # Literals
   # ============================================================================
 
+  # Numbers
   def evaluate(%Types.Number{source_info: %{text: text}}, _context) do
     case Integer.parse(text) do
       {int, ""} ->
@@ -56,6 +57,7 @@ defmodule RShell.ExprEvaluator do
     end
   end
 
+  # Strings
   def evaluate(%Types.String{source_info: %{text: text}}, _context) do
     # Remove surrounding quotes from string literals
     cond do
@@ -70,9 +72,8 @@ defmodule RShell.ExprEvaluator do
     end
   end
 
-  def evaluate(%Types.Boolean{source_info: %{text: text}}, _context) do
-    text == "true"
-  end
+  # Boolean removed from grammar - true/false are now identifiers
+  # See lines 181-191 for handling of true/false/null as special identifiers
 
   def evaluate(%Types.Array{children: children}, context) when is_list(children) do
     Enum.map(children, &evaluate(&1, context))
@@ -131,28 +132,7 @@ defmodule RShell.ExprEvaluator do
     end
   end
 
-  # Extract operator from binary expression text (e.g., "X == 5" -> "==")
-  defp extract_operator_from_text(text) when is_binary(text) do
-    cond do
-      String.contains?(text, "==") -> "=="
-      String.contains?(text, "!=") -> "!="
-      String.contains?(text, "<=") -> "<="
-      String.contains?(text, ">=") -> ">="
-      String.contains?(text, "&&") -> "&&"
-      String.contains?(text, "||") -> "||"
-      String.contains?(text, "<") -> "<"
-      String.contains?(text, ">") -> ">"
-      String.contains?(text, "+") -> "+"
-      String.contains?(text, "-") -> "-"
-      String.contains?(text, "*") -> "*"
-      String.contains?(text, "/") -> "/"
-      String.contains?(text, "%") -> "%"
-      true -> nil
-    end
-  end
-
-  defp extract_operator_from_text(_), do: nil
-
+  # Unary expressions (grouped here with other expressions)
   def evaluate(%Types.UnaryExpression{children: children}, context) do
     case children do
       [%{source_info: %{text: op}}, operand] ->
@@ -164,6 +144,7 @@ defmodule RShell.ExprEvaluator do
     end
   end
 
+  # Parenthesized expressions
   def evaluate(%Types.ParenthesizedExpression{children: children}, context) when is_list(children) do
     # ParenthesizedExpression may have tokens like '(' and ')' as children
     # Find the actual expression node (not plain text tokens)
@@ -256,6 +237,28 @@ defmodule RShell.ExprEvaluator do
   # Private Helpers
   # ============================================================================
 
+  # Extract operator from binary expression text (e.g., "X == 5" -> "==")
+  defp extract_operator_from_text(text) when is_binary(text) do
+    cond do
+      String.contains?(text, "==") -> "=="
+      String.contains?(text, "!=") -> "!="
+      String.contains?(text, "<=") -> "<="
+      String.contains?(text, ">=") -> ">="
+      String.contains?(text, "&&") -> "&&"
+      String.contains?(text, "||") -> "||"
+      String.contains?(text, "<") -> "<"
+      String.contains?(text, ">") -> ">"
+      String.contains?(text, "+") -> "+"
+      String.contains?(text, "-") -> "-"
+      String.contains?(text, "*") -> "*"
+      String.contains?(text, "/") -> "/"
+      String.contains?(text, "%") -> "%"
+      true -> nil
+    end
+  end
+
+  defp extract_operator_from_text(_), do: nil
+
   # Extract key from ObjectEntry key node
   defp extract_key(%Types.String{source_info: %{text: text}}, _context) do
     # Remove quotes
@@ -331,7 +334,7 @@ defmodule RShell.ExprEvaluator do
   def truthy?(nil), do: false
   def truthy?(false), do: false
   def truthy?(0), do: false
-  def truthy?(0.0), do: false
+  def truthy?(n) when is_float(n) and (n == 0.0 or n == -0.0), do: false
   def truthy?(""), do: false
   def truthy?([]), do: false
   def truthy?(%{} = map) when map == %{}, do: false

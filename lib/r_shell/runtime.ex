@@ -326,7 +326,7 @@ defmodule RShell.Runtime do
           execute_external_command(text, context, session_id)
         end
 
-      {:error, reason} ->
+      {:error, _reason} ->
         # Couldn't parse command, fall back to text-based execution
         execute_external_command(text, context, session_id)
     end
@@ -419,10 +419,13 @@ defmodule RShell.Runtime do
 
   # Extract command name from CommandName node by traversing children
   defp extract_command_name(%Types.CommandName{children: children}) when is_list(children) do
-    # CommandName contains Word children
+    # CommandName contains Word children - extract text from each
     name =
       children
-      |> Enum.map(&extract_text_from_node/1)
+      |> Enum.map(fn
+        %{source_info: %{text: text}} when is_binary(text) -> text
+        _ -> ""
+      end)
       |> Enum.join("")
 
     {:ok, name}
@@ -502,73 +505,23 @@ defmodule RShell.Runtime do
     |> Enum.join("")
   end
 
+  # String literal - handle variable expansion within double-quoted strings
+  defp extract_argument_value(%Types.String{source_info: %{text: text}}, context) when is_binary(text) do
+    # Remove surrounding quotes
+    content = String.trim(text, "\"")
+
+    # Perform variable expansion: replace $VAR with context value
+    # Use regex to find $IDENTIFIER patterns
+    Regex.replace(~r/\$([A-Za-z_][A-Za-z0-9_]*)/, content, fn _, var_name ->
+      value = Map.get(context.env, var_name, "")
+      convert_to_string(value)
+    end)
+  end
+
   # Simple text nodes - return as string
   defp extract_argument_value(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
   defp extract_argument_value(_, _context), do: ""
 
-  # DEPRECATED: extract_text_from_node - kept for backward compatibility
-  # New code should use extract_argument_value which returns native types
-  defp extract_text_from_node(%{source_info: %{text: text}}, _context) when is_binary(text), do: text
-  defp extract_text_from_node(_, _context), do: ""
-  defp extract_text_from_node(%{source_info: %{text: text}}) when is_binary(text), do: text
-  defp extract_text_from_node(_), do: ""
-
-  # =============================================================================
-  # Bracket Notation Support for Environment Variables (using Warpath JSONPath)
-  # =============================================================================
-
-  # Parse bracket notation for nested data access using JSONPath.
-  #
-  # Examples:
-  #   - SERVER["port"] -> Access map key
-  #   - SERVERS[0] -> Access list index
-  #   - CONFIG["db"]["host"] -> Nested map access
-  #   - APPS[0]["name"] -> List then map access
-  defp parse_bracket_access(expr, context) do
-    # Split variable name from bracket chain: SERVER["port"] -> ["SERVER", "["port"]"]
-    case String.split(expr, "[", parts: 2) do
-      [var_name, bracket_rest] ->
-        # Get initial value from environment
-        initial_value = Map.get(context.env || %{}, var_name)
-
-        # Convert bracket notation to JSONPath and query
-        path = bracket_to_jsonpath("[" <> bracket_rest)
-
-        case Warpath.query(initial_value, path) do
-          {:ok, [result]} -> result
-          {:ok, []} -> nil
-          _ -> nil
-        end
-
-      [var_name] ->
-        # No brackets - simple variable
-        Map.get(context.env || %{}, var_name)
-    end
-  end
-
-  # Convert bracket notation to JSONPath query string.
-  #
-  # Examples:
-  #   - ["port"] -> $.port
-  #   - [0] -> $[0]
-  #   - ["db"]["host"] -> $.db.host
-  #   - [0]["name"] -> $[0].name
-  defp bracket_to_jsonpath(bracket_str) do
-    # Extract all keys from: ["port"] or ["db"]["host"] or [0] or [0]["name"]
-    Regex.scan(~r/\[([^\]]+)\]/, bracket_str)
-    |> Enum.map(fn [_, key] ->
-      # Remove quotes if present: "port" -> port
-      clean_key = String.trim(key, "\"")
-
-      # Try parsing as integer for list/array access
-      case Integer.parse(clean_key) do
-        {int, ""} -> "[#{int}]"
-        _ -> ".#{clean_key}"
-      end
-    end)
-    |> Enum.join("")
-    |> then(&"$#{&1}")
-  end
 
   # broadcast_execution_success/5 removed - no longer needed with synchronous execution
 
@@ -683,118 +636,128 @@ defmodule RShell.Runtime do
   defp get_node_line(%{source_info: %{start_line: line}}) when is_integer(line), do: line
   defp get_node_line(_), do: nil
 
-  # Materialize output - convert Stream to list of native terms
-  defp materialize_output(stream) when is_function(stream) do
-    # Return list of native terms (NO string conversion!)
-    stream |> Enum.to_list()
-  end
-
-  defp materialize_output(string) when is_binary(string) do
-    # Single string becomes list with one element
-    if string == "", do: [], else: [string]
-  end
-
-  defp materialize_output([]), do: []
-  defp materialize_output(list) when is_list(list), do: list
-  defp materialize_output(term), do: [term]
-
   # =============================================================================
   # Control Flow Helper Functions
   # =============================================================================
 
   # Execute a list of commands sequentially, threading context through each
   # Broadcasts execution results for each command
-  # Does NOT accumulate - just threads context. Accumulation is done by control flow functions.
-  defp execute_command_list(nodes, context, session_id) when is_list(nodes) do
-    Enum.reduce(nodes, context, fn node, acc_context ->
-      start_time = System.monotonic_time(:microsecond)
+  # Returns tuple {final_context, accumulated_output} for use by loops
+  defp execute_command_list(nodes, context, session_id, accumulate \\ false) when is_list(nodes) do
+    if accumulate do
+      # Accumulate output across all commands (for loops)
+      {final_context, accumulated} = Enum.reduce(nodes, {context, %{stdout: [], stderr: []}}, fn node, {acc_context, acc_output} ->
+        start_time = System.monotonic_time(:microsecond)
 
-      # Execute the node
-      try do
-        new_context = simple_execute(node, acc_context, session_id)
-        duration = System.monotonic_time(:microsecond) - start_time
+        # Execute the node
+        try do
+          new_context = simple_execute(node, acc_context, session_id)
+          duration = System.monotonic_time(:microsecond) - start_time
 
-        # Output is now in context.last_output (no process dictionary!)
-        broadcast_execution_success_with_output(
-          node,
-          new_context,
-          acc_context,
-          duration,
-          new_context.last_output.stdout,
-          new_context.last_output.stderr,
-          session_id
-        )
+          # Accumulate output from this command
+          new_accumulated = %{
+            stdout: acc_output.stdout ++ new_context.last_output.stdout,
+            stderr: acc_output.stderr ++ new_context.last_output.stderr
+          }
 
-        new_context
-      rescue
-        e ->
-          _duration = System.monotonic_time(:microsecond) - start_time
-
-          # Get any output that was produced before error (from context)
-          stdout = acc_context.last_output.stdout
-          stderr = acc_context.last_output.stderr
-
-          broadcast_execution_failure_with_output(
-            e,
+          # Broadcast with the command's own output
+          broadcast_execution_success_with_output(
             node,
-            stdout,
-            stderr,
-            acc_context.exit_code,
+            new_context,
+            acc_context,
+            duration,
+            new_context.last_output.stdout,
+            new_context.last_output.stderr,
             session_id
           )
 
-          # Continue with unchanged context
-          acc_context
-      end
-    end)
+          {new_context, new_accumulated}
+        rescue
+          e ->
+            _duration = System.monotonic_time(:microsecond) - start_time
+
+            # Get any output that was produced before error (from context)
+            stdout = acc_context.last_output.stdout
+            stderr = acc_context.last_output.stderr
+
+            broadcast_execution_failure_with_output(
+              e,
+              node,
+              stdout,
+              stderr,
+              acc_context.exit_code,
+              session_id
+            )
+
+            # Continue with unchanged context
+            {acc_context, acc_output}
+        end
+      end)
+
+      # Return context with accumulated output
+      %{final_context | last_output: accumulated}
+    else
+      # Normal mode - just thread context without accumulating
+      Enum.reduce(nodes, context, fn node, acc_context ->
+        start_time = System.monotonic_time(:microsecond)
+
+        # Execute the node
+        try do
+          new_context = simple_execute(node, acc_context, session_id)
+          duration = System.monotonic_time(:microsecond) - start_time
+
+          # Output is now in context.last_output (no process dictionary!)
+          broadcast_execution_success_with_output(
+            node,
+            new_context,
+            acc_context,
+            duration,
+            new_context.last_output.stdout,
+            new_context.last_output.stderr,
+            session_id
+          )
+
+          new_context
+        rescue
+          e ->
+            _duration = System.monotonic_time(:microsecond) - start_time
+
+            # Get any output that was produced before error (from context)
+            stdout = acc_context.last_output.stdout
+            stderr = acc_context.last_output.stderr
+
+            broadcast_execution_failure_with_output(
+              e,
+              node,
+              stdout,
+              stderr,
+              acc_context.exit_code,
+              session_id
+            )
+
+            # Continue with unchanged context
+            acc_context
+        end
+      end)
+    end
   end
 
-  defp execute_command_list(_, context, _session_id), do: context
+  defp execute_command_list(_, context, _session_id, _accumulate), do: context
 
   # Execute body nodes - RShell uses lists of children directly
-  defp execute_body_nodes(children, context, session_id) when is_list(children) do
+  # accumulate: whether to accumulate output across all commands (needed for loops)
+  defp execute_body_nodes(children, context, session_id, accumulate \\ false) when is_list(children) do
     require Logger
-    Logger.debug("execute_body_nodes: #{length(children)} children")
+    Logger.debug("execute_body_nodes: #{length(children)} children, accumulate=#{accumulate}")
     Enum.each(children, fn child ->
       Logger.debug("  child type: #{inspect(child.__struct__)}")
     end)
-    result = execute_command_list(children, context, session_id)
+    result = execute_command_list(children, context, session_id, accumulate)
     Logger.debug("execute_body_nodes result: command_count=#{result.command_count}")
     result
   end
 
-  defp execute_body_nodes(_, context, _session_id), do: context
-
-  # Extract iteration values from for statement value nodes with native type support
-  defp extract_loop_values(nil, _context), do: []
-  defp extract_loop_values([], _context), do: []
-
-  defp extract_loop_values(value_nodes, context) when is_list(value_nodes) do
-    value_nodes
-    |> Enum.flat_map(fn node ->
-      value = extract_text_from_node(node, context)
-
-      # CRITICAL: Variable expansion preserves native types!
-      # $A where A=[1,2,3] returns [1,2,3], NOT string "[1, 2, 3]"
-      case value do
-        # Native list - iterate over elements
-        list when is_list(list) ->
-          list
-
-        # Native map - single value
-        map when is_map(map) ->
-          [map]
-
-        # String - split on whitespace (traditional bash)
-        string when is_binary(string) ->
-          String.split(string, ~r/\s+/, trim: true)
-
-        # Other native types (numbers, booleans, atoms)
-        other ->
-          [other]
-      end
-    end)
-  end
+  defp execute_body_nodes(_, context, _session_id, _accumulate), do: context
 
   # =============================================================================
   # Control Flow Execution Functions (RShell Implementation)
@@ -819,7 +782,7 @@ defmodule RShell.Runtime do
     if condition_result do
       # Condition is true - execute then-body
       Logger.debug("  executing if body")
-      result = execute_block(body_node, context, session_id)
+      result = execute_block(body_node, context, session_id, false)
       Logger.debug("  if body executed, command_count: #{result.command_count}")
       result
     else
@@ -841,7 +804,7 @@ defmodule RShell.Runtime do
         # Evaluate elif condition
         if evaluate_condition(elif_cond, context, session_id) do
           # This elif matched - execute body
-          execute_block(elif_body, context, session_id)
+          execute_block(elif_body, context, session_id, false)
         else
           # Try next alternative
           execute_alternatives(rest, context, session_id)
@@ -849,7 +812,7 @@ defmodule RShell.Runtime do
 
       %Types.ElseClause{body: else_body} ->
         # Else clause always executes
-        execute_block(else_body, context, session_id)
+        execute_block(else_body, context, session_id, false)
 
       _ ->
         # Unknown alternative type - skip and continue
@@ -956,7 +919,7 @@ defmodule RShell.Runtime do
       # Clear last_output for this iteration
       loop_context = %{acc_context | env: new_env, last_output: %{stdout: [], stderr: []}}
       # Execute body and get result
-      result_context = execute_block(body_node, loop_context, session_id)
+      result_context = execute_block(body_node, loop_context, session_id, false)
 
       # Accumulate output from this iteration into acc_context
       %{result_context |
@@ -987,7 +950,7 @@ defmodule RShell.Runtime do
       # Condition is true - execute body and continue
       # Clear last_output for this iteration
       clean_context = %{context | last_output: %{stdout: [], stderr: []}}
-      body_context = execute_block(body_node, clean_context, session_id)
+      body_context = execute_block(body_node, clean_context, session_id, true)
 
       # Accumulate output from this iteration
       new_accumulated = %{
@@ -998,22 +961,23 @@ defmodule RShell.Runtime do
       # Continue loop with accumulated output
       execute_while_loop(condition_node, body_node, body_context, session_id, new_accumulated)
     else
-      # Condition is false - return context with accumulated output
+      # Condition is false - return final context with accumulated output
       %{context | last_output: accumulated_output}
     end
   end
 
   # Execute a Block node (contains children list)
-  defp execute_block(%Types.Block{children: children}, context, session_id) do
+  # accumulate: whether to accumulate output across all commands in the block
+  defp execute_block(%Types.Block{children: children}, context, session_id, accumulate) do
     require Logger
-    Logger.debug("execute_block Block: #{length(children)} children, types: #{inspect(Enum.map(children, &(&1.__struct__)))}")
-    execute_body_nodes(children, context, session_id)
+    Logger.debug("execute_block Block: #{length(children)} children, accumulate=#{accumulate}")
+    execute_body_nodes(children, context, session_id, accumulate)
   end
 
   # Execute an ExprBlock node (wrapper around Block nodes)
-  defp execute_block(%Types.ExprBlock{children: children}, context, session_id) do
+  defp execute_block(%Types.ExprBlock{children: children}, context, session_id, accumulate) do
     require Logger
-    Logger.debug("execute_block ExprBlock: #{length(children)} children")
+    Logger.debug("execute_block ExprBlock: #{length(children)} children, accumulate=#{accumulate}")
     # ExprBlock contains Block nodes as children (opening brace, content, closing brace)
     # Find the middle Block that has actual content
     content_block = Enum.find(children, fn child ->
@@ -1027,7 +991,7 @@ defmodule RShell.Runtime do
       %Types.Block{children: block_children} ->
         Logger.debug("execute_block ExprBlock -> found content Block with #{length(block_children)} children")
         # Execute the content directly (don't recurse through execute_block)
-        execute_body_nodes(block_children, context, session_id)
+        execute_body_nodes(block_children, context, session_id, accumulate)
       _ ->
         Logger.debug("execute_block ExprBlock -> no content found")
         context
@@ -1035,11 +999,11 @@ defmodule RShell.Runtime do
   end
 
   # Fallback for non-Block nodes
-  defp execute_block(node, context, session_id) when is_struct(node) do
+  defp execute_block(node, context, session_id, _accumulate) when is_struct(node) do
     simple_execute(node, context, session_id)
   end
 
-  defp execute_block(_, context, _session_id), do: context
+  defp execute_block(_, context, _session_id, _accumulate), do: context
 
   # Extract variable name from Identifier node
   defp extract_variable_name(%Types.Identifier{source_info: %{text: text}}), do: text
