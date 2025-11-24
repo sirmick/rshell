@@ -362,18 +362,14 @@ defmodule RShell.Runtime do
           # Pass native args directly to builtins (returns updated state)
           execute_builtin(command_name, args, "", state)
         else
-          # For external commands, convert native values to JSON
-          _json_args = Enum.map(args, &convert_to_string/1)
-          # TODO: Use json_args when implementing external command execution
-          # Execute as external command
-          new_context = execute_external_command(text, state.context, state.session_id)
-          %{state | context: new_context}
+          # For external commands, show error message
+          # TODO: Implement external command execution
+          raise "Command not found: #{command_name}"
         end
 
       {:error, _reason} ->
-        # Couldn't parse command, fall back to text-based execution
-        new_context = execute_external_command(text, state.context, state.session_id)
-        %{state | context: new_context}
+        # Couldn't parse command, show error
+        raise "Invalid command syntax: #{text}"
     end
   end
 
@@ -431,11 +427,6 @@ defmodule RShell.Runtime do
     end
   end
 
-  # Execute an external command (non-builtin)
-  defp execute_external_command(_text, _context, _session_id) do
-    raise "External command execution not yet implemented"
-  end
-
   # Extract command name and arguments from Command AST node with context
   defp extract_command_parts(%Types.Command{name: name_node, argument: args_nodes}, context) do
     with {:ok, command_name} <- extract_command_name(name_node),
@@ -446,10 +437,10 @@ defmodule RShell.Runtime do
     end
   end
 
-  # Execute RShell-style assignment: X = value
+  # Execute RShell-style assignment: X = value or X += value
   # Uses ExprEvaluator to convert AST directly to native Elixir types (NO JSON!)
   defp execute_rshell_assignment(
-         %Types.Assignment{name: name_node, value: value_node},
+         %Types.Assignment{name: name_node, operator: operator_node, value: value_node, source_info: source_info},
          context,
          session_id
        ) do
@@ -461,21 +452,102 @@ defmodule RShell.Runtime do
         _ -> ""
       end
 
-    # NEW: Use ExprEvaluator to convert AST to native value
-    native_value = ExprEvaluator.evaluate(value_node, context)
+    # Extract operator from AST node - can be a struct with source_info or plain token
+    # If operator_node is nil, extract from the source text
+    operator = case operator_node do
+      %{source_info: %{text: text}} -> text
+      text when is_binary(text) -> text
+      nil ->
+        # Operator not in field - extract from source text
+        source_text = source_info.text || ""
+        # Extract operator between variable name and value (e.g., "X += 5" -> "+=")
+        cond do
+          String.contains?(source_text, " += ") -> "+="
+          String.contains?(source_text, " -= ") -> "-="
+          String.contains?(source_text, " *= ") -> "*="
+          String.contains?(source_text, " /= ") -> "/="
+          String.contains?(source_text, " %= ") -> "%="
+          String.contains?(source_text, " = ") -> "="
+          true -> "="
+        end
+      _ ->
+        Logger.error("Unknown operator format in assignment: #{inspect(operator_node)}")
+        "="
+    end
 
-    # Update environment with native value
-    new_env = Map.put(context.env, var_name, native_value)
+    # Evaluate the right-hand side value
+    rhs_value = ExprEvaluator.evaluate(value_node, context)
+
+    # Compute the new value based on operator
+    new_value =
+      case operator do
+        "=" ->
+          # Simple assignment
+          rhs_value
+
+        "+=" ->
+          # Add to existing value (treat undefined as 0)
+          lhs_value = Map.get(context.env, var_name, 0)
+          apply_compound_operator("+", lhs_value, rhs_value)
+
+        "-=" ->
+          # Subtract from existing value
+          lhs_value = Map.get(context.env, var_name, 0)
+          apply_compound_operator("-", lhs_value, rhs_value)
+
+        "*=" ->
+          # Multiply existing value
+          lhs_value = Map.get(context.env, var_name, 0)
+          apply_compound_operator("*", lhs_value, rhs_value)
+
+        "/=" ->
+          # Divide existing value
+          lhs_value = Map.get(context.env, var_name, 0)
+          apply_compound_operator("/", lhs_value, rhs_value)
+
+        "%=" ->
+          # Modulo existing value
+          lhs_value = Map.get(context.env, var_name, 0)
+          apply_compound_operator("%", lhs_value, rhs_value)
+
+        _ ->
+          raise "Unsupported assignment operator: #{operator}"
+      end
+
+    # Update environment with computed value
+    new_env = Map.put(context.env, var_name, new_value)
 
     # Broadcast variable_set event
     PubSub.broadcast(session_id, :context, {:variable_set, %{
       name: var_name,
-      value: native_value
+      value: new_value
     }})
 
     # Assignments produce NO output (update env only)
     %{context | env: new_env}
   end
+
+
+  # Apply compound assignment operators
+  defp apply_compound_operator("+", left, right) when is_number(left) and is_number(right), do: left + right
+  defp apply_compound_operator("-", left, right) when is_number(left) and is_number(right), do: left - right
+  defp apply_compound_operator("*", left, right) when is_number(left) and is_number(right), do: left * right
+  defp apply_compound_operator("/", left, right) when is_number(left) and is_number(right), do: left / right
+  defp apply_compound_operator("%", left, right) when is_integer(left) and is_integer(right), do: rem(left, right)
+  defp apply_compound_operator("+", left, right) when is_binary(left) and is_binary(right), do: left <> right
+  defp apply_compound_operator(op, left, right) do
+    raise "Unsupported compound operator '#{op}' for types #{type_name(left)} and #{type_name(right)}"
+  end
+
+  # Type name helper for error messages
+  defp type_name(val) when is_integer(val), do: "integer"
+  defp type_name(val) when is_float(val), do: "float"
+  defp type_name(val) when is_binary(val), do: "string"
+  defp type_name(val) when is_boolean(val), do: "boolean"
+  defp type_name(val) when is_list(val), do: "list"
+  defp type_name(val) when is_map(val), do: "map"
+  defp type_name(nil), do: "nil"
+  defp type_name(_), do: "unknown"
 
   # Extract command name from CommandName node by traversing children
   defp extract_command_name(%Types.CommandName{children: children}) when is_list(children) do

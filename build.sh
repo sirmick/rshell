@@ -105,8 +105,8 @@ install_elixir_deps() {
 build_rust_nif() {
     print_status $YELLOW "🔨 Building Rust NIF..."
     
-    # Build the Rust NIF
-    if cargo build --manifest-path native/RShell.BashParser/Cargo.toml; then
+    # Build the Rust NIF (RShell.Grammar contains the grammar parser NIF)
+    if cargo build --manifest-path native/RShell.Grammar/Cargo.toml --release; then
         print_status $GREEN "✅ Rust NIF built successfully"
     else
         print_status $RED "❌ Failed to build Rust NIF"
@@ -123,12 +123,12 @@ copy_nif() {
     
     # Determine the correct NIF file to copy based on the platform
     local nif_path=""
-    if [ -f "native/RShell.BashParser/target/debug/librshell_bash_parser.so" ]; then
-        nif_path="native/RShell.BashParser/target/debug/librshell_bash_parser.so"
-    elif [ -f "native/RShell.BashParser/target/debug/librshell_bash_parser.dylib" ]; then
-        nif_path="native/RShell.BashParser/target/debug/librshell_bash_parser.dylib"
-    elif [ -f "native/RShell.BashParser/target/debug/librshell_bash_parser.dll" ]; then
-        nif_path="native/RShell.BashParser/target/debug/librshell_bash_parser.dll"
+    if [ -f "native/RShell.Grammar/target/release/librshell_grammar.so" ]; then
+        nif_path="native/RShell.Grammar/target/release/librshell_grammar.so"
+    elif [ -f "native/RShell.Grammar/target/release/librshell_grammar.dylib" ]; then
+        nif_path="native/RShell.Grammar/target/release/librshell_grammar.dylib"
+    elif [ -f "native/RShell.Grammar/target/release/librshell_grammar.dll" ]; then
+        nif_path="native/RShell.Grammar/target/release/librshell_grammar.dll"
     else
         print_status $RED "❌ No NIF library file found"
         exit 1

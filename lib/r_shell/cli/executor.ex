@@ -27,7 +27,7 @@ defmodule RShell.CLI.Executor do
 
     # Parse the fragment
     case IncrementalParser.append_fragment(state.parser_pid, fragment) do
-      {:ok, ast} ->
+      {:ok, _ast} ->
         parse_metrics = Metrics.stop(parse_metrics)
 
         # Collect AST event (still async for observability)
@@ -36,8 +36,9 @@ defmodule RShell.CLI.Executor do
         # Start execution metrics
         exec_metrics = Metrics.start()
 
-        # SYNCHRONOUS execution - directly call runtime for executable nodes
-        execution_result = execute_ast_synchronously(ast, state.runtime_pid, state.session_id)
+        # SYNCHRONOUS execution - execute only INCREMENTAL nodes (changed_nodes), not full AST
+        # This prevents re-executing nodes from previous fragments
+        execution_result = execute_ast_synchronously_incremental(incremental_ast, state.runtime_pid, state.session_id)
 
         exec_metrics = Metrics.stop(exec_metrics)
 
@@ -111,23 +112,38 @@ defmodule RShell.CLI.Executor do
     end
   end
 
-  # Execute AST nodes synchronously by directly calling Runtime
-  # Returns execution_result map or nil if nothing executable
-  defp execute_ast_synchronously(ast, runtime_pid, _session_id) do
-    # Find executable nodes in the AST
-    executable_nodes = find_executable_nodes(ast)
+  # Execute incremental AST nodes only (changed_nodes from parser)
+  # This prevents re-executing nodes from previous fragments
+  defp execute_ast_synchronously_incremental(changed_nodes, runtime_pid, _session_id) when is_list(changed_nodes) do
+    # Filter to only executable nodes
+    executable_nodes = Enum.filter(changed_nodes, &ASTUtils.executable?/1)
 
     # Execute each node synchronously
+    execute_nodes_list(executable_nodes, runtime_pid)
+  end
+
+  defp execute_ast_synchronously_incremental(nil, _runtime_pid, _session_id) do
+    # No incremental nodes - nothing to execute
+    nil
+  end
+
+  # Execute a list of nodes and return the last result
+  defp execute_nodes_list(nodes, runtime_pid) do
     # CRITICAL: Return the LAST result, but keep executing all nodes
-    # (Previous bug: ignored accumulator, so last result was always returned)
-    Enum.reduce(executable_nodes, nil, fn node, _prev_result ->
+    Enum.reduce(nodes, nil, fn node, _prev_result ->
       case Runtime.execute_node(runtime_pid, node) do
         {:ok, context} ->
           # Get frame_stack from runtime to access output
           runtime_state = :sys.get_state(runtime_pid)
           frame_output = RShell.Runtime.FrameStack.get_output(runtime_state.frame_stack)
 
-          # Build execution result from context and frame_stack
+          # CRITICAL: Materialize streams BEFORE clearing FrameStack
+          # ExecutionRecord is a persistent snapshot - must hold actual data, not lazy references
+          # Streams would become empty after clear_output() invalidates the source data
+          stdout_list = Enum.to_list(frame_output.stdout)
+          stderr_list = Enum.to_list(frame_output.stderr)
+
+          # Build execution result with materialized lists
           result = %{
             status: :success,
             node: node,
@@ -135,20 +151,17 @@ defmodule RShell.CLI.Executor do
             node_text: ASTUtils.node_text(node),
             node_line: ASTUtils.node_line(node),
             exit_code: context.exit_code,
-            stdout: frame_output.stdout,
-            stderr: frame_output.stderr,
+            stdout: stdout_list,
+            stderr: stderr_list,
             context: context,
             # Already tracked in exec_metrics
             duration_us: 0,
             timestamp: DateTime.utc_now()
           }
 
-          # Clear FrameStack after materializing in :isolate mode
-          # This prevents output leakage to the next command
-          if RShell.Runtime.FrameStack.output_mode(runtime_state.frame_stack) == :isolate do
-            cleared_stack = RShell.Runtime.FrameStack.clear_output(runtime_state.frame_stack)
-            :sys.replace_state(runtime_pid, fn state -> %{state | frame_stack: cleared_stack} end)
-          end
+          # Clear FrameStack to prevent output leakage to next command
+          cleared_stack = RShell.Runtime.FrameStack.clear_output(runtime_state.frame_stack)
+          :sys.replace_state(runtime_pid, fn state -> %{state | frame_stack: cleared_stack} end)
 
           result
 
@@ -170,13 +183,6 @@ defmodule RShell.CLI.Executor do
       end
     end)
   end
-
-  # Find executable nodes in AST
-  defp find_executable_nodes(%{children: children}) when is_list(children) do
-    Enum.filter(children, &ASTUtils.executable?/1)
-  end
-
-  defp find_executable_nodes(_), do: []
 
   # Extract execution data from result and runtime
   defp extract_execution_data(nil, runtime_pid) do

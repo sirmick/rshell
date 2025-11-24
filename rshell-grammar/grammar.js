@@ -226,28 +226,28 @@ module.exports = grammar({
 
     binary_expression: $ => choice(
       // Arithmetic
-      prec.left(2, seq($.expression, '+', $.expression)),
-      prec.left(2, seq($.expression, '-', $.expression)),
-      prec.left(3, seq($.expression, '*', $.expression)),
-      prec.left(3, seq($.expression, '/', $.expression)),
-      prec.left(3, seq($.expression, '%', $.expression)),
+      prec.left(2, seq(field('left', $.expression), field('operator', '+'), field('right', $.expression))),
+      prec.left(2, seq(field('left', $.expression), field('operator', '-'), field('right', $.expression))),
+      prec.left(3, seq(field('left', $.expression), field('operator', '*'), field('right', $.expression))),
+      prec.left(3, seq(field('left', $.expression), field('operator', '/'), field('right', $.expression))),
+      prec.left(3, seq(field('left', $.expression), field('operator', '%'), field('right', $.expression))),
       
       // Comparison
-      prec.left(1, seq($.expression, '>', $.expression)),
-      prec.left(1, seq($.expression, '<', $.expression)),
-      prec.left(1, seq($.expression, '>=', $.expression)),
-      prec.left(1, seq($.expression, '<=', $.expression)),
-      prec.left(1, seq($.expression, '==', $.expression)),
-      prec.left(1, seq($.expression, '!=', $.expression)),
+      prec.left(1, seq(field('left', $.expression), field('operator', '>'), field('right', $.expression))),
+      prec.left(1, seq(field('left', $.expression), field('operator', '<'), field('right', $.expression))),
+      prec.left(1, seq(field('left', $.expression), field('operator', '>='), field('right', $.expression))),
+      prec.left(1, seq(field('left', $.expression), field('operator', '<='), field('right', $.expression))),
+      prec.left(1, seq(field('left', $.expression), field('operator', '=='), field('right', $.expression))),
+      prec.left(1, seq(field('left', $.expression), field('operator', '!='), field('right', $.expression))),
       
       // Logical
-      prec.left(0, seq($.expression, choice('and', '&&'), $.expression)),
-      prec.left(0, seq($.expression, choice('or', '||'), $.expression)),
+      prec.left(0, seq(field('left', $.expression), field('operator', choice('and', '&&')), field('right', $.expression))),
+      prec.left(0, seq(field('left', $.expression), field('operator', choice('or', '||')), field('right', $.expression))),
     ),
 
     unary_expression: $ => choice(
-      prec(4, seq(choice('not', '!'), $.expression)),
-      prec(4, seq('-', $.expression)),
+      prec(4, seq(field('operator', choice('not', '!')), field('argument', $.expression))),
+      prec(4, seq(field('operator', '-'), field('argument', $.expression))),
     ),
 
     parenthesized: $ => alias(

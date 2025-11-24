@@ -130,19 +130,23 @@ defmodule BashParser.AST.RShellTypes do
     @moduledoc """
     Node type: binary_expression
     """
-    @enforce_keys [:source_info]
-    defstruct [:source_info, :children]
+    @enforce_keys [:source_info, :left, :operator, :right]
+    defstruct [:source_info, :left, :operator, :right]
 
     @type t :: %__MODULE__{
             source_info: BashParser.AST.RShellTypes.SourceInfo.t(),
-          children: list(any())
+          left: any(),
+          operator: any(),
+          right: any()
           }
 
     @spec from_map(map()) :: t()
     def from_map(data) do
       %__MODULE__{
         source_info: BashParser.AST.RShellTypes.SourceInfo.from_map(data),
-          children: BashParser.AST.RShellTypes.extract_children(data, "children")
+          left: BashParser.AST.RShellTypes.extract_field(data, "left"),
+          operator: BashParser.AST.RShellTypes.extract_field(data, "operator"),
+          right: BashParser.AST.RShellTypes.extract_field(data, "right")
       }
     end
 
@@ -180,19 +184,21 @@ defmodule BashParser.AST.RShellTypes do
     @moduledoc """
     Node type: unary_expression
     """
-    @enforce_keys [:source_info]
-    defstruct [:source_info, :children]
+    @enforce_keys [:source_info, :argument, :operator]
+    defstruct [:source_info, :argument, :operator]
 
     @type t :: %__MODULE__{
             source_info: BashParser.AST.RShellTypes.SourceInfo.t(),
-          children: list(any())
+          argument: any(),
+          operator: any()
           }
 
     @spec from_map(map()) :: t()
     def from_map(data) do
       %__MODULE__{
         source_info: BashParser.AST.RShellTypes.SourceInfo.from_map(data),
-          children: BashParser.AST.RShellTypes.extract_children(data, "children")
+          argument: BashParser.AST.RShellTypes.extract_field(data, "argument"),
+          operator: BashParser.AST.RShellTypes.extract_field(data, "operator")
       }
     end
 

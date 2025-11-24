@@ -860,9 +860,15 @@ defmodule RShell.CLI do
           if stdout_str != "", do: IO.write(stdout_str)
           if stderr_str != "", do: IO.write(:stderr, stderr_str)
 
-          # Show exit code if non-zero
-          if last_record.exit_code != 0 do
-            IO.puts("⚠️  Exit code: #{last_record.exit_code}")
+          # Check for execution errors and display them
+          if last_record.execution_result && last_record.execution_result.status == :error do
+            error_msg = Map.get(last_record.execution_result, :error, "Unknown error")
+            IO.puts(:stderr, "❌ #{error_msg}")
+          else
+            # Show exit code if non-zero (only for successful executions)
+            if last_record.exit_code != 0 && last_record.exit_code != nil do
+              IO.puts("⚠️  Exit code: #{last_record.exit_code}")
+            end
           end
         end
 
@@ -882,8 +888,22 @@ defmodule RShell.CLI do
         }
         loop(new_istate)
 
+      {:error, %{"reason" => "parse_error"} = error} ->
+        IO.puts(:stderr, "\n❌ Syntax error: Unable to parse input")
+        if error["message"] do
+          IO.puts(:stderr, "   #{error["message"]}")
+        end
+        IO.puts(:stderr, "")
+        # Clear input buffer on error
+        loop(%{istate | input_buffer: ""})
+
+      {:error, reason} when is_binary(reason) ->
+        IO.puts(:stderr, "\n❌ Error: #{reason}\n")
+        # Clear input buffer on error
+        loop(%{istate | input_buffer: ""})
+
       {:error, reason} ->
-        IO.puts("\n❌ Execution error: #{inspect(reason)}\n")
+        IO.puts(:stderr, "\n❌ Execution error: #{inspect(reason)}\n")
         # Clear input buffer on error
         loop(%{istate | input_buffer: ""})
     end

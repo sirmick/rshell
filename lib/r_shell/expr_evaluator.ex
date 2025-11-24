@@ -95,52 +95,65 @@ defmodule RShell.ExprEvaluator do
   # Expressions
   # ============================================================================
 
-  def evaluate(%Types.BinaryExpression{source_info: source_info, children: children}, context) do
-    # The operator is in the source_info.text of the BinaryExpression node
-    # Extract it by finding non-whitespace characters that aren't part of operands
-    # OR look for operator nodes in children
-
-    # Try pattern: [left, operator_node, right] or [left, right] with operator in source_info
-    {op, left, right} = case children do
-      # Three children: [left, operator, right]
-      [left, %{source_info: %{text: op_text}}, right] when op_text in ["==", "!=", "<", "<=", ">", ">=", "&&", "||", "+", "-", "*", "/", "%"] ->
-        {op_text, left, right}
-
-      # Two children: operator must be extracted differently
-      [left, right] ->
-        # The operator might be in the BinaryExpression's own text
-        # Extract by looking at what's between the operands
-        op_text = extract_operator_from_text(source_info.text)
-        {op_text, left, right}
-
+  def evaluate(%Types.BinaryExpression{left: left, operator: operator, right: right, source_info: source_info}, context) do
+    # Extract operator text - it can be a struct with source_info or a plain token
+    op_text = case operator do
+      %{source_info: %{text: text}} -> text
+      text when is_binary(text) -> text
+      nil ->
+        # Operator not in field - extract from source text by analyzing the expression
+        source_text = source_info.text || ""
+        # Find the operator in the source text by checking for known operators
+        cond do
+          String.contains?(source_text, " == ") -> "=="
+          String.contains?(source_text, " != ") -> "!="
+          String.contains?(source_text, " <= ") -> "<="
+          String.contains?(source_text, " >= ") -> ">="
+          String.contains?(source_text, " < ") -> "<"
+          String.contains?(source_text, " > ") -> ">"
+          String.contains?(source_text, " && ") -> "&&"
+          String.contains?(source_text, " || ") -> "||"
+          String.contains?(source_text, " and ") -> "and"
+          String.contains?(source_text, " or ") -> "or"
+          String.contains?(source_text, " + ") -> "+"
+          String.contains?(source_text, " - ") -> "-"
+          String.contains?(source_text, " * ") -> "*"
+          String.contains?(source_text, " / ") -> "/"
+          String.contains?(source_text, " % ") -> "%"
+          true ->
+            Logger.warning("BinaryExpression: could not extract operator from: #{inspect(source_text)}")
+            nil
+        end
       _ ->
-        {nil, nil, nil}
+        Logger.warning("BinaryExpression operator is unexpected format: #{inspect(operator)}")
+        nil
     end
 
-    if op && left && right do
+    if op_text do
       left_val = evaluate(left, context)
       right_val = evaluate(right, context)
-      apply_binary_operator(op, left_val, right_val)
+      apply_binary_operator(op_text, left_val, right_val)
     else
-      Logger.error("Invalid binary expression structure")
-      Logger.error("  source_info.text: #{inspect(source_info.text)}")
-      Logger.error("  children count: #{length(children)}")
-      Enum.with_index(children) |> Enum.each(fn {child, idx} ->
-        Logger.error("  child #{idx}: #{inspect(child.__struct__)}")
-      end)
-      raise "Invalid binary expression structure"
+      Logger.error("Cannot evaluate BinaryExpression without operator")
+      nil
     end
   end
 
   # Unary expressions (grouped here with other expressions)
-  def evaluate(%Types.UnaryExpression{children: children}, context) do
-    case children do
-      [%{source_info: %{text: op}}, operand] ->
-        operand_val = evaluate(operand, context)
-        apply_unary_operator(op, operand_val)
+  def evaluate(%Types.UnaryExpression{operator: operator, argument: argument}, context) do
+    # Extract operator text - it can be a struct with source_info or a plain token
+    op_text = case operator do
+      %{source_info: %{text: text}} -> text
+      text when is_binary(text) -> text
+      _ -> nil
+    end
 
-      _ ->
-        raise "Invalid unary expression structure"
+    if op_text do
+      argument_val = evaluate(argument, context)
+      apply_unary_operator(op_text, argument_val)
+    else
+      Logger.error("Cannot evaluate UnaryExpression without operator")
+      nil
     end
   end
 
@@ -172,13 +185,24 @@ defmodule RShell.ExprEvaluator do
   end
 
   def evaluate(%Types.Identifier{source_info: %{text: name}}, context) do
-    Map.get(context.env || %{}, name)
+    # Handle nil context or nil env gracefully
+    env = case context do
+      %{env: env} when is_map(env) -> env
+      _ -> %{}
+    end
+    Map.get(env, name)
   end
 
   def evaluate(%Types.VariableReference{children: children}, context) do
+    # Handle nil context or nil env gracefully
+    env = case context do
+      %{env: env} when is_map(env) -> env
+      _ -> %{}
+    end
+
     case children do
       [%Types.Identifier{source_info: %{text: name}}] ->
-        Map.get(context.env || %{}, name)
+        Map.get(env, name)
 
       _ ->
         nil
@@ -237,27 +261,6 @@ defmodule RShell.ExprEvaluator do
   # Private Helpers
   # ============================================================================
 
-  # Extract operator from binary expression text (e.g., "X == 5" -> "==")
-  defp extract_operator_from_text(text) when is_binary(text) do
-    cond do
-      String.contains?(text, "==") -> "=="
-      String.contains?(text, "!=") -> "!="
-      String.contains?(text, "<=") -> "<="
-      String.contains?(text, ">=") -> ">="
-      String.contains?(text, "&&") -> "&&"
-      String.contains?(text, "||") -> "||"
-      String.contains?(text, "<") -> "<"
-      String.contains?(text, ">") -> ">"
-      String.contains?(text, "+") -> "+"
-      String.contains?(text, "-") -> "-"
-      String.contains?(text, "*") -> "*"
-      String.contains?(text, "/") -> "/"
-      String.contains?(text, "%") -> "%"
-      true -> nil
-    end
-  end
-
-  defp extract_operator_from_text(_), do: nil
 
   # Extract key from ObjectEntry key node
   defp extract_key(%Types.String{source_info: %{text: text}}, _context) do

@@ -27,7 +27,8 @@ pub struct ParserResource {
     old_tree: Mutex<Option<Tree>>,
     accumulated_input: Mutex<String>,
     max_buffer_size: usize,
-    language: LanguageType,  // NEW: Track which language this parser uses
+    #[allow(dead_code)]  // Reserved for future multi-language support
+    language: LanguageType,
 }
 
 impl ParserResource {

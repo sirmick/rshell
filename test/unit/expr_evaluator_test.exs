@@ -242,11 +242,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates addition" do
       node = %Types.BinaryExpression{
         source_info: source_info("5+3"),
-        children: [
-          %Types.Number{source_info: source_info("5")},
-          %{source_info: source_info("+")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Number{source_info: source_info("5")},
+        operator: %{source_info: source_info("+")},
+        right: %Types.Number{source_info: source_info("3")}
       }
       assert ExprEvaluator.evaluate(node, context()) == 8
     end
@@ -254,11 +252,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates subtraction" do
       node = %Types.BinaryExpression{
         source_info: source_info("10-3"),
-        children: [
-          %Types.Number{source_info: source_info("10")},
-          %{source_info: source_info("-")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Number{source_info: source_info("10")},
+        operator: %{source_info: source_info("-")},
+        right: %Types.Number{source_info: source_info("3")}
       }
       assert ExprEvaluator.evaluate(node, context()) == 7
     end
@@ -266,11 +262,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates multiplication" do
       node = %Types.BinaryExpression{
         source_info: source_info("4*5"),
-        children: [
-          %Types.Number{source_info: source_info("4")},
-          %{source_info: source_info("*")},
-          %Types.Number{source_info: source_info("5")}
-        ]
+        left: %Types.Number{source_info: source_info("4")},
+        operator: %{source_info: source_info("*")},
+        right: %Types.Number{source_info: source_info("5")}
       }
       assert ExprEvaluator.evaluate(node, context()) == 20
     end
@@ -278,11 +272,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates division" do
       node = %Types.BinaryExpression{
         source_info: source_info("15/3"),
-        children: [
-          %Types.Number{source_info: source_info("15")},
-          %{source_info: source_info("/")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Number{source_info: source_info("15")},
+        operator: %{source_info: source_info("/")},
+        right: %Types.Number{source_info: source_info("3")}
       }
       assert ExprEvaluator.evaluate(node, context()) == 5.0
     end
@@ -290,11 +282,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates modulo" do
       node = %Types.BinaryExpression{
         source_info: source_info("17%5"),
-        children: [
-          %Types.Number{source_info: source_info("17")},
-          %{source_info: source_info("%")},
-          %Types.Number{source_info: source_info("5")}
-        ]
+        left: %Types.Number{source_info: source_info("17")},
+        operator: %{source_info: source_info("%")},
+        right: %Types.Number{source_info: source_info("5")}
       }
       assert ExprEvaluator.evaluate(node, context()) == 2
     end
@@ -302,11 +292,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates equality comparison" do
       node = %Types.BinaryExpression{
         source_info: source_info("5==5"),
-        children: [
-          %Types.Number{source_info: source_info("5")},
-          %{source_info: source_info("==")},
-          %Types.Number{source_info: source_info("5")}
-        ]
+        left: %Types.Number{source_info: source_info("5")},
+        operator: %{source_info: source_info("==")},
+        right: %Types.Number{source_info: source_info("5")}
       }
       assert ExprEvaluator.evaluate(node, context()) == true
     end
@@ -314,11 +302,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates inequality comparison" do
       node = %Types.BinaryExpression{
         source_info: source_info("5!=3"),
-        children: [
-          %Types.Number{source_info: source_info("5")},
-          %{source_info: source_info("!=")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Number{source_info: source_info("5")},
+        operator: %{source_info: source_info("!=")},
+        right: %Types.Number{source_info: source_info("3")}
       }
       assert ExprEvaluator.evaluate(node, context()) == true
     end
@@ -326,11 +312,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates less than" do
       node = %Types.BinaryExpression{
         source_info: source_info("3<5"),
-        children: [
-          %Types.Number{source_info: source_info("3")},
-          %{source_info: source_info("<")},
-          %Types.Number{source_info: source_info("5")}
-        ]
+        left: %Types.Number{source_info: source_info("3")},
+        operator: %{source_info: source_info("<")},
+        right: %Types.Number{source_info: source_info("5")}
       }
       assert ExprEvaluator.evaluate(node, context()) == true
     end
@@ -338,11 +322,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates string concatenation" do
       node = %Types.BinaryExpression{
         source_info: source_info("\"hello\"+\" \"+\"world\""),
-        children: [
-          %Types.String{source_info: source_info("\"hello\"")},
-          %{source_info: source_info("+")},
-          %Types.String{source_info: source_info("\" world\"")}
-        ]
+        left: %Types.String{source_info: source_info("\"hello\"")},
+        operator: %{source_info: source_info("+")},
+        right: %Types.String{source_info: source_info("\" world\"")}
       }
       assert ExprEvaluator.evaluate(node, context()) == "hello world"
     end
@@ -350,11 +332,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates logical AND" do
       node = %Types.BinaryExpression{
         source_info: source_info("true&&false"),
-        children: [
-          %Types.Identifier{source_info: source_info("true")},
-          %{source_info: source_info("&&")},
-          %Types.Identifier{source_info: source_info("false")}
-        ]
+        left: %Types.Identifier{source_info: source_info("true")},
+        operator: %{source_info: source_info("&&")},
+        right: %Types.Identifier{source_info: source_info("false")}
       }
       assert ExprEvaluator.evaluate(node, context()) == false
     end
@@ -362,11 +342,9 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates logical OR" do
       node = %Types.BinaryExpression{
         source_info: source_info("false||true"),
-        children: [
-          %Types.Identifier{source_info: source_info("false")},
-          %{source_info: source_info("||")},
-          %Types.Identifier{source_info: source_info("true")}
-        ]
+        left: %Types.Identifier{source_info: source_info("false")},
+        operator: %{source_info: source_info("||")},
+        right: %Types.Identifier{source_info: source_info("true")}
       }
       assert ExprEvaluator.evaluate(node, context()) == true
     end
@@ -376,10 +354,8 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates negation" do
       node = %Types.UnaryExpression{
         source_info: source_info("-5"),
-        children: [
-          %{source_info: source_info("-")},
-          %Types.Number{source_info: source_info("5")}
-        ]
+        operator: %{source_info: source_info("-")},
+        argument: %Types.Number{source_info: source_info("5")}
       }
       assert ExprEvaluator.evaluate(node, context()) == -5
     end
@@ -387,10 +363,8 @@ defmodule RShell.ExprEvaluatorTest do
     test "evaluates logical NOT" do
       node = %Types.UnaryExpression{
         source_info: source_info("!true"),
-        children: [
-          %{source_info: source_info("!")},
-          %Types.Identifier{source_info: source_info("true")}
-        ]
+        operator: %{source_info: source_info("!")},
+        argument: %Types.Identifier{source_info: source_info("true")}
       }
       assert ExprEvaluator.evaluate(node, context()) == false
     end
@@ -426,11 +400,9 @@ defmodule RShell.ExprEvaluatorTest do
       ctx = context(%{"X" => 5})
       node = %Types.BinaryExpression{
         source_info: source_info("X+3"),
-        children: [
-          %Types.Identifier{source_info: source_info("X")},
-          %{source_info: source_info("+")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Identifier{source_info: source_info("X")},
+        operator: %{source_info: source_info("+")},
+        right: %Types.Number{source_info: source_info("3")}
       }
       assert ExprEvaluator.evaluate(node, ctx) == 8
     end
@@ -439,20 +411,16 @@ defmodule RShell.ExprEvaluatorTest do
       # (5 + 3) * 2
       inner = %Types.BinaryExpression{
         source_info: source_info("5+3"),
-        children: [
-          %Types.Number{source_info: source_info("5")},
-          %{source_info: source_info("+")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Number{source_info: source_info("5")},
+        operator: %{source_info: source_info("+")},
+        right: %Types.Number{source_info: source_info("3")}
       }
 
       node = %Types.BinaryExpression{
         source_info: source_info("(5+3)*2"),
-        children: [
-          inner,
-          %{source_info: source_info("*")},
-          %Types.Number{source_info: source_info("2")}
-        ]
+        left: inner,
+        operator: %{source_info: source_info("*")},
+        right: %Types.Number{source_info: source_info("2")}
       }
       assert ExprEvaluator.evaluate(node, context()) == 16
     end
@@ -461,11 +429,9 @@ defmodule RShell.ExprEvaluatorTest do
       # {"a": 5+3, "b": [1,2,3]}
       sum_expr = %Types.BinaryExpression{
         source_info: source_info("5+3"),
-        children: [
-          %Types.Number{source_info: source_info("5")},
-          %{source_info: source_info("+")},
-          %Types.Number{source_info: source_info("3")}
-        ]
+        left: %Types.Number{source_info: source_info("5")},
+        operator: %{source_info: source_info("+")},
+        right: %Types.Number{source_info: source_info("3")}
       }
 
       array = %Types.Array{
