@@ -4,6 +4,7 @@ defmodule RShell.Integration.InteractiveModeTest do
   alias RShell.CLI
   alias RShell.CLI.State
   alias RShell.Builtins.Utils
+  import RShell.TestHelpers
 
   @moduledoc """
   Tests for interactive mode behavior, focusing on:
@@ -22,8 +23,9 @@ defmodule RShell.Integration.InteractiveModeTest do
       record = List.last(state.history)
 
       # Variable assignments MUST produce zero output
-      assert record.stdout == [], "Variable assignment produced stdout: #{inspect(record.stdout)}"
-      assert record.stderr == [], "Variable assignment produced stderr: #{inspect(record.stderr)}"
+      output = materialize_output(record)
+      assert output.stdout == [], "Variable assignment produced stdout: #{inspect(output.stdout)}"
+      assert output.stderr == [], "Variable assignment produced stderr: #{inspect(output.stderr)}"
       assert record.exit_code == 0
     end
 
@@ -32,17 +34,19 @@ defmodule RShell.Integration.InteractiveModeTest do
       # Execute man (produces output)
       {:ok, state1} = CLI.execute_string("man\n")
       record1 = List.last(state1.history)
-      assert length(record1.stdout) > 0, "man should produce output"
+      output1 = materialize_output(record1)
+      assert length(output1.stdout) > 0, "man should produce output"
 
       # Execute variable assignment (MUST produce NO output)
       {:ok, state2} = CLI.execute_string("X = 12\n", state: state1)
       record2 = List.last(state2.history)
 
       # THE CRITICAL ASSERTION - this was failing before the fix
-      assert record2.stdout == [],
-             "Variable assignment leaked output from previous command! Got: #{inspect(record2.stdout)}"
+      output2 = materialize_output(record2)
+      assert output2.stdout == [],
+             "Variable assignment leaked output from previous command! Got: #{inspect(output2.stdout)}"
 
-      assert record2.stderr == []
+      assert output2.stderr == []
     end
 
     test "variable assignment followed by echo" do
@@ -53,7 +57,7 @@ defmodule RShell.Integration.InteractiveModeTest do
       record2 = List.last(state2.history)
 
       # First command (assignment) - no output
-      assert record1.stdout == []
+      assert_stdout(record1, [])
 
       # Second command (echo) - should show "hello"
       stdout = Utils.format_output(record2.stdout)
@@ -62,10 +66,13 @@ defmodule RShell.Integration.InteractiveModeTest do
 
     test "multiple commands maintain strict isolation" do
       commands = [
-        {"man\n", fn r -> assert length(r.stdout) > 0 end},
-        {"X = 5\n", fn r -> assert r.stdout == [] end},
+        {"man\n", fn r ->
+          output = materialize_output(r)
+          assert length(output.stdout) > 0
+        end},
+        {"X = 5\n", fn r -> assert_stdout(r, []) end},
         {"echo test\n", fn r -> assert Utils.format_output(r.stdout) =~ "test" end},
-        {"Y = 10\n", fn r -> assert r.stdout == [] end},
+        {"Y = 10\n", fn r -> assert_stdout(r, []) end},
         {"math:add 5 10\n", fn r -> assert Utils.format_output(r.stdout) =~ "15" end}
       ]
 
@@ -92,7 +99,7 @@ defmodule RShell.Integration.InteractiveModeTest do
       assert Utils.format_output(r1.stdout) =~ "first"
 
       # Variable assignment - NO output
-      assert r2.stdout == []
+      assert_stdout(r2, [])
 
       # Second echo - has output (not from first echo!)
       stdout3 = Utils.format_output(r3.stdout)
@@ -237,7 +244,7 @@ defmodule RShell.Integration.InteractiveModeTest do
 
       # First record: variable assignment (NO output!)
       assert r1.fragment =~ "X = 5"
-      assert r1.stdout == []
+      assert_stdout(r1, [])
 
       # Second record: if statement
       assert r2.fragment =~ "if (X"
@@ -278,9 +285,9 @@ defmodule RShell.Integration.InteractiveModeTest do
 
       # All should produce no output
       [r1, r2, r3] = state3.history
-      assert r1.stdout == []
-      assert r2.stdout == []
-      assert r3.stdout == []
+      assert_stdout(r1, [])
+      assert_stdout(r2, [])
+      assert_stdout(r3, [])
     end
   end
 
@@ -340,11 +347,12 @@ defmodule RShell.Integration.InteractiveModeTest do
       [man_record, var_record] = state2.history
 
       # man should have output
-      assert length(man_record.stdout) > 0
+      man_output = materialize_output(man_record)
+      assert length(man_output.stdout) > 0
 
       # Variable assignment MUST NOT have output
-      assert var_record.stdout == [],
-             "REGRESSION: Variable assignment leaked man output! Fix drain_pubsub_events/1"
+      assert_stdout(var_record, [],
+             "REGRESSION: Variable assignment leaked man output! Fix drain_pubsub_events/1")
     end
 
     test "REGRESSION: echo followed by variable shows no echo output" do
@@ -354,7 +362,7 @@ defmodule RShell.Integration.InteractiveModeTest do
       var_record = List.last(state2.history)
 
       # Variable assignment MUST NOT contain "LEAKED_TEXT"
-      assert var_record.stdout == []
+      assert_stdout(var_record, [])
       refute Utils.format_output(var_record.stdout) =~ "LEAKED_TEXT"
     end
   end

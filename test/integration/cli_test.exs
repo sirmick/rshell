@@ -2,6 +2,7 @@ defmodule RShell.Integration.CLITest do
   use ExUnit.Case, async: true
 
   import RShell.TestSupport.CLIHelper
+  import RShell.TestHelpers
 
   alias RShell.CLI
   alias RShell.CLI.ExecutionRecord
@@ -98,7 +99,9 @@ defmodule RShell.Integration.CLITest do
         )
 
       # Verify "should not print" does NOT appear
-      outputs = Enum.flat_map(state.history, fn r -> r.stdout end)
+      outputs = Enum.flat_map(state.history, fn r ->
+        materialize_output(r).stdout
+      end)
       refute Enum.any?(outputs, &(&1 =~ "should not print"))
     end
   end
@@ -160,7 +163,7 @@ defmodule RShell.Integration.CLITest do
       assert length(state2.history) == 2
 
       record = List.last(state2.history)
-      assert record.stdout == ["second\n"]
+      assert_stdout(record, ["second\n"])
       assert record.exit_code == 0
     end
   end

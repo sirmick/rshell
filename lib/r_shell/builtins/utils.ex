@@ -102,17 +102,32 @@ defmodule RShell.Builtins.Utils do
 
   @doc """
   Format output for display - convert native term lists to strings.
+  Handles streams by materializing them first, including nested streams.
   """
   def format_output([]), do: ""
 
+  def format_output(%Stream{} = stream) do
+    # Materialize stream and format recursively
+    stream
+    |> Enum.to_list()
+    |> Enum.flat_map(&materialize_item/1)
+    |> format_output()
+  end
+
   def format_output(output) when is_list(output) do
     output
+    |> Enum.flat_map(&materialize_item/1)  # Materialize nested streams/functions
     |> Enum.map(&term_to_string/1)
     |> Enum.join("")
   end
 
   def format_output(output) when is_binary(output), do: output
   def format_output(output), do: term_to_string(output)
+
+  # Recursively materialize nested streams/functions
+  defp materialize_item(%Stream{} = s), do: Enum.to_list(s) |> Enum.flat_map(&materialize_item/1)
+  defp materialize_item(f) when is_function(f), do: []  # Skip raw stream functions
+  defp materialize_item(item), do: [item]
 
   @doc """
   Convert a single term to string for display.
@@ -135,4 +150,10 @@ defmodule RShell.Builtins.Utils do
   def term_to_string(false), do: "false"
   def term_to_string(nil), do: ""
   def term_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
+
+  # Catch-all for unexpected types (like raw stream functions)
+  # This should not happen in normal operation, but provides safety
+  def term_to_string(term) when is_function(term), do: ""
+  def term_to_string(%Stream{} = s), do: s |> Enum.to_list() |> Enum.map(&term_to_string/1) |> Enum.join("")
+  def term_to_string(_unknown), do: ""
 end

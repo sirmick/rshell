@@ -19,6 +19,7 @@ defmodule RShell.TestHelpers do
 
   alias RShell.Runtime.{FrameStack, Frame}
   alias RShell.BuiltinResult
+  alias RShell.CLI.ExecutionRecord
 
   @doc """
   Materialize output from a FrameStack, Frame, or BuiltinResult.
@@ -53,6 +54,13 @@ defmodule RShell.TestHelpers do
   def materialize_output(%BuiltinResult{} = result) do
     {_ctx, stdout, stderr} = BuiltinResult.materialize_and_update(result)
     %{stdout: stdout, stderr: stderr}
+  end
+
+  def materialize_output(%ExecutionRecord{} = record) do
+    %{
+      stdout: to_list(record.stdout),
+      stderr: to_list(record.stderr)
+    }
   end
 
   # Handle raw output maps (already materialized or from get_output)
@@ -103,17 +111,20 @@ defmodule RShell.TestHelpers do
 
       assert_stdout(stack, ["hello\\n", "world\\n"])
       assert_stdout(result, "hello\\nworld\\n")
+      assert_stdout(result, [], "Custom error message")
   """
-  def assert_stdout(output_source, expected) when is_list(expected) do
+  def assert_stdout(output_source, expected, message \\ nil)
+
+  def assert_stdout(output_source, expected, message) when is_list(expected) do
     actual = stdout_list(output_source)
-    ExUnit.Assertions.assert actual == expected,
-      "Expected stdout to be #{inspect(expected)}, got #{inspect(actual)}"
+    default_message = "Expected stdout to be #{inspect(expected)}, got #{inspect(actual)}"
+    ExUnit.Assertions.assert actual == expected, message || default_message
   end
 
-  def assert_stdout(output_source, expected) when is_binary(expected) do
+  def assert_stdout(output_source, expected, message) when is_binary(expected) do
     actual = stdout_string(output_source)
-    ExUnit.Assertions.assert actual == expected,
-      "Expected stdout to be #{inspect(expected)}, got #{inspect(actual)}"
+    default_message = "Expected stdout to be #{inspect(expected)}, got #{inspect(actual)}"
+    ExUnit.Assertions.assert actual == expected, message || default_message
   end
 
   @doc """
