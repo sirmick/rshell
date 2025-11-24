@@ -71,29 +71,6 @@ build_grammar() {
     fi
 }
 
-# Setup tree-sitter-bash
-setup_tree_sitter() {
-    print_status $YELLOW "🌳 Setting up tree-sitter-bash..."
-    
-    # Check if vendor/tree-sitter-bash exists
-    if [ ! -d "vendor/tree-sitter-bash" ]; then
-        print_status $YELLOW "📥 Cloning tree-sitter-bash..."
-        mkdir -p vendor
-        git clone https://github.com/tree-sitter/tree-sitter-bash.git vendor/tree-sitter-bash
-        print_status $GREEN "✅ tree-sitter-bash cloned"
-    else
-        print_status $GREEN "✅ tree-sitter-bash already exists"
-    fi
-    
-    # Check for node-types.json
-    if [ ! -f "vendor/tree-sitter-bash/src/node-types.json" ]; then
-        print_status $RED "❌ node-types.json not found in vendor/tree-sitter-bash/src/"
-        exit 1
-    fi
-    
-    print_status $GREEN "✅ tree-sitter-bash setup complete"
-}
-
 # Install Elixir dependencies
 install_elixir_deps() {
     print_status $YELLOW "📦 Installing Elixir dependencies..."
@@ -143,7 +120,7 @@ copy_nif() {
 generate_ast_types() {
     print_status $YELLOW "🔧 Generating AST types from tree-sitter grammar..."
     
-    if mix gen.ast_types; then
+    if mix gen.rshell_ast_types; then
         print_status $GREEN "✅ AST types generated successfully"
     else
         print_status $RED "❌ AST type generation failed"
@@ -198,9 +175,6 @@ main() {
     
     # Build RShell grammar (tree-sitter)
     build_grammar
-    
-    # Setup tree-sitter-bash
-    setup_tree_sitter
     
     # Install Elixir dependencies
     install_elixir_deps

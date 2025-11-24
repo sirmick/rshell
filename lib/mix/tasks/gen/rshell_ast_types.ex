@@ -23,7 +23,7 @@ defmodule Mix.Tasks.Gen.RshellAstTypes do
 
   ## Options
 
-      --schema PATH     Path to node-types.json (default: vendor/tree-sitter-rshell/src/node-types.json)
+      --schema PATH     Path to node-types.json (default: rshell-grammar/src/node-types.json)
       --output PATH     Output file path (default: lib/bash_parser/ast/rshell_types.ex)
   """
 
@@ -31,7 +31,7 @@ defmodule Mix.Tasks.Gen.RshellAstTypes do
 
   @shortdoc "Generate typed AST structures from tree-sitter-rshell grammar"
 
-  @default_schema_path "vendor/tree-sitter-rshell/src/node-types.json"
+  @default_schema_path "rshell-grammar/src/node-types.json"
   @default_output_path "lib/bash_parser/ast/rshell_types.ex"
 
   @impl Mix.Task

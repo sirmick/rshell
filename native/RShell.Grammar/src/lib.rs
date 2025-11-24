@@ -1,3 +1,5 @@
+#![allow(non_local_definitions)]
+
 use rustler::{Atom, Env, Error, NifResult, ResourceArc, Term};
 use std::collections::HashMap;
 use std::sync::Mutex;
