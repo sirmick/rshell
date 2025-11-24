@@ -203,27 +203,37 @@ defmodule RShell.Runtime.FrameStack do
   - `:accumulate` mode: Appends to existing output (for loops/blocks)
   - Other modes: Reserved for future use
 
+  Accepts streams, lists, or strings and converts to streams internally.
+
   ## Examples
 
       iex> stack = RShell.Runtime.FrameStack.new(output_mode: :isolate)
       iex> stack = RShell.Runtime.FrameStack.add_output(stack, ["first\\n"], [])
       iex> stack = RShell.Runtime.FrameStack.add_output(stack, ["second\\n"], [])
-      iex> RShell.Runtime.FrameStack.get_output(stack)
-      %{stdout: ["second\\n"], stderr: []}
+      iex> output = RShell.Runtime.FrameStack.get_output(stack)
+      iex> Enum.to_list(output.stdout)
+      ["second\\n"]
   """
-  @spec add_output(t(), list(), list()) :: t()
+  @spec add_output(t(), Enumerable.t(), Enumerable.t()) :: t()
   def add_output(%__MODULE__{frames: [current | rest]} = stack, stdout, stderr) do
+    # Convert inputs to streams (lazy)
+    stdout_stream = ensure_stream(stdout)
+    stderr_stream = ensure_stream(stderr)
+
     case current.output_mode do
       :isolate ->
         # Replace output (clear previous)
-        updated_frame = %{current | accumulated: %{stdout: stdout, stderr: stderr}}
+        updated_frame = %{current | accumulated: %{
+          stdout: stdout_stream,
+          stderr: stderr_stream
+        }}
         %{stack | frames: [updated_frame | rest]}
 
       :accumulate ->
-        # Append to existing output
+        # Concatenate streams lazily - use Stream.flat_map to avoid nesting
         new_accumulated = %{
-          stdout: current.accumulated.stdout ++ stdout,
-          stderr: current.accumulated.stderr ++ stderr
+          stdout: Stream.flat_map([current.accumulated.stdout, stdout_stream], & &1),
+          stderr: Stream.flat_map([current.accumulated.stderr, stderr_stream], & &1)
         }
         updated_frame = %{current | accumulated: new_accumulated}
         %{stack | frames: [updated_frame | rest]}
@@ -233,6 +243,23 @@ defmodule RShell.Runtime.FrameStack do
         stack
     end
   end
+
+  # Ensure we have a stream - LAZY evaluation
+  # Check for Stream struct first (it's both a function AND a struct)
+  defp ensure_stream(%Stream{} = s), do: s
+  defp ensure_stream(s) when is_function(s), do: s
+
+  defp ensure_stream(list) when is_list(list) do
+    # Convert list to stream (lazy)
+    Stream.map(list, & &1)
+  end
+
+  defp ensure_stream(str) when is_binary(str) do
+    # Convert string to stream (lazy)
+    if str == "", do: Stream.map([], & &1), else: Stream.map([str], & &1)
+  end
+
+  defp ensure_stream(term), do: Stream.map([term], & &1)
 
   @doc """
   Clear the output in the current frame.
@@ -247,7 +274,7 @@ defmodule RShell.Runtime.FrameStack do
   """
   @spec clear_output(t()) :: t()
   def clear_output(%__MODULE__{frames: [current | rest]} = stack) do
-    updated_frame = %{current | accumulated: %{stdout: [], stderr: []}}
+    updated_frame = %{current | accumulated: %{stdout: Stream.map([], & &1), stderr: Stream.map([], & &1)}}
     %{stack | frames: [updated_frame | rest]}
   end
 

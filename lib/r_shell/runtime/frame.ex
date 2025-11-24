@@ -36,7 +36,7 @@ defmodule RShell.Runtime.Frame do
           type: frame_type(),
           output_mode: output_mode(),
           scope: map(),
-          accumulated: map(),
+          accumulated: %{stdout: Enumerable.t(), stderr: Enumerable.t()},
           metadata: map(),
           parent_scope: map() | nil
         }
@@ -44,7 +44,7 @@ defmodule RShell.Runtime.Frame do
   defstruct type: :global,
             output_mode: :isolate,
             scope: %{},
-            accumulated: %{stdout: [], stderr: []},
+            accumulated: nil,
             metadata: %{},
             parent_scope: nil
 
@@ -70,7 +70,12 @@ defmodule RShell.Runtime.Frame do
       output_mode: output_mode,
       metadata: metadata,
       scope: %{},
-      accumulated: %{stdout: [], stderr: []}
+      accumulated: empty_output_streams()
     }
+  end
+
+  # Create empty output streams
+  defp empty_output_streams do
+    %{stdout: Stream.map([], & &1), stderr: Stream.map([], & &1)}
   end
 end
