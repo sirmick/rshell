@@ -136,6 +136,6 @@ defmodule RShell.TestHelpers do
   defp to_list(stream) when is_function(stream), do: Enum.to_list(stream)
   defp to_list(%Stream{} = stream), do: Enum.to_list(stream)
   defp to_list(list) when is_list(list), do: list
-  defp to_list(str) when is_binary(str), do: if str == "", do: [], else: [str]
+  defp to_list(str) when is_binary(str), do: if(str == "", do: [], else: [str])
   defp to_list(term), do: [term]
 end

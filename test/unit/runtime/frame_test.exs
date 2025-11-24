@@ -2,6 +2,7 @@ defmodule RShell.Runtime.FrameTest do
   use ExUnit.Case, async: true
 
   alias RShell.Runtime.Frame
+  import RShell.TestHelpers
 
   describe "Frame.new/3" do
     test "creates frame with defaults" do
@@ -10,7 +11,12 @@ defmodule RShell.Runtime.FrameTest do
       assert frame.type == :global
       assert frame.output_mode == :isolate
       assert frame.scope == %{}
-      assert frame.accumulated == %{stdout: [], stderr: []}
+
+      # Materialize streams to assert empty output
+      output = materialize_output(frame)
+      assert output.stdout == []
+      assert output.stderr == []
+
       assert frame.metadata == %{}
       assert frame.parent_scope == nil
     end
@@ -45,8 +51,11 @@ defmodule RShell.Runtime.FrameTest do
       frame = Frame.new(:loop, :accumulate)
 
       assert frame.scope == %{}
-      assert frame.accumulated.stdout == []
-      assert frame.accumulated.stderr == []
+
+      # Materialize streams to assert empty output
+      output = materialize_output(frame)
+      assert output.stdout == []
+      assert output.stderr == []
     end
   end
 end
